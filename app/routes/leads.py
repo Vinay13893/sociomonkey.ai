@@ -229,7 +229,7 @@ def bulk_update_source():
     if not lead_ids:
         return jsonify({'error': 'lead_ids is required'}), 400
     if not new_source or new_source not in VALID_SOURCES:
-        return jsonify({'error': f'Invalid source. Must be one of: {', '.join(VALID_SOURCES)}'}), 400
+        return jsonify({'error': f'Invalid source. Must be one of: {", ".join(VALID_SOURCES)}'}), 400
 
     visible_ids = {l.id for l in get_user_visible_leads(user).all()}
     updated = 0
