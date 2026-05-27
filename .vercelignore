@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+instance/
+.env
+*.db
+*.sqlite
+migrations/
+test_*.py
+performance_tests.py
+README.md

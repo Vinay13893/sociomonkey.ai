@@ -1,0 +1,33 @@
+# Vercel
+.vercel
+
+# Environment secrets — keep only the example
+.env
+.env.local
+.env.*.local
+.env.migrate
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Virtualenv
+venv/
+.venv/
+env/
+
+# SQLite dev db
+instance/
+*.db
+*.sqlite3
+
+# Logs
+*.log
+
+# Railway local link
+.railway/
