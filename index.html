@@ -1,0 +1,97 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SocioMonkey Platform</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" />
+  <link rel="stylesheet" href="styles.css?v=20260527z" />
+</head>
+<body>
+  <!-- Platform orchestration layer (shown when user.role === 'platform_owner') -->
+  <div id="platformRoot" style="display:none;"></div>
+
+  <!-- Tenant / LMS layer (shown for all tenant users; default) -->
+  <div class="layout" id="tenantLayout">
+    <!-- Mobile top bar (hamburger + brand) -->
+    <div class="mobile-topbar" id="mobileTopbar">
+      <button class="hamburger-btn" id="hamburgerBtn" aria-label="Open menu">&#9776;</button>
+      <span class="mobile-brand">Ganga Realty LMS</span>
+    </div>
+    <!-- Sidebar overlay (tap to close on mobile) -->
+    <div class="mobile-overlay" id="mobileOverlay"></div>
+    <!-- Left Sidebar -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <img src="logo.jpg" alt="Ganga Realty" class="sidebar-logo" />
+        <p id="userDisplay" class="user-display"></p>
+      </div>
+      <div id="productSwitcher"></div>
+      <nav class="sidebar-nav" id="sidebarNav"></nav>
+      <div class="sidebar-footer">
+        <button id="logoutBtn" class="button logout-btn">ðŸ”“ Logout</button>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <div id="app"></div>
+    </div>
+  </div>
+  <script src="env.js"></script>
+
+  <!-- â”€â”€ Config & State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <script src="src/config/constants.js?v=20260527z"></script>
+  <script src="src/config/themes.js?v=20260527z"></script>
+  <script src="src/config/feature-flags.js?v=20260527z"></script>
+  <script src="src/contexts/app-state.js?v=20260527z"></script>
+  <!-- Auth Orchestration (must load after app-state, before api) -->
+  <script src="src/auth/auth-manager.js?v=20260527z"></script>
+  <!-- Tenant white-label engine (must load after feature-flags + auth-manager) -->
+  <script src="src/tenant-context/tenant-context.js?v=20260527z"></script>
+
+  <!-- â”€â”€ Shared Utilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <script src="src/shared/utils/helpers.js?v=20260527z"></script>
+  <script src="src/shared/services/api.js?v=20260527z"></script>
+
+  <!-- â”€â”€ Tenant Auth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <script src="src/tenant/auth/login.js?v=20260527z"></script>
+
+  <!-- â”€â”€ Shared Layout & Router â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <script src="src/shared/layouts/sidebar.js?v=20260527z"></script>
+  <script src="src/router/router.js?v=20260527z"></script>
+
+  <!-- â”€â”€ Products / CRM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <script src="src/products/crm/dashboard.js?v=20260527z"></script>
+  <script src="src/products/crm/leads.js?v=20260527z"></script>
+  <script src="src/products/crm/pipeline.js?v=20260527z"></script>
+  <script src="src/products/crm/projects.js?v=20260527z"></script>
+  <script src="src/products/crm/team.js?v=20260527z"></script>
+  <script src="src/products/crm/excel.js?v=20260527z"></script>
+  <script src="src/products/crm/reports.js?v=20260527z"></script>
+  <script src="src/products/crm/export.js?v=20260527z"></script>
+
+  <!-- â”€â”€ Tenant Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <script src="src/tenant/dashboard/activity-logs.js?v=20260527z"></script>
+  <script src="src/tenant/dashboard/profile.js?v=20260527z"></script>
+
+  <!-- â”€â”€ Legacy Platform Embedded Tab (LMS sidebar) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <script src="src/platform/dashboard/platform-admin.js?v=20260527z"></script>
+  <script src="src/platform/tenants/tenants.js?v=20260527z"></script>
+  <script src="src/platform/products/products.js?v=20260527z"></script>
+
+  <!-- â”€â”€ Platform Orchestration Layer (NEW) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <script src="src/platform/layout/platform-layout.js?v=20260527z"></script>
+  <script src="src/platform/dashboard/platform-home.js?v=20260527z"></script>
+  <script src="src/platform/products/product-launcher.js?v=20260527z"></script>
+  <script src="src/platform/products/product-hub.js?v=20260527z"></script>
+  <script src="src/platform/organizations/org-wizard.js?v=20260527z"></script>
+  <script src="src/platform/organizations/organizations.js?v=20260527z"></script>
+  <script src="src/platform/tenants/tenant-config.js?v=20260527z"></script>
+  <script src="src/platform/analytics/platform-analytics.js?v=20260527z"></script>
+  <script src="src/platform/settings/platform-settings.js?v=20260527z"></script>
+
+  <!-- â”€â”€ Main Entry Point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <script src="src/main.js?v=20260527z"></script>
+</body>
+</html>
