@@ -98,10 +98,16 @@ async function login(email, password, remember, tenantSlug) {
   }
   await loadMe()
   authScheduleExpiry()
-  // Redirect to the originally-requested page if one was stored
+  // Redirect to the originally-requested page if one was stored, else default by role
   if (loginRedirectPath && loginRedirectPath !== '/login' && !loginRedirectPath.endsWith('/login')) {
     history.pushState({}, '', loginRedirectPath)
     loginRedirectPath = ''
+  } else if (!loginRedirectPath || loginRedirectPath.endsWith('/login')) {
+    if (authIsPlatformUser()) {
+      history.replaceState({}, '', '/')
+    } else if (user && user.tenant_slug) {
+      history.replaceState({}, '', '/' + user.tenant_slug + '/crm')
+    }
   }
   dispatch()
 }

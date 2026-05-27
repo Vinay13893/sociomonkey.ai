@@ -157,6 +157,11 @@ async function _dispatchInner() {
 
   // ── Login pages (no auth required) ─────────────────────────────────────────
   if (route.layer === 'platform-login') {
+    // Already authenticated → go to platform dashboard
+    if (token && user) {
+      history.replaceState({}, '', '/')
+      return _dispatchInner()
+    }
     if (platRoot)     platRoot.style.display     = 'none'
     if (tenantLayout) tenantLayout.style.display = ''
     clearTenantContext()
@@ -164,6 +169,12 @@ async function _dispatchInner() {
     return
   }
   if (route.layer === 'tenant-login') {
+    // Already authenticated → go to tenant CRM
+    if (token && user) {
+      const slug = (user && user.tenant_slug) || route.slug
+      history.replaceState({}, '', '/' + slug + '/crm')
+      return _dispatchInner()
+    }
     if (platRoot)     platRoot.style.display     = 'none'
     if (tenantLayout) tenantLayout.style.display = ''
     await loadTenantConfig(route.slug)
