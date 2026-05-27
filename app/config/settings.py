@@ -44,20 +44,26 @@ class DevelopmentConfig(BaseConfig):
     SQLALCHEMY_DATABASE_URI = _resolve_db_url('sqlite:///mvp.db')
 
 
+_prod_db_url = _resolve_db_url('sqlite:///mvp.db')
+
+
 class ProductionConfig(BaseConfig):
     DEBUG = False
-    SQLALCHEMY_DATABASE_URI = _resolve_db_url('sqlite:///mvp.db')
+    SQLALCHEMY_DATABASE_URI = _prod_db_url
     SECRET_KEY = os.getenv('SECRET_KEY', 'REPLACE-WITH-SECURE-SECRET')
 
     # Neon PostgreSQL requires short-lived connections (serverless)
-    SQLALCHEMY_ENGINE_OPTIONS = {
+    # connect_args with connect_timeout only valid for PostgreSQL, not SQLite
+    _engine_opts: dict = {
         'pool_recycle': 300,
         'pool_pre_ping': True,
         'pool_size': 5,
         'max_overflow': 10,
         'pool_timeout': 30,
-        'connect_args': {'connect_timeout': 10},
     }
+    if _prod_db_url.startswith('postgresql'):
+        _engine_opts['connect_args'] = {'connect_timeout': 10}
+    SQLALCHEMY_ENGINE_OPTIONS = _engine_opts
 
     # Guardrails for safer production defaults without hard-failing startup
     if SECRET_KEY in ('change-me-in-production', 'REPLACE-WITH-SECURE-SECRET'):
