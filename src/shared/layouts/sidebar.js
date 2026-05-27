@@ -84,16 +84,16 @@
 }
 
 function getNavItems() {
-  // Platform owner always sees Platform Admin (and CRM if they want)
-  if (user.role === 'platform_owner') {
+  // Platform owner outside tenant context → Platform Admin nav only
+  if (user.role === 'platform_owner' && !platformTenantSlug) {
     return [
-      { key: 'platform', label: 'ðŸŒ Platform Admin' },
-      { key: 'profile', label: 'âš™ï¸ My Profile' },
+      { key: 'platform', label: '🌐 Platform Admin' },
+      { key: 'profile', label: '⚙️ My Profile' },
     ]
   }
 
-  // Non-CRM product â†’ single "Coming Soon" page
-  if (currentProduct !== 'crm') {
+  // Non-CRM/LMS product → single "Coming Soon" page
+  if (currentProduct !== 'crm' && currentProduct !== 'lms') {
     const prod = availableProducts.find(p => p.slug === currentProduct)
     return [
       { key: 'product_home', label: `${prod?.icon || 'ðŸ“¦'} Overview` },
@@ -136,7 +136,7 @@ function getNavItems() {
 function switchProduct(slug) {
   currentProduct = slug
   localStorage.setItem('current_product', slug)
-  activeTab = slug === 'crm' ? 'dashboard' : 'product_home'
+  activeTab = (slug === 'crm' || slug === 'lms') ? 'dashboard' : 'product_home'
   renderApp()
 }
 

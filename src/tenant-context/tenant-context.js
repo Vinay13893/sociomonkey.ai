@@ -136,6 +136,13 @@ function _applyLogoAndTitle(config) {
     }
   }
 
+  // Update mobile topbar brand text
+  var mobileBrand = document.getElementById('mobileBrandText')
+  if (mobileBrand) {
+    var displayName = config.brand_name || config.name
+    if (displayName) mobileBrand.textContent = displayName
+  }
+
   // Update browser tab title
   var displayName = config.brand_name || config.name
   if (displayName) {

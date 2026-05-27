@@ -2,7 +2,13 @@
 // ============================================================================
 
 function _apiAuthHeaders() {
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  if (!token) return {}
+  const headers = { Authorization: `Bearer ${token}` }
+  // When platform owner is viewing a tenant, tell the backend which tenant's data to return
+  if (typeof platformTenantSlug === 'string' && platformTenantSlug) {
+    headers['X-Tenant-Slug'] = platformTenantSlug
+  }
+  return headers
 }
 
 function _apiJsonHeaders(extra) {

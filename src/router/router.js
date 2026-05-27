@@ -15,7 +15,11 @@ function showContent() {
   if (activeTab === 'platform') return renderPlatformAdmin()
   if (activeTab === 'activitylogs') return renderActivityLogs()
   if (activeTab === 'profile') return renderMyProfile()
-  if (activeTab === 'product_home') return renderProductHome()
+  if (activeTab === 'product_home') {
+    // LMS product home has its own rich landing page
+    if (currentProduct === 'lms' && typeof renderLmsHome === 'function') return renderLmsHome()
+    return renderProductHome()
+  }
 }
 
 // Safely invoke showContent() — catches async render errors and shows retry UI
@@ -203,6 +207,12 @@ async function _dispatchInner() {
   // ── Tenant routes (including platform owner drilling in via product hub) ────
   if (route.layer === 'tenant') {
     platformTenantSlug = route.slug
+    // Sync currentProduct from URL so nav items and content match the route
+    if (route.product) {
+      currentProduct = route.product
+      localStorage.setItem('current_product', route.product)
+    }
+    activeTab = 'dashboard'
     await loadTenantConfig(route.slug)
   }
   if (platRoot)     platRoot.style.display     = 'none'
@@ -215,6 +225,8 @@ async function _dispatchInner() {
 // Called from product-launcher when platform owner opens a tenant app
 function launchTenantApp(productCode, slug) {
   platformTenantSlug = slug
+  currentProduct = productCode
+  localStorage.setItem('current_product', productCode)
   history.pushState({}, '', `/${slug}/${productCode}`)
   const platRoot     = document.getElementById('platformRoot')
   const tenantLayout = document.getElementById('tenantLayout')
