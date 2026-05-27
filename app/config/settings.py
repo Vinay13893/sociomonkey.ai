@@ -63,7 +63,7 @@ class ProductionConfig(BaseConfig):
     if SECRET_KEY in ('change-me-in-production', 'REPLACE-WITH-SECURE-SECRET'):
         print('[WARN] Using insecure SECRET_KEY default in production. Set SECRET_KEY env var.')
 
-    if CORS_ORIGINS == '*':
+    if os.getenv('CORS_ORIGINS', '*') == '*':
         print('[WARN] CORS_ORIGINS is wildcard (*) in production. Restrict to app origin(s).')
 
 
