@@ -9,7 +9,10 @@ def hash_password(password: str) -> str:
 
 
 def check_password(password: str, pw_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode('utf-8'), pw_hash.encode('utf-8'))
+    try:
+        return bcrypt.checkpw(password.encode('utf-8'), pw_hash.encode('utf-8'))
+    except (ValueError, Exception):
+        return False
 
 
 def create_token(user_id: int, role: str, tenant_id: int = None, expires_minutes: int = None) -> str:
