@@ -24,7 +24,7 @@ def login():
 
     # Always run a password check to prevent timing-based user enumeration.
     # If no real user exists, compare against a dummy hash (result is always False).
-    _DUMMY_HASH = '$2b$12$invalidhashpaddingthatislong'
+    _DUMMY_HASH = '$2b$12$yQnlpEp0N7xjXJGKAe3ONOtdpqWUiHmF3Rr7yxthDSiUlmDGlV9i2'
     real_hash = user.password_hash if user else _DUMMY_HASH
     password_ok = check_password(password, real_hash)
 
