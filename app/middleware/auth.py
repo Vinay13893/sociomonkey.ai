@@ -81,6 +81,14 @@ def require_auth(func):
             return jsonify({'error': 'Account is inactive'}), 403
         request.current_user = user
         request.current_tenant_id = user.tenant_id
+        # Platform owner can view any tenant's data by sending X-Tenant-Slug header
+        if user.role == 'platform_owner':
+            tenant_slug = request.headers.get('X-Tenant-Slug', '').strip().lower()
+            if tenant_slug:
+                from app.models.tenant import Tenant
+                tenant = Tenant.query.filter_by(slug=tenant_slug).first()
+                if tenant:
+                    request.current_tenant_id = tenant.id
         err = _attach_product(user)
         if err:
             return err

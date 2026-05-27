@@ -184,6 +184,16 @@ PLATFORM_PRODUCTS = [
         version='2.0.0',
     ),
     dict(
+        name='Lead Management System (LMS)',
+        slug='lms',
+        description='Ganga Realty branded Lead Management System — track leads, '
+                    'projects, pipeline and performance in one place.',
+        icon='📋',
+        color='#1e3a5f',
+        category='Sales & Marketing',
+        version='1.0.0',
+    ),
+    dict(
         name='Procurement & Vendor Management',
         slug='procurement',
         description='End-to-end procurement workflow: purchase orders, vendor management, '
@@ -256,6 +266,22 @@ def _run_product_migration(app: 'Flask'):
                         status='active',
                     ))
             db.session.commit()
+
+        # 3. Subscribe Ganga Realty to LMS product
+        lms = Product.query.filter_by(slug='lms').first()
+        if lms:
+            ganga = Tenant.query.filter_by(slug='ganga').first()
+            if ganga:
+                exists = TenantProduct.query.filter_by(
+                    tenant_id=ganga.id, product_id=lms.id
+                ).first()
+                if not exists:
+                    db.session.add(TenantProduct(
+                        tenant_id=ganga.id,
+                        product_id=lms.id,
+                        status='active',
+                    ))
+                db.session.commit()
 
 
 # ---------------------------------------------------------------------------
