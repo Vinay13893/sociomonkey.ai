@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "gunicorn -w 2 -b 0.0.0.0:${PORT:-5002} --timeout 120 --keep-alive 5 --log-level info wsgi:application",
+    "startCommand": "gunicorn -w 2 -b 0.0.0.0:$PORT --timeout 120 --log-level info wsgi:application",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }
