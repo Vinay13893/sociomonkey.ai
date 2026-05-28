@@ -32,6 +32,20 @@ class Lead(db.Model):
     creator = db.relationship('User', foreign_keys=[created_by])
 
     def to_dict(self):
+        # Latest note preview (most recent note text, truncated for table display)
+        latest_note = None
+        if self.notes:
+            sorted_notes = sorted(self.notes, key=lambda n: n.created_at, reverse=True)
+            latest_note = sorted_notes[0].note[:120] if sorted_notes else None
+
+        # Next pending callback datetime
+        next_callback = None
+        if self.callbacks:
+            pending = [c for c in self.callbacks if c.status == 'pending' and c.callback_datetime > datetime.utcnow()]
+            if pending:
+                pending.sort(key=lambda c: c.callback_datetime)
+                next_callback = pending[0].callback_datetime.isoformat()
+
         return {
             'id': self.id,
             'name': self.name,
@@ -56,6 +70,8 @@ class Lead(db.Model):
             'created_by': self.created_by,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
+            'latest_note': latest_note,
+            'next_callback': next_callback,
         }
 
 
@@ -145,4 +161,48 @@ class LeadAssignmentHistory(db.Model):
             ),
             'reason': self.reason,
             'assigned_at': self.assigned_at.isoformat(),
+        }
+
+
+class CallbackReminder(db.Model):
+    """Scheduled callback / reminder for a lead."""
+    __tablename__ = 'callback_reminders'
+
+    id                  = db.Column(db.Integer, primary_key=True)
+    lead_id             = db.Column(db.Integer, db.ForeignKey('leads.id'), nullable=False)
+    tenant_id           = db.Column(db.Integer, db.ForeignKey('tenants.id'), nullable=True)
+    assigned_user_id    = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    manager_id          = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    callback_datetime   = db.Column(db.DateTime, nullable=False)
+    reminder_10_sent    = db.Column(db.Boolean, default=False, nullable=False)
+    reminder_due_sent   = db.Column(db.Boolean, default=False, nullable=False)
+    # status: pending | completed | missed | cancelled
+    status              = db.Column(db.String(30), default='pending', nullable=False)
+    notes               = db.Column(db.Text, nullable=True)
+    created_by          = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at          = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at          = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    lead            = db.relationship('Lead', backref='callbacks')
+    assigned_user   = db.relationship('User', foreign_keys=[assigned_user_id])
+    manager         = db.relationship('User', foreign_keys=[manager_id])
+    creator         = db.relationship('User', foreign_keys=[created_by])
+
+    def to_dict(self):
+        return {
+            'id':                 self.id,
+            'lead_id':            self.lead_id,
+            'tenant_id':          self.tenant_id,
+            'assigned_user_id':   self.assigned_user_id,
+            'assigned_user_name': self.assigned_user.name if self.assigned_user else None,
+            'manager_id':         self.manager_id,
+            'manager_name':       self.manager.name if self.manager else None,
+            'callback_datetime':  self.callback_datetime.isoformat(),
+            'reminder_10_sent':   self.reminder_10_sent,
+            'reminder_due_sent':  self.reminder_due_sent,
+            'status':             self.status,
+            'notes':              self.notes,
+            'created_by':         self.created_by,
+            'created_at':         self.created_at.isoformat(),
+            'updated_at':         self.updated_at.isoformat(),
         }

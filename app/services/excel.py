@@ -319,6 +319,240 @@ class ExcelService:
         return buf
 
     # ------------------------------------------------------------------
+    # Export for Bulk Update (update-friendly template)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def export_leads_for_update(
+        leads: list[Lead], title: str = 'Update Existing Leads'
+    ) -> BytesIO:
+        """Export leads in a format ready for bulk update (lead_id locked, phone locked)."""
+        wb = openpyxl.Workbook()
+
+        LOCKED_FILL = PatternFill('solid', fgColor='FEE2E2')
+        LOCKED_FONT = Font(bold=True, color='991B1B', size=11)
+        NOTE_FILL   = PatternFill('solid', fgColor='ECFDF5')
+        NOTE_FONT   = Font(bold=True, color='065F46', size=11)
+
+        UPDATE_COLUMNS = [
+            'lead_id [DO NOT EDIT]',
+            'customer_name',
+            'phone [DO NOT EDIT]',
+            'email',
+            'status',
+            'source',
+            'project',
+            'budget_min',
+            'budget_max',
+            'assigned_to_email',
+            'notes (append only)',
+            'callback_date',
+            'callback_time',
+        ]
+        COL_WIDTHS  = [18, 28, 18, 30, 22, 18, 28, 14, 14, 32, 40, 16, 14]
+        LOCKED_COLS = {0, 2}   # lead_id, phone
+        NOTE_COLS   = {10}     # notes
+
+        # ---------- Instructions sheet ----------
+        ws_info = wb.active
+        ws_info.title = 'Instructions'
+        ws_info['A1'] = f'Ganga Realty LMS – {title}'
+        ws_info['A1'].font = TITLE_FONT
+        ws_info.merge_cells('A1:F1')
+
+        instructions = [
+            ('Column', 'Editable?', 'Notes'),
+            ('lead_id [DO NOT EDIT]', 'NO', 'Used to identify the lead — do not change this value.'),
+            ('customer_name', 'YES', 'Full name of the lead'),
+            ('phone [DO NOT EDIT]', 'NO', 'Phone cannot be changed via this template.'),
+            ('email', 'YES (manager+)', 'Update email address'),
+            ('status', 'YES',
+             'Must be one of: ' + ', '.join(VALID_STATUSES)),
+            ('source', 'YES (manager+)', 'Lead source (Website, Referral, Walk-in, etc.)'),
+            ('project', 'YES (manager+)', 'Project name exactly as listed in Projects page'),
+            ('budget_min', 'YES (manager+)', 'Minimum budget (numbers only, no commas)'),
+            ('budget_max', 'YES (manager+)', 'Maximum budget (numbers only, no commas)'),
+            ('assigned_to_email', 'YES (manager+)',
+             'Email of team member to assign. Leave blank to keep existing.'),
+            ('notes (append only)', 'YES',
+             'Text here is ADDED as a new note. Existing notes are NOT removed.'),
+            ('callback_date', 'YES', 'Schedule callback: date in YYYY-MM-DD format'),
+            ('callback_time', 'YES', 'Callback time HH:MM (24-h). Default: 09:00'),
+        ]
+        for row_idx, row_data in enumerate(instructions, start=3):
+            for col_idx, val in enumerate(row_data, start=1):
+                cell = ws_info.cell(row=row_idx, column=col_idx, value=val)
+                if row_idx == 3:
+                    cell.font = Font(bold=True)
+                    cell.fill = PatternFill('solid', fgColor='D9E1F2')
+                cell.border = THIN_BORDER
+                cell.alignment = Alignment(wrap_text=True)
+        ws_info.column_dimensions['A'].width = 26
+        ws_info.column_dimensions['B'].width = 18
+        ws_info.column_dimensions['C'].width = 65
+
+        # ---------- Update data sheet ----------
+        ws = wb.create_sheet('Update Leads')
+        for col_idx, col_name in enumerate(UPDATE_COLUMNS, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=col_name)
+            i = col_idx - 1
+            if i in LOCKED_COLS:
+                cell.font = LOCKED_FONT
+                cell.fill = LOCKED_FILL
+            elif i in NOTE_COLS:
+                cell.font = NOTE_FONT
+                cell.fill = NOTE_FILL
+            else:
+                cell.font = HEADER_FONT
+                cell.fill = HEADER_FILL
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            cell.border = THIN_BORDER
+
+        for row_idx, lead in enumerate(leads, start=2):
+            alt_fill = ALT_ROW_FILL if row_idx % 2 == 0 else PatternFill()
+            row_values = [
+                lead.id,
+                lead.name,
+                lead.phone or '',
+                lead.email or '',
+                lead.status or '',
+                lead.source or '',
+                lead.project.name if lead.project else '',
+                lead.budget_min,
+                lead.budget_max,
+                lead.assigned_user.email if lead.assigned_user else '',
+                '',  # notes — blank; user fills in
+                '',  # callback_date
+                '',  # callback_time
+            ]
+            for col_idx, val in enumerate(row_values, start=1):
+                cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                i = col_idx - 1
+                if i in LOCKED_COLS:
+                    cell.fill = PatternFill('solid', fgColor='FFF5F5')
+                elif alt_fill.fill_type:
+                    cell.fill = alt_fill
+                cell.border = THIN_BORDER
+
+        ws.freeze_panes = 'A2'
+        ws.auto_filter.ref = f'A1:{get_column_letter(len(UPDATE_COLUMNS))}1'
+        for col_idx, width in enumerate(COL_WIDTHS, start=1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
+
+    # ------------------------------------------------------------------
+    # Bulk Update Report
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def build_update_report(results: list) -> BytesIO:
+        """Build a 4-sheet Excel report summarising a bulk update operation."""
+        wb = openpyxl.Workbook()
+
+        SUCCESS_FILL = PatternFill('solid', fgColor='D1FAE5')
+        FAIL_FILL    = PatternFill('solid', fgColor='FEE2E2')
+        SKIP_FILL    = PatternFill('solid', fgColor='FEF3C7')
+        SUCCESS_FONT = Font(bold=True, color='065F46', size=11)
+        FAIL_FONT    = Font(bold=True, color='991B1B', size=11)
+        SKIP_FONT    = Font(bold=True, color='92400E', size=11)
+
+        updated = [r for r in results if r.get('applied')]
+        failed  = [r for r in results if not r.get('applied') and r.get('errors')]
+        skipped = [r for r in results if not r.get('applied') and not r.get('errors')]
+
+        def _hdr(ws, headers, fill, font):
+            ws.append(headers)
+            for cell in ws[1]:
+                cell.fill = fill
+                cell.font = font
+                cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                cell.border = THIN_BORDER
+            ws.row_dimensions[1].height = 22
+
+        def _row(ws, row_idx, fill):
+            for cell in ws[row_idx]:
+                cell.border = THIN_BORDER
+                if fill.fill_type:
+                    cell.fill = fill
+
+        # Summary
+        ws_sum = wb.active
+        ws_sum.title = 'Summary'
+        ws_sum['A1'] = 'Ganga Realty LMS – Bulk Update Report'
+        ws_sum['A1'].font = TITLE_FONT
+        ws_sum.merge_cells('A1:C1')
+        ws_sum['A3'] = 'Generated'
+        ws_sum['B3'] = datetime.utcnow().strftime('%d %b %Y, %H:%M UTC')
+        ws_sum['A4'] = 'Total Rows'
+        ws_sum['B4'] = len(results)
+        ws_sum['A5'] = 'Updated'
+        ws_sum['B5'] = len(updated)
+        ws_sum['B5'].font = Font(bold=True, color='065F46')
+        ws_sum['A6'] = 'Failed'
+        ws_sum['B6'] = len(failed)
+        ws_sum['B6'].font = Font(bold=True, color='991B1B')
+        ws_sum['A7'] = 'Skipped (no changes)'
+        ws_sum['B7'] = len(skipped)
+        ws_sum['B7'].font = Font(bold=True, color='92400E')
+        ws_sum.column_dimensions['A'].width = 26
+        ws_sum.column_dimensions['B'].width = 18
+
+        # Updated sheet
+        ws_ok = wb.create_sheet('Updated Leads')
+        _hdr(ws_ok, ['Row', 'Lead ID', 'Lead Name', 'Phone', 'Changes Made', 'Note Added', 'Callback Set'],
+             SUCCESS_FILL, SUCCESS_FONT)
+        for i, r in enumerate(updated, 2):
+            changes = '; '.join(
+                f'{k}: {v.get("old", "")} → {v.get("new", "")}'
+                for k, v in (r.get('field_updates') or {}).items()
+                if not k.startswith('_')
+            )
+            ws_ok.append([
+                r.get('row', ''), r.get('lead_id', ''), r.get('lead_name', ''), r.get('phone', ''),
+                changes,
+                '✓' if r.get('note_text') else '',
+                '✓' if r.get('callback_dt') else '',
+            ])
+            _row(ws_ok, i, ALT_ROW_FILL if i % 2 == 0 else PatternFill())
+        for col_idx, w in enumerate([6, 10, 28, 18, 65, 14, 14], 1):
+            ws_ok.column_dimensions[get_column_letter(col_idx)].width = w
+
+        # Failed sheet
+        ws_fail = wb.create_sheet('Failed Rows')
+        _hdr(ws_fail, ['Row', 'Lead ID', 'Lead Name', 'Errors', 'Warnings'],
+             FAIL_FILL, FAIL_FONT)
+        for i, r in enumerate(failed, 2):
+            ws_fail.append([
+                r.get('row', ''), r.get('lead_id', ''), r.get('lead_name', ''),
+                '; '.join(r.get('errors', [])),
+                '; '.join(r.get('warnings', [])),
+            ])
+            _row(ws_fail, i, PatternFill('solid', fgColor='FFF5F5') if i % 2 == 0 else PatternFill())
+        for col_idx, w in enumerate([6, 10, 28, 65, 50], 1):
+            ws_fail.column_dimensions[get_column_letter(col_idx)].width = w
+
+        # Skipped sheet
+        ws_skip = wb.create_sheet('Skipped Rows')
+        _hdr(ws_skip, ['Row', 'Lead ID', 'Lead Name', 'Reason'], SKIP_FILL, SKIP_FONT)
+        for i, r in enumerate(skipped, 2):
+            ws_skip.append([
+                r.get('row', ''), r.get('lead_id', ''), r.get('lead_name', ''),
+                '; '.join(r.get('warnings', [])) or 'No changes detected',
+            ])
+            _row(ws_skip, i, PatternFill('solid', fgColor='FFFBEB') if i % 2 == 0 else PatternFill())
+        for col_idx, w in enumerate([6, 10, 28, 60], 1):
+            ws_skip.column_dimensions[get_column_letter(col_idx)].width = w
+
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
+
+    # ------------------------------------------------------------------
     # Import
     # ------------------------------------------------------------------
 

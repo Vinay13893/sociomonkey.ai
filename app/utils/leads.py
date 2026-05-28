@@ -3,10 +3,37 @@ from app import db
 from flask import request as flask_request
 
 VALID_STATUSES = [
-    'new', 'attempted', 'connected', 'interested',
+    'new', 'no_answer', 'follow_up', 'callback_scheduled',
+    'interested',
     'site_visit_planned', 'site_visit_done',
-    'negotiation', 'booking_done', 'lost', 'junk',
+    'negotiation', 'booking_done',
+    'not_interested', 'lost', 'junk',
 ]
+
+# Backward-compat aliases: old DB values that may still exist before migration
+STATUS_ALIASES = {
+    'attempted': 'no_answer',
+    'connected': 'follow_up',
+}
+
+# Human-readable labels
+STATUS_LABELS = {
+    'new':                 'New',
+    'no_answer':           'No Answer',
+    'follow_up':           'Follow Up',
+    'callback_scheduled':  'Callback Scheduled',
+    'interested':          'Interested',
+    'site_visit_planned':  'Site Visit Planned',
+    'site_visit_done':     'Site Visit Done',
+    'negotiation':         'Negotiation',
+    'booking_done':        'Booking Done',
+    'not_interested':      'Not Interested',
+    'lost':                'Lost',
+    'junk':                'Junk',
+    # legacy aliases (backward compat for old exports / activity logs)
+    'attempted':           'No Answer (legacy)',
+    'connected':           'Follow Up (legacy)',
+}
 
 
 def get_user_visible_leads(user):

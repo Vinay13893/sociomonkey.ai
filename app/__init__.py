@@ -63,7 +63,7 @@ def create_app(config_name: str = None) -> Flask:
         from app.models import (  # noqa: F401
             User, Role, Project, Lead,
             StatusHistory, LeadNote, LeadAssignmentHistory, ActivityLog,
-            Product, TenantProduct, FeatureFlag, UsageLog,
+            Product, TenantProduct, FeatureFlag, UsageLog, CallbackReminder,
         )
         from app.models.otp import OtpToken  # noqa: F401
         from app.models.tenant import Tenant  # noqa: F401
@@ -83,6 +83,23 @@ def create_app(config_name: str = None) -> Flask:
         else:
             # Ensure platform owner always exists
             _ensure_platform_owner(app)
+
+    # ------------------------------------------------------------------ Scheduler
+    # Start the callback reminder background thread (once per process)
+    from app.services.reminder_scheduler import start_scheduler
+    start_scheduler(app)
+
+    # ------------------------------------------------------------------ Notifications endpoint
+    from flask import request as _req
+    from app.middleware import require_auth as _require_auth
+    from app.services.reminder_scheduler import drain_notifications
+
+    @app.route('/api/leads/notifications', methods=['GET'])
+    @_require_auth
+    def get_notifications():
+        user = _req.current_user
+        notes = drain_notifications(user.id)
+        return jsonify({'notifications': notes}), 200
 
     return app
 

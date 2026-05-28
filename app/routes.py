@@ -651,8 +651,9 @@ def dashboard_stats():
         total_projects = Project.query.count()
         
         status_counts = {}
-        for status in ['new', 'attempted', 'connected', 'interested', 'site_visit_planned', 
-                       'site_visit_done', 'negotiation', 'booking_done', 'lost', 'junk']:
+        for status in ['new', 'no_answer', 'follow_up', 'callback_scheduled', 'interested',
+                       'site_visit_planned', 'site_visit_done', 'negotiation',
+                       'booking_done', 'not_interested', 'lost', 'junk']:
             status_counts[status] = Lead.query.filter_by(status=status).count()
         
         stats = {
@@ -670,8 +671,9 @@ def dashboard_stats():
         team_size = len(user.team_members)
         
         status_counts = {}
-        for status in ['new', 'attempted', 'connected', 'interested', 'site_visit_planned',
-                       'site_visit_done', 'negotiation', 'booking_done', 'lost', 'junk']:
+        for status in ['new', 'no_answer', 'follow_up', 'callback_scheduled', 'interested',
+                       'site_visit_planned', 'site_visit_done', 'negotiation',
+                       'booking_done', 'not_interested', 'lost', 'junk']:
             status_counts[status] = Lead.query.filter(
                 (Lead.assigned_to.in_(team_ids)) & (Lead.status == status)
             ).count()
@@ -686,8 +688,9 @@ def dashboard_stats():
         my_leads = Lead.query.filter_by(assigned_to=user.id).count()
         
         status_counts = {}
-        for status in ['new', 'attempted', 'connected', 'interested', 'site_visit_planned',
-                       'site_visit_done', 'negotiation', 'booking_done', 'lost', 'junk']:
+        for status in ['new', 'no_answer', 'follow_up', 'callback_scheduled', 'interested',
+                       'site_visit_planned', 'site_visit_done', 'negotiation',
+                       'booking_done', 'not_interested', 'lost', 'junk']:
             status_counts[status] = Lead.query.filter_by(
                 assigned_to=user.id, status=status
             ).count()
@@ -709,8 +712,9 @@ def get_pipeline_stages():
     """Get leads grouped by status (pipeline view)"""
     user = request.current_user
     
-    stages = ['new', 'attempted', 'connected', 'interested', 'site_visit_planned',
-              'site_visit_done', 'negotiation', 'booking_done', 'lost', 'junk']
+    stages = ['new', 'no_answer', 'follow_up', 'callback_scheduled', 'interested',
+              'site_visit_planned', 'site_visit_done', 'negotiation',
+              'booking_done', 'not_interested', 'lost', 'junk']
     
     pipeline = {}
     
@@ -843,9 +847,15 @@ def import_leads_excel():
                 source = str(row.get('source', 'direct')).strip() if pd.notna(row.get('source')) else 'direct'
                 status = str(row.get('status', 'new')).strip() if pd.notna(row.get('status')) else 'new'
                 
+                # Remap legacy status names to new names (backward compat for old exports)
+                _status_aliases = {'attempted': 'no_answer', 'connected': 'follow_up'}
+                status = _status_aliases.get(status, status)
+
                 # Validate status
-                valid_statuses = ['new', 'attempted', 'connected', 'interested', 'site_visit_planned', 
-                                'site_visit_done', 'negotiation', 'booking_done', 'lost', 'junk']
+                valid_statuses = ['new', 'no_answer', 'follow_up', 'callback_scheduled',
+                                  'interested', 'site_visit_planned', 'site_visit_done',
+                                  'negotiation', 'booking_done',
+                                  'not_interested', 'lost', 'junk']
                 if status not in valid_statuses:
                     status = 'new'
                 
