@@ -128,8 +128,10 @@ function authClearSession() {
   user  = null
   localStorage.removeItem('lms_token')
   localStorage.removeItem('lms_user')
+  localStorage.removeItem('lms_products')
   sessionStorage.removeItem('lms_token')
   sessionStorage.removeItem('lms_user')
+  sessionStorage.removeItem('lms_products')
   try {
     localStorage.setItem('_auth_sync', JSON.stringify({ type: 'logout', ts: Date.now() }))
   } catch (e) {}
@@ -151,6 +153,11 @@ function authRestoreSession() {
   try {
     var rawUser = localStorage.getItem('lms_user') || sessionStorage.getItem('lms_user')
     if (rawUser) user = JSON.parse(rawUser)
+  } catch (e) {}
+  // Restore available products for instant sidebar rendering on page load
+  try {
+    var rawProducts = localStorage.getItem('lms_products') || sessionStorage.getItem('lms_products')
+    if (rawProducts) availableProducts = JSON.parse(rawProducts)
   } catch (e) {}
   return true
 }

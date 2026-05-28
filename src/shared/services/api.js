@@ -90,13 +90,18 @@ async function login(email, password, remember, tenantSlug) {
 
   authSetSession(data.token, data.user, !!remember)
   availableProducts = data.products || []
-  // Prefer lms if available (Ganga Realty default); else first available product
   if (availableProducts.length > 0) {
     const hasLms = availableProducts.find(p => p.slug === 'lms')
     const hasCrm = availableProducts.find(p => p.slug === 'crm')
     currentProduct = hasLms ? 'lms' : (hasCrm ? 'crm' : ((availableProducts[0] && availableProducts[0].slug) || 'lms'))
     localStorage.setItem('current_product', currentProduct)
   }
+  // Persist products so the sidebar can render instantly on the next page load
+  // without waiting for the background loadMe() call to complete.
+  try {
+    var _ps = localStorage.getItem('lms_token') ? localStorage : sessionStorage
+    _ps.setItem('lms_products', JSON.stringify(availableProducts))
+  } catch (_e) {}
   await loadMe()
   authScheduleExpiry()
   // Redirect to the originally-requested page if one was stored, else default by role
@@ -138,7 +143,31 @@ async function loadMe() {
   }
 }
 
+// ── In-memory data caches (5-minute TTL, invalidated on tenant context switch) ──
+var _CACHE_TTL_MS = 5 * 60 * 1000
+var _cacheSlug = null
+var _projectsCache = null; var _projectsCacheTs = 0
+var _leadsCache    = null; var _leadsCacheTs    = 0
+var _usersCache    = null; var _usersCacheTs    = 0
+
+function _cacheValid(ts) { return ts > 0 && (Date.now() - ts) < _CACHE_TTL_MS }
+
+function _checkCacheTenant() {
+  // Bust all caches when the active tenant context changes (platform owner switching tenants)
+  var slug = (typeof platformTenantSlug === 'string' && platformTenantSlug) ? platformTenantSlug : ''
+  if (_cacheSlug !== slug) {
+    _projectsCacheTs = 0; _leadsCacheTs = 0; _usersCacheTs = 0
+    _cacheSlug = slug
+  }
+}
+
+// Call before any mutation that changes lead data (delete, edit, assign, import)
+function invalidateLeadsCache() { _leadsCacheTs = 0 }
+function invalidateProjectsCache() { _projectsCacheTs = 0 }
+
 async function loadProjects() {
+  _checkCacheTenant()
+  if (_cacheValid(_projectsCacheTs)) { projects = _projectsCache; return }
   try {
     const data = await _apiRequest('/projects', {
       headers: _apiAuthHeaders(),
@@ -146,12 +175,16 @@ async function loadProjects() {
       timeoutMs: 15000,
     })
     projects = data.projects || []
+    _projectsCache = projects; _projectsCacheTs = Date.now()
   } catch (_e) {
-    projects = []
+    projects = _projectsCache || []
   }
 }
 
-async function loadLeads() {
+// _force=true bypasses the cache — use after any mutation that modifies lead data
+async function loadLeads(_force) {
+  _checkCacheTenant()
+  if (!_force && _cacheValid(_leadsCacheTs)) { leads = _leadsCache; return }
   try {
     const data = await _apiRequest('/leads', {
       headers: _apiAuthHeaders(),
@@ -159,13 +192,16 @@ async function loadLeads() {
       timeoutMs: 15000,
     })
     leads = data.leads || []
+    _leadsCache = leads; _leadsCacheTs = Date.now()
   } catch (_e) {
-    leads = []
+    leads = _leadsCache || []
     if (typeof showToast === 'function') showToast('Could not load leads. Check your connection.', 'warning')
   }
 }
 
 async function loadUsers() {
+  _checkCacheTenant()
+  if (_cacheValid(_usersCacheTs)) { users = _usersCache; return }
   try {
     const data = await _apiRequest('/users', {
       headers: _apiAuthHeaders(),
@@ -173,8 +209,9 @@ async function loadUsers() {
       timeoutMs: 15000,
     })
     users = data.users || []
+    _usersCache = users; _usersCacheTs = Date.now()
   } catch (_e) {
-    users = []
+    users = _usersCache || []
   }
 }
 

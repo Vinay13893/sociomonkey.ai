@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -6,7 +6,7 @@
   <base href="/" />
   <title>SocioMonkey Platform</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" />
-  <link rel="stylesheet" href="styles.css?v=20260602b" />
+  <link rel="stylesheet" href="styles.css?v=20260602c" />
 </head>
 <body>
   <!-- Platform orchestration layer (shown when user.role === 'platform_owner') -->
@@ -42,47 +42,47 @@
   </div>
   <script src="env.js"></script>
 
-  <!-- â”€â”€ Config & State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <!-- ── Config & State ───────────────────────────────────────────── -->
   <script src="src/config/constants.js?v=20260527z"></script>
   <script src="src/config/themes.js?v=20260527z"></script>
   <script src="src/config/feature-flags.js?v=20260527z"></script>
   <script src="src/contexts/app-state.js?v=20260527z"></script>
   <!-- Auth Orchestration (must load after app-state, before api) -->
-  <script src="src/auth/auth-manager.js?v=20260527z"></script>
+  <script src="src/auth/auth-manager.js?v=20260602c"></script>
   <!-- Tenant white-label engine (must load after feature-flags + auth-manager) -->
   <script src="src/tenant-context/tenant-context.js?v=20260601b"></script>
 
-  <!-- â”€â”€ Shared Utilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-  <script src="src/shared/utils/helpers.js?v=20260602b"></script>
-  <script src="src/shared/services/api.js?v=20260602b"></script>
+  <!-- ── Shared Utilities ─────────────────────────────────────────── -->
+  <script src="src/shared/utils/helpers.js?v=20260602c"></script>
+  <script src="src/shared/services/api.js?v=20260602c"></script>
 
-  <!-- â”€â”€ Tenant Auth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <!-- ── Tenant Auth ──────────────────────────────────────────────── -->
   <script src="src/tenant/auth/login.js?v=20260527z"></script>
 
-  <!-- â”€â”€ Shared Layout & Router â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-  <script src="src/shared/layouts/sidebar.js?v=20260602b"></script>
-  <script src="src/router/router.js?v=20260602b"></script>
+  <!-- ── Shared Layout & Router ───────────────────────────────────── -->
+  <script src="src/shared/layouts/sidebar.js?v=20260602c"></script>
+  <script src="src/router/router.js?v=20260602c"></script>
 
-  <!-- â”€â”€ Products / CRM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-  <script src="src/products/crm/dashboard.js?v=20260527z"></script>
-  <script src="src/products/crm/leads.js?v=20260527z"></script>
+  <!-- ── Products / CRM ───────────────────────────────────────────── -->
+  <script src="src/products/crm/dashboard.js?v=20260602c"></script>
+  <script src="src/products/crm/leads.js?v=20260602c"></script>
   <script src="src/products/crm/pipeline.js?v=20260527z"></script>
   <script src="src/products/crm/projects.js?v=20260527z"></script>
   <script src="src/products/crm/team.js?v=20260527z"></script>
-  <script src="src/products/crm/excel.js?v=20260527z"></script>
+  <script src="src/products/crm/excel.js?v=20260602c"></script>
   <script src="src/products/crm/reports.js?v=20260527z"></script>
   <script src="src/products/crm/export.js?v=20260527z"></script>
 
-  <!-- â”€â”€ Tenant Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <!-- ── Tenant Dashboard ─────────────────────────────────────────── -->
   <script src="src/tenant/dashboard/activity-logs.js?v=20260527z"></script>
   <script src="src/tenant/dashboard/profile.js?v=20260527z"></script>
 
-  <!-- â”€â”€ Legacy Platform Embedded Tab (LMS sidebar) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <!-- ── Legacy Platform Embedded Tab (LMS sidebar) ───────────────── -->
   <script src="src/platform/dashboard/platform-admin.js?v=20260527z"></script>
   <script src="src/platform/tenants/tenants.js?v=20260527z"></script>
   <script src="src/platform/products/products.js?v=20260527z"></script>
 
-  <!-- â”€â”€ Platform Orchestration Layer (NEW) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <!-- ── Platform Orchestration Layer (NEW) ───────────────────────── -->
   <script src="src/platform/layout/platform-layout.js?v=20260527z"></script>
   <script src="src/platform/dashboard/platform-home.js?v=20260527z"></script>
   <script src="src/platform/products/product-launcher.js?v=20260527z"></script>
@@ -93,7 +93,7 @@
   <script src="src/platform/analytics/platform-analytics.js?v=20260527z"></script>
   <script src="src/platform/settings/platform-settings.js?v=20260527z"></script>
 
-  <!-- â”€â”€ Main Entry Point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-  <script src="src/main.js?v=20260527z"></script>
+  <!-- ── Main Entry Point ─────────────────────────────────────────── -->
+  <script src="src/main.js?v=20260602c"></script>
 </body>
 </html>

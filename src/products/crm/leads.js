@@ -140,7 +140,7 @@ async function renderLeads() {
     document.getElementById('exportLeadsBtn').addEventListener('click', quickExportLeads)
   }
 
-  await Promise.all([loadProjects(), loadUsers()])
+  await Promise.all([loadProjects(), loadUsers(), loadLeads()])
 
   const projectSelect = document.getElementById('filterProject')
   if (projectSelect) {
@@ -578,7 +578,7 @@ async function deleteLead(leadId, leadName) {
       retries: 0,
     })
     selectedLeads.delete(leadId)
-    await loadLeads()
+    await loadLeads(true)
     filterAndRenderLeads()
   } catch (err) { showToast((err.payload && err.payload.error) || err.message || 'Error deleting lead.', 'error') }
 }
@@ -594,7 +594,7 @@ async function bulkDeleteLeads() {
       retries: 0,
     })
     selectedLeads.clear()
-    await loadLeads()
+    await loadLeads(true)
     filterAndRenderLeads()
     const bar = document.getElementById('bulkBar')
     if (bar) {
@@ -878,7 +878,7 @@ async function viewLeadDetails(leadId) {
           body: JSON.stringify({ status: newStatus }),
           retries: 0,
         })
-        await loadLeads(); viewLeadDetails(leadId)
+        await loadLeads(true); viewLeadDetails(leadId)
       } catch (err) { showToast((err.payload && err.payload.error) || err.message, 'error') }
     })
   }
@@ -895,7 +895,7 @@ async function viewLeadDetails(leadId) {
           body: JSON.stringify({ project_id: projectId ? parseInt(projectId) : null }),
           retries: 0,
         })
-        await loadLeads(); viewLeadDetails(leadId)
+        await loadLeads(true); viewLeadDetails(leadId)
       } catch (err) { showToast((err.payload && err.payload.error) || err.message, 'error') }
     })
   }
@@ -912,7 +912,7 @@ async function viewLeadDetails(leadId) {
           body: JSON.stringify({ source }),
           retries: 0,
         })
-        await loadLeads(); viewLeadDetails(leadId)
+        await loadLeads(true); viewLeadDetails(leadId)
       } catch (err) { showToast((err.payload && err.payload.error) || err.message, 'error') }
     })
   }
@@ -929,7 +929,7 @@ async function viewLeadDetails(leadId) {
           body: JSON.stringify({ note: noteText }),
           retries: 0,
         })
-        await loadLeads()
+        await loadLeads(true)
         viewLeadDetails(leadId)
       } catch (err) { showToast((err.payload && err.payload.error) || err.message, 'error') }
     })
@@ -977,7 +977,7 @@ async function viewLeadDetails(leadId) {
           body: JSON.stringify({ assigned_to: assignedTo }),
           retries: 0,
         })
-        await loadLeads()
+        await loadLeads(true)
         viewLeadDetails(leadId)
       } catch (err) { showToast((err.payload && err.payload.error) || err.message, 'error') }
     })

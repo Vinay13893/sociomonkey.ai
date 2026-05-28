@@ -70,9 +70,17 @@
     </div>
   `
 
-  await loadProjects()
   const projectSel = document.getElementById('dashProjectFilter')
-  const rangeSel = document.getElementById('dashRangeFilter')
+  const rangeSel   = document.getElementById('dashRangeFilter')
+
+  // Fire the dashboard stats request in parallel with the project list fetch.
+  // Both hit Railway simultaneously — total time = max(projects, stats) not the sum.
+  const _initStatsProm = fetch(
+    API_BASE + '/leads/dashboard/stats?range=this_week',
+    { headers: { Authorization: 'Bearer ' + token } }
+  ).then(function(r) { return r.json() }).catch(function() { return null })
+
+  await loadProjects()
   projects.forEach(p => {
     const opt = document.createElement('option')
     opt.value = p.id
@@ -273,7 +281,7 @@
     }).join('')
   }
 
-  async function refreshDashboardViews() {
+  async function refreshDashboardViews(_preData) {
     const params = new URLSearchParams()
     const rangeVal = rangeSel.value
     const projectVal = projectSel.value
@@ -288,9 +296,12 @@
     }
     if (projectVal) params.set('project_id', projectVal)
 
-    const url = `${API_BASE}/leads/dashboard/stats${params.toString() ? `?${params.toString()}` : ''}`
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-    const data = await res.json()
+    let data = (_preData && !projectVal) ? _preData : null
+    if (!data) {
+      const url = `${API_BASE}/leads/dashboard/stats${params.toString() ? `?${params.toString()}` : ''}`
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      data = await res.json()
+    }
     const stats = data.stats || {}
     const totalLeads = stats.total_leads || stats.my_leads || 0
 
@@ -315,6 +326,7 @@
   document.getElementById('dashDateFrom').addEventListener('change', () => { if (rangeSel.value === 'custom') refreshDashboardViews() })
   document.getElementById('dashDateTo').addEventListener('change',   () => { if (rangeSel.value === 'custom') refreshDashboardViews() })
   projectSel.addEventListener('change', refreshDashboardViews)
-  refreshDashboardViews()
+  // Use the already-in-flight stats data (fetched in parallel with loadProjects)
+  refreshDashboardViews(await _initStatsProm)
 }
 

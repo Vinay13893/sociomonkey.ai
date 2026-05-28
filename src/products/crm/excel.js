@@ -95,7 +95,7 @@ async function handleExcelUpload(e) {
     showImportResult(data, res.ok)
     if (res.ok) {
       fileInput.value = ''
-      await loadLeads() // Refresh leads
+      await loadLeads(true) // Refresh leads (force bypass cache after import)
     }
   } catch (err) {
     showImportResult({

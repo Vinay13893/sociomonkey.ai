@@ -52,7 +52,7 @@ function _buildSidebar() {
   if (productLabel) {
     if (user.role !== 'platform_owner' || platformTenantSlug) {
       var prod = availableProducts.find(function(p) { return p.slug === currentProduct })
-      productLabel.textContent = (prod && prod.name) || 'Lead Management System'
+      productLabel.textContent = ((prod && prod.name) || 'Lead Management System').replace(/\s*\([^)]*\)\s*$/, '').trim()
       productLabel.style.display = 'block'
     } else {
       productLabel.style.display = 'none'

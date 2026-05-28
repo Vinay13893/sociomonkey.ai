@@ -40,13 +40,35 @@ function closeMobileSidebar() {
 }
 
 async function init() {
+  // Pre-warm the Railway backend immediately — eliminates cold-start wait.
+  // Fires before any user interaction; by the time they authenticate and navigate,
+  // the backend is already awake and responsive.
+  try { fetch(API_BASE + '/health', { method: 'HEAD' }).catch(function() {}) } catch (_e) {}
+
   if (typeof showLoader === 'function') showLoader()
-  // Restore session from storage (also validates token expiry)
+  // Restore session from storage (validates token expiry locally)
   const hasSession = authRestoreSession()
   if (hasSession) {
-    // Validate session with backend and refresh user object
-    await loadMe()
+    // Schedule token expiry immediately — token is already in memory
     if (token) authScheduleExpiry()
+    // Render the app RIGHT NOW using locally-cached user + products.
+    // Validate session with the backend in the background.
+    // If the server returns 401, loadMe() → authClearSession() → dispatch() handles re-login.
+    loadMe().then(function() {
+      // After server confirms the session, refresh the sidebar with any server-side changes
+      // (e.g. role change, new product access) without re-rendering the content area.
+      if (typeof _sidebarBuilt !== 'undefined') {
+        _sidebarBuilt = false
+        if (typeof _buildSidebar === 'function' &&
+            document.querySelector('.sidebar') &&
+            document.querySelector('.sidebar').style.display !== 'none') {
+          _buildSidebar()
+          _sidebarBuilt = true
+          if (typeof _sidebarForProduct !== 'undefined') _sidebarForProduct = currentProduct
+          if (typeof _sidebarForSlug !== 'undefined') _sidebarForSlug = platformTenantSlug
+        }
+      }
+    }).catch(function() {})
   }
   if (typeof hideLoader === 'function') hideLoader()
   dispatch()
