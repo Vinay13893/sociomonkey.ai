@@ -38,7 +38,7 @@
   `
 
   const res = await fetch(`${API_BASE}/pipeline/stages`, {
-    headers: { Authorization: `Bearer ${token}` }
+    headers: _apiAuthHeaders()
   })
   const data = await res.json()
   window._pipelineData = data.pipeline || {}

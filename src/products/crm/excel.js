@@ -75,7 +75,7 @@ async function handleExcelUpload(e) {
   try {
     const res = await fetch(`${API_BASE}/leads/import/excel`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: _apiAuthHeaders(),
       body: formData
     })
     
@@ -182,7 +182,7 @@ function downloadImportReport() {
 async function downloadExcelTemplate() {
   try {
     const res = await fetch(`${API_BASE}/leads/import/template`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: _apiAuthHeaders()
     })
     
     if (!res.ok) {

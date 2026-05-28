@@ -245,7 +245,7 @@ function _platOrgCardHtml(t) {
 // -- Actions ------------------------------------------------------------------
 
 function platOpenOrgApp(slug) {
-  window.open('/' + slug + '/crm', '_blank')
+  window.open('/' + slug + '/lms', '_blank')
 }
 
 async function platViewOrgUsers(tenantId, tenantName) {

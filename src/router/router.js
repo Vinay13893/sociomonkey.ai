@@ -244,16 +244,11 @@ async function _dispatchInner() {
 
 // Called from product-launcher when platform owner opens a tenant app
 function launchTenantApp(productCode, slug) {
-  platformTenantSlug = slug
-  currentProduct = productCode
-  localStorage.setItem('current_product', productCode)
-  history.pushState({}, '', `/${slug}/${productCode}`)
-  const platRoot     = document.getElementById('platformRoot')
-  const tenantLayout = document.getElementById('tenantLayout')
-  if (platRoot)     platRoot.style.display     = 'none'
-  if (tenantLayout) tenantLayout.style.display = ''
-  activeTab = 'dashboard'
-  render()
+  // Navigate to the canonical tenant URL and run the full dispatch() pipeline.
+  // This guarantees loadTenantConfig(), tenant cache reset, and auth checks all
+  // run identically to a direct URL navigation or page refresh.
+  history.pushState({}, '', '/' + slug + '/' + productCode)
+  dispatch()
 }
 
 // Handle browser back/forward

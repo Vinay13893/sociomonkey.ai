@@ -643,7 +643,7 @@ function openImportModal() {
     resultDiv.innerHTML = '<div style="color:#64748b;font-size:14px;">Uploading…</div>'
     try {
       const res = await fetch(`${API_BASE}/leads/import/excel`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: formData
+        method: 'POST', headers: _apiAuthHeaders(), body: formData
       })
       const data = await res.json()
       if (!res.ok) {
@@ -679,7 +679,7 @@ async function quickExportLeads() {
   const query = params.length ? '?' + params.join('&') : ''
   try {
     const res = await fetch(`${API_BASE}/leads/export/excel${query}`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: _apiAuthHeaders()
     })
     if (!res.ok) { showToast('Export failed. Please try again.', 'error'); return }
     const blob = await res.blob()
@@ -705,9 +705,9 @@ async function viewLeadDetails(leadId) {
   // Load lead details, notes, and status history
   await loadProjects()
   const [notesRes, historyRes, assignmentRes] = await Promise.all([
-    fetch(`${API_BASE}/leads/${leadId}/notes`, { headers: { Authorization: `Bearer ${token}` } }),
-    fetch(`${API_BASE}/leads/${leadId}/status-history`, { headers: { Authorization: `Bearer ${token}` } }),
-    fetch(`${API_BASE}/leads/${leadId}/assignment-history`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_BASE}/leads/${leadId}/notes`, { headers: _apiAuthHeaders() }),
+    fetch(`${API_BASE}/leads/${leadId}/status-history`, { headers: _apiAuthHeaders() }),
+    fetch(`${API_BASE}/leads/${leadId}/assignment-history`, { headers: _apiAuthHeaders() })
   ])
   
   const notesData = await notesRes.json()

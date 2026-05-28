@@ -75,9 +75,10 @@
 
   // Fire the dashboard stats request in parallel with the project list fetch.
   // Both hit Railway simultaneously — total time = max(projects, stats) not the sum.
+  // Use _apiAuthHeaders() so X-Tenant-Slug is included when platform owner views a tenant.
   const _initStatsProm = fetch(
     API_BASE + '/leads/dashboard/stats?range=this_week',
-    { headers: { Authorization: 'Bearer ' + token } }
+    { headers: _apiAuthHeaders() }
   ).then(function(r) { return r.json() }).catch(function() { return null })
 
   await loadProjects()
@@ -299,7 +300,7 @@
     let data = (_preData && !projectVal) ? _preData : null
     if (!data) {
       const url = `${API_BASE}/leads/dashboard/stats${params.toString() ? `?${params.toString()}` : ''}`
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      const res = await fetch(url, { headers: _apiAuthHeaders() })
       data = await res.json()
     }
     const stats = data.stats || {}

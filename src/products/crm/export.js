@@ -99,7 +99,7 @@ async function handleExportLeads(e) {
   
   try {
     const res = await fetch(`${API_BASE}${query}`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: _apiAuthHeaders()
     })
     
     if (!res.ok) {

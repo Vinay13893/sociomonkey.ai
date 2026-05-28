@@ -97,7 +97,7 @@ async function renderTeamManagement() {
       if (!await confirmDialog('Delete team member &quot;' + escape(btn.dataset.name) + '&quot;? This cannot be undone.', 'Delete')) return
       const res = await fetch(`${API_BASE}/users/${btn.dataset.id}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: _apiAuthHeaders()
       })
       if (res.ok) {
         await loadUsers()
@@ -186,7 +186,7 @@ async function openEditUserForm(editUser) {
     
     const res = await fetch(`${API_BASE}/users/${editUser.id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: Object.assign({ 'Content-Type': 'application/json' }, _apiAuthHeaders()),
       body: JSON.stringify(body)
     })
     if (res.ok) {
@@ -238,7 +238,7 @@ async function openUserForm() {
     
     const res = await fetch(`${API_BASE}/users`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: Object.assign({ 'Content-Type': 'application/json' }, _apiAuthHeaders()),
       body: JSON.stringify({ name, email, phone, role, password })
     })
     if (res.ok) renderTeamManagement()

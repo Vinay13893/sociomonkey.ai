@@ -68,7 +68,7 @@ async function renderProjects() {
       if (!await confirmDialog('Delete project &quot;' + escape(btn.dataset.delName) + '&quot;? This cannot be undone.', 'Delete')) return
       const res = await fetch(`${API_BASE}/projects/${btn.dataset.delId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: _apiAuthHeaders()
       })
       if (res.ok) renderProjects()
       else showToast('Error deleting project', 'error')
@@ -126,7 +126,7 @@ async function openProjectForm(project = null) {
     const method = isEdit ? 'PUT' : 'POST'
     const res = await fetch(url, {
       method,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: Object.assign({ 'Content-Type': 'application/json' }, _apiAuthHeaders()),
       body: JSON.stringify({ name, location, developer, project_type, description, budget_min, budget_max })
     })
     if (res.ok) renderProjects()

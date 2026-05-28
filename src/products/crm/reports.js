@@ -74,7 +74,7 @@ async function renderReports(dateFrom = '', dateTo = '') {
   document.getElementById('clearReportFilter').addEventListener('click', () => renderReports())
 
   // Fetch lead report + team report in parallel
-  const headers = { Authorization: `Bearer ${token}` }
+  const headers = _apiAuthHeaders()
   const params = new URLSearchParams()
   if (dateFrom) params.set('date_from', dateFrom)
   if (dateTo)   params.set('date_to',   dateTo)
@@ -384,7 +384,7 @@ async function downloadLeadReport() {
   a.setAttribute('download', '')
   // Add auth via query param not ideal; use fetch + blob instead
   const res = await fetch(`${API_BASE}/reports/leads/download`, {
-    headers: { Authorization: `Bearer ${token}` }
+    headers: _apiAuthHeaders()
   })
   if (!res.ok) { showToast('Export failed', 'error'); return }
   const blob = await res.blob()
