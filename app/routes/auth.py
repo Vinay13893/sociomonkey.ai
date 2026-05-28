@@ -236,12 +236,36 @@ def send_otp():
         '</div>'
     )
 
+    brevo_key  = os.environ.get('BREVO_API_KEY', '')
     resend_key = os.environ.get('RESEND_API_KEY', '')
 
     try:
-        if resend_key:
+        if brevo_key:
+            # ── Brevo API (HTTPS — works on Railway, sends to any recipient) ─
+            import urllib.request as _ur, json as _json
+            payload = {
+                'sender':      {'name': 'Ganga Realty LMS', 'email': smtp_from or smtp_user},
+                'to':          [{'email': email}],
+                'subject':     'Your Ganga Realty LMS Login OTP',
+                'htmlContent': html_body,
+            }
+            api_req = _ur.Request(
+                'https://api.brevo.com/v3/smtp/email',
+                data=_json.dumps(payload).encode(),
+                headers={
+                    'api-key':      brevo_key,
+                    'Content-Type': 'application/json',
+                },
+                method='POST',
+            )
+            try:
+                _ur.urlopen(api_req, timeout=15)
+            except _ur.error.HTTPError as _he:
+                _body = _he.read().decode('utf-8', errors='replace')
+                raise RuntimeError(f'Brevo {_he.code}: {_body}')
+        elif resend_key:
             # ── Resend API (HTTPS — works on Railway) ────────────────────────
-            import urllib.request as _ur
+            import urllib.request as _ur, json as _json
             resend_from = os.environ.get('RESEND_FROM', 'Ganga Realty LMS <onboarding@resend.dev>')
             payload = {
                 'from':    resend_from,
@@ -251,7 +275,7 @@ def send_otp():
             }
             api_req = _ur.Request(
                 'https://api.resend.com/emails',
-                data=__import__('json').dumps(payload).encode(),
+                data=_json.dumps(payload).encode(),
                 headers={
                     'Authorization': f'Bearer {resend_key}',
                     'Content-Type':  'application/json',
@@ -260,17 +284,17 @@ def send_otp():
             )
             try:
                 _ur.urlopen(api_req, timeout=15)
-            except __import__('urllib').error.HTTPError as _he:
+            except _ur.error.HTTPError as _he:
                 _body = _he.read().decode('utf-8', errors='replace')
                 raise RuntimeError(f'Resend {_he.code}: {_body}')
         else:
-            # ── Gmail SMTP (port 465 SSL) ─────────────────────────────────────
+            # ── SMTP fallback (may be blocked on Railway) ─────────────────────
             import smtplib, socket
             from email.mime.multipart import MIMEMultipart
             from email.mime.text import MIMEText
 
             if not smtp_user or not smtp_pass:
-                raise RuntimeError('No SMTP credentials configured (set SMTP_USER and SMTP_PASS)')
+                raise RuntimeError('No email provider configured (set BREVO_API_KEY, RESEND_API_KEY, or SMTP_USER/SMTP_PASS)')
 
             msg            = MIMEMultipart('alternative')
             msg['Subject'] = 'Your Ganga Realty LMS Login OTP'
@@ -278,7 +302,6 @@ def send_otp():
             msg['To']      = email
             msg.attach(MIMEText(html_body, 'html'))
 
-            # Force IPv4 — Railway containers may not have IPv6 routing
             try:
                 smtp_ip = socket.getaddrinfo(smtp_host, smtp_port, socket.AF_INET)[0][4][0]
             except Exception:
