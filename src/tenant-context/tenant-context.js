@@ -23,16 +23,48 @@ var _tenantConfigCache = {}
  * Fetch (or restore from cache) the public config for a tenant slug.
  * Applies branding immediately after loading.
  * Safe to call multiple times — returns early if the same slug is already loaded.
+ *
+ * Cache hierarchy (fastest first):
+ *   1. In-memory  (_tenantConfigCache)  — same page session, instant
+ *   2. sessionStorage                   — survives page refresh, instant
+ *   3. Network fetch                    — cold path, only on first ever load
  */
 async function loadTenantConfig(slug) {
   if (!slug) return
 
+  // 1. In-memory cache (same page session)
   if (_tenantConfigCache[slug]) {
     tenantConfig = _tenantConfigCache[slug]
     applyTenantBranding(tenantConfig)
     return
   }
 
+  // 2. sessionStorage cache (survives page refresh, lost when tab closes)
+  try {
+    var _stored = sessionStorage.getItem('_tc_' + slug)
+    if (_stored) {
+      var _cached = JSON.parse(_stored)
+      if (_cached) {
+        tenantConfig = _cached
+        _tenantConfigCache[slug] = _cached
+        applyTenantBranding(_cached)
+        // Refresh config from network in background — don't await
+        _fetchTenantConfig(slug, true)
+        return
+      }
+    }
+  } catch (_e) {}
+
+  // 3. Network fetch (cold path — first ever load or after sessionStorage cleared)
+  await _fetchTenantConfig(slug, false)
+}
+
+/**
+ * Fetch tenant config from the network and update all caches.
+ * @param {string} slug   - tenant slug
+ * @param {boolean} background - if true, errors are silently ignored
+ */
+async function _fetchTenantConfig(slug, background) {
   try {
     var res = await fetch(API_BASE + '/public/tenants/' + encodeURIComponent(slug) + '/config')
     if (res.ok) {
@@ -40,7 +72,8 @@ async function loadTenantConfig(slug) {
       tenantConfig = data
       _tenantConfigCache[slug] = data
       applyTenantBranding(data)
-    } else {
+      try { sessionStorage.setItem('_tc_' + slug, JSON.stringify(data)) } catch (_e) {}
+    } else if (!background) {
       // Tenant not found or inactive — clear any stale branding
       clearTenantContext()
     }
