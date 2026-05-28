@@ -236,34 +236,59 @@ def send_otp():
         '</div>'
     )
 
+    resend_key = os.environ.get('RESEND_API_KEY', '')
+
     try:
-        import smtplib
-        import socket
-        from email.mime.multipart import MIMEMultipart
-        from email.mime.text import MIMEText
-
-        msg            = MIMEMultipart('alternative')
-        msg['Subject'] = 'Your Ganga Realty LMS Login OTP'
-        msg['From']    = f'Ganga Realty LMS <{smtp_from}>'
-        msg['To']      = email
-        msg.attach(MIMEText(html_body, 'html'))
-
-        # Force IPv4 — Railway containers may not have IPv6 routing
-        try:
-            smtp_ip = socket.getaddrinfo(smtp_host, smtp_port, socket.AF_INET)[0][4][0]
-        except Exception:
-            smtp_ip = smtp_host
-
-        if smtp_port == 465:
-            with smtplib.SMTP_SSL(smtp_ip, smtp_port, timeout=15) as srv:
-                srv.login(smtp_user, smtp_pass)
-                srv.sendmail(smtp_from, email, msg.as_string())
+        if resend_key:
+            # ── Resend API (HTTPS — works on Railway) ────────────────────────
+            import urllib.request as _ur
+            payload = {
+                'from':    f'Ganga Realty LMS <{smtp_from}>',
+                'to':      [email],
+                'subject': 'Your Ganga Realty LMS Login OTP',
+                'html':    html_body,
+            }
+            api_req = _ur.Request(
+                'https://api.resend.com/emails',
+                data=__import__('json').dumps(payload).encode(),
+                headers={
+                    'Authorization': f'Bearer {resend_key}',
+                    'Content-Type':  'application/json',
+                },
+                method='POST',
+            )
+            _ur.urlopen(api_req, timeout=15)
         else:
-            with smtplib.SMTP(smtp_ip, smtp_port, timeout=15) as srv:
-                srv.ehlo()
-                srv.starttls()
-                srv.login(smtp_user, smtp_pass)
-                srv.sendmail(smtp_from, email, msg.as_string())
+            # ── SMTP fallback ─────────────────────────────────────────────────
+            import smtplib, socket
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
+
+            if not smtp_user or not smtp_pass:
+                raise RuntimeError('No email provider configured (set RESEND_API_KEY or SMTP_USER/SMTP_PASS)')
+
+            msg            = MIMEMultipart('alternative')
+            msg['Subject'] = 'Your Ganga Realty LMS Login OTP'
+            msg['From']    = f'Ganga Realty LMS <{smtp_from}>'
+            msg['To']      = email
+            msg.attach(MIMEText(html_body, 'html'))
+
+            # Force IPv4 — Railway containers may not have IPv6 routing
+            try:
+                smtp_ip = socket.getaddrinfo(smtp_host, smtp_port, socket.AF_INET)[0][4][0]
+            except Exception:
+                smtp_ip = smtp_host
+
+            if smtp_port == 465:
+                with smtplib.SMTP_SSL(smtp_ip, smtp_port, timeout=15) as srv:
+                    srv.login(smtp_user, smtp_pass)
+                    srv.sendmail(smtp_from, email, msg.as_string())
+            else:
+                with smtplib.SMTP(smtp_ip, smtp_port, timeout=15) as srv:
+                    srv.ehlo()
+                    srv.starttls()
+                    srv.login(smtp_user, smtp_pass)
+                    srv.sendmail(smtp_from, email, msg.as_string())
 
     except Exception as exc:
         _db.session.delete(code_row)
