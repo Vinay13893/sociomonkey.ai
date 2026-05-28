@@ -1,5 +1,54 @@
-﻿async function renderDashboard() {
-  const content = document.getElementById('content')
+﻿// ── Dashboard lifecycle state ─────────────────────────────────────────────
+// These live at module scope so a new renderDashboard() call can cancel all
+// async callbacks (network requests, DOM writes) from the previous render.
+var _dashboardRenderId     = 0    // incremented on every renderDashboard() entry
+var _dashboardAbortCtrl    = null // AbortController for the render lifecycle signal
+var _dashboardRefreshAbort   = null  // AbortController for filter-triggered refreshes
+var _statsPromise            = null  // deduplicated in-flight stats request (shared across renders)
+var _dashboardRenderInFlight = false // dedup: prevents concurrent renderDashboard() calls
+
+async function renderDashboard() {  // ── Dedup: if a render is already in flight, skip rather than cancel it ──
+  if (_dashboardRenderInFlight) {
+    console.warn('[renderDashboard] dedup: render already in flight, skipping')
+    return
+  }
+  _dashboardRenderInFlight = true  // ── Cancel any prior render immediately ───────────────────────────────────
+  _dashboardRenderId++
+  var myId = _dashboardRenderId
+  if (_dashboardAbortCtrl) { _dashboardAbortCtrl.abort(); _dashboardAbortCtrl = null }
+  var ctrl = new AbortController()
+  _dashboardAbortCtrl = ctrl
+  var signal = ctrl.signal
+
+  // Claim global render ownership — any navigation away sets _ACTIVE_ROUTE to a
+  // different value which immediately invalidates _guard() for all stale callbacks.
+  window._ACTIVE_RENDER_ID = myId
+  window._ACTIVE_ROUTE     = 'dashboard'
+
+  // _guard(): true only while THIS render is still the active one on the dashboard route
+  function _guard() {
+    return myId === _dashboardRenderId
+        && !signal.aborted
+        && window._ACTIVE_ROUTE === 'dashboard'
+  }
+  // safeMutate(): ONLY permitted path for all innerHTML mutations in this render.
+  // Validates: render token, route, dispatch-in-flight, element existence + connection.
+  // Logs every write to [DOM WRITE] and wraps in try/catch to prevent null explosions.
+  function safeMutate(elOrId, html) {
+    if (!_guard()) { return false }
+    if (typeof _dispatchInFlight !== 'undefined' && _dispatchInFlight) { return false }
+    var el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId
+    if (!el || !el.isConnected) { return false }
+    var _id = typeof elOrId === 'string' ? elOrId : (el.id || '(el)')
+    console.log('[DOM WRITE]', _id, window._ACTIVE_ROUTE, window._ACTIVE_RENDER_ID)
+    try { el.innerHTML = html; return true }
+    catch (err) { console.error('[DOM WRITE ERROR]', _id, err); return false }
+  }
+
+  _PERF.count('renderDashboard')
+  _PERF.mark('renderDashboard')
+  var content = document.getElementById('content')
+  if (!content) { _dashboardRenderInFlight = false; _PERF.end('renderDashboard'); return }
   content.innerHTML = `
     <div style="max-width:1600px;margin:0 auto;padding:0;">
       <div class="dash-header-row">
@@ -69,6 +118,7 @@
       </div>
     </div>
   `
+  _PERF.lap('renderDashboard', 'shell-injected')
 
   const projectSel = document.getElementById('dashProjectFilter')
   const rangeSel   = document.getElementById('dashRangeFilter')
@@ -81,27 +131,38 @@
     if (_sc) _cachedStats = JSON.parse(_sc)
   } catch (_e) {}
 
-  console.time('[perf] stats api')
-  const _initStatsProm = fetch(
-    API_BASE + '/leads/dashboard/stats?range=this_week',
-    { headers: _apiAuthHeaders() }
-  ).then(function(r) { return r.json() })
-   .then(function(data) {
-     console.timeEnd('[perf] stats api')
-     try { sessionStorage.setItem(_statsKey, JSON.stringify(data)) } catch (_e) {}
-     return data
-   })
-   .catch(function() { return null })
+  // ── Request deduplication: if a stats fetch is already in flight, reuse its promise ────
+  if (!_statsPromise) {
+    _PERF.mark('stats-api')
+    _statsPromise = fetch(
+      API_BASE + '/leads/dashboard/stats?range=this_week',
+      { headers: _apiAuthHeaders() }   // no AbortSignal — promise is shared across renders
+    ).then(function(r) { return r.json() })
+     .then(function(data) {
+       _PERF.end('stats-api')
+       try { sessionStorage.setItem(_statsKey, JSON.stringify(data)) } catch (_e) {}
+       return data
+     })
+     .catch(function() {
+       _PERF.cancel('stats-api')
+       return null
+     })
+     .finally(function() { _statsPromise = null })
+  }
+  var _initStatsProm = _statsPromise
 
   // ── Projects: populate dropdown in background — don't block event wiring ──
-  console.time('[perf] projects api')
+  _PERF.mark('projects-api')
   loadProjects().then(function() {
-    console.timeEnd('[perf] projects api')
+    if (!_guard()) return  // navigated away — DOM is gone
+    _PERF.end('projects-api')
+    var selEl = document.getElementById('dashProjectFilter')
+    if (!selEl) return
     projects.forEach(function(p) {
       var opt = document.createElement('option')
       opt.value = p.id
       opt.textContent = p.name
-      projectSel.appendChild(opt)
+      selEl.appendChild(opt)
     })
   })
 
@@ -119,11 +180,12 @@
 
   function renderStatusGrid(counts, totalLeads) {
     const grid = document.getElementById('statusGrid')
+    if (!grid || !grid.isConnected) return  // DOM removed or disconnected
     const totalStages = STATUS_ORDER
       .filter(s => !['assigned', 'unassigned'].includes(s))
       .reduce((sum, s) => sum + (counts[s] || 0), 0)
 
-    grid.innerHTML = STATUS_ORDER.map(status => {
+    var _statusHtml = STATUS_ORDER.map(status => {
       const cfg = STATUS_COLORS[status] || { bg: '#f1f5f9', color: '#334155', label: status }
       const count = counts[status] || 0
       const isAssignment = status === 'assigned' || status === 'unassigned'
@@ -138,6 +200,7 @@
         </div>
       `
     }).join('')
+    safeMutate(grid, _statusHtml)
   }
 
   function renderFunnel(counts, totalLeads) {
@@ -185,18 +248,21 @@
       `
     }).join('')
 
-    document.getElementById('dashFunnel').innerHTML = `
+    var _funnelEl = document.getElementById('dashFunnel')
+    if (!_funnelEl || !_funnelEl.isConnected) return
+    safeMutate(_funnelEl, `
       <div class="dash-funnel-inner">
         <svg viewBox="0 0 ${W} ${H}" class="dash-funnel-svg">${svgContent}</svg>
         <div class="dash-funnel-legend">${legendRows}</div>
       </div>
-    `
+    `)
   }
 
   function renderSourcePie(sourceStats) {
     const container = document.getElementById('dashSourceChart')
+    if (!container || !container.isConnected) return  // DOM removed or disconnected
     if (!sourceStats.length) {
-      container.innerHTML = `
+      safeMutate(container, `
         <svg viewBox="0 0 140 140" class="dash-source-svg">
           <circle cx="70" cy="70" r="66" fill="none" stroke="#e2e8f0" stroke-width="26"/>
           <text x="70" y="65" text-anchor="middle" dominant-baseline="central"
@@ -205,7 +271,7 @@
                 font-size="11" fill="#cbd5e1" font-family="-apple-system,Arial,sans-serif">for range</text>
         </svg>
         <div class="dash-source-legend" style="padding-left:48px;color:#94a3b8;font-size:12px;display:flex;align-items:center;">No source data</div>
-      `
+      `)
       return
     }
 
@@ -257,16 +323,17 @@
         </div>`
     }).join('')
 
-    container.innerHTML = `
+    safeMutate(container, `
       ${svg}
-      <div class="dash-source-legend">${rows}</div>`
+      <div class="dash-source-legend">${rows}</div>`)
   }
 
   function renderProjectBars(projectStats) {
     const wrap = document.getElementById('dashProjectBars')
+    if (!wrap || !wrap.isConnected) return  // DOM removed or disconnected
     const rows = (projectStats || []).slice().sort((a, b) => (b.total || 0) - (a.total || 0)).slice(0, 6)
     if (!rows.length) {
-      wrap.innerHTML = '<div style="font-size:12px;color:#94a3b8;">No project data</div>'
+      safeMutate(wrap, '<div style="font-size:12px;color:#94a3b8;">No project data</div>')
       return
     }
     const max = Math.max(...rows.map(r => r.total || 0), 1)
@@ -278,7 +345,7 @@
       ['#ef4444','#f87171'],
       ['#10b981','#34d399'],
     ]
-    wrap.innerHTML = rows.map((r, i) => {
+    var _projHtml = rows.map((r, i) => {
       const width = Math.max(4, Math.round(((r.total || 0) / max) * 100))
       const [c1, c2] = BAR_COLORS[i % BAR_COLORS.length]
       return `
@@ -296,9 +363,23 @@
         </div>
       `
     }).join('')
+    safeMutate(wrap, _projHtml)
   }
 
   async function refreshDashboardViews(_preData) {
+    // Guard 1: bail immediately if this render has been superseded by a new renderDashboard()
+    if (!_guard()) return
+    // Guard 2: abort any in-flight concurrent refresh (rapid filter changes)
+    if (_dashboardRefreshAbort) {
+      _dashboardRefreshAbort.abort()
+      _dashboardRefreshAbort = null
+      _PERF.cancel('refreshDashboardViews')  // clean up abandoned mark before re-opening
+    }
+    var rCtrl = new AbortController()
+    _dashboardRefreshAbort = rCtrl
+
+    _PERF.count('refreshDashboardViews')
+    _PERF.mark('refreshDashboardViews')
     const params = new URLSearchParams()
     const rangeVal = rangeSel.value
     const projectVal = projectSel.value
@@ -316,48 +397,91 @@
     let data = (_preData && !projectVal) ? _preData : null
     if (!data) {
       const url = `${API_BASE}/leads/dashboard/stats${params.toString() ? `?${params.toString()}` : ''}`
-      const res = await fetch(url, { headers: _apiAuthHeaders() })
-      data = await res.json()
-      // Update stale-while-revalidate cache for the default range with no project filter
-      if (!projectVal && (rangeVal === 'this_week' || !rangeVal)) {
-        try { sessionStorage.setItem(_statsKey, JSON.stringify(data)) } catch (_e) {}
+      try {
+        const res = await fetch(url, { headers: _apiAuthHeaders(), signal: rCtrl.signal })
+        data = await res.json()
+        if (!projectVal && (rangeVal === 'this_week' || !rangeVal)) {
+          try { sessionStorage.setItem(_statsKey, JSON.stringify(data)) } catch (_e) {}
+        }
+      } catch (err) {
+        _PERF.cancel('refreshDashboardViews')
+        if (err && err.name === 'AbortError') return  // superseded by newer filter change
+        return
       }
     }
+
+    // Re-check after any await — render may have changed while fetching
+    if (!_guard() || rCtrl.signal.aborted) {
+      _PERF.cancel('refreshDashboardViews')
+      return
+    }
+
+    _PERF.lap('refreshDashboardViews', 'data-ready src=' + (_preData && !projectVal ? 'pre/cache' : 'network'))
     const stats = data.stats || {}
     const totalLeads = stats.total_leads || stats.my_leads || 0
 
-    document.getElementById('kpiSection').innerHTML = `
+    var _ct = performance.now()
+    safeMutate('kpiSection', `
       ${kpiCard('Total Leads', totalLeads, 'within selected filters', '#1d4ed8')}
       ${kpiCard('Site Visit Planned', stats.status_counts?.site_visit_planned || 0, 'leads with visits scheduled', '#7c3aed')}
       ${kpiCard('Site Visit Done', stats.status_counts?.site_visit_done || 0, 'completed site visits', '#059669')}
       ${kpiCard('Warm Rate', `${(stats.warm_rate || 0).toFixed(1)}%`, 'interested leads share', '#c2410c')}
-    `
+    `)
+    _PERF.lap('refreshDashboardViews', 'kpiSection: ' + (performance.now() - _ct).toFixed(1) + 'ms')
 
+    if (!_guard()) return
+    _ct = performance.now()
     renderFunnel(stats.status_counts || {}, totalLeads)
+    _PERF.lap('refreshDashboardViews', 'funnel: ' + (performance.now() - _ct).toFixed(1) + 'ms')
+
+    if (!_guard()) return
+    _ct = performance.now()
     renderSourcePie(stats.source_stats || [])
+    _PERF.lap('refreshDashboardViews', 'sourcePie: ' + (performance.now() - _ct).toFixed(1) + 'ms')
+
+    if (!_guard()) return
+    _ct = performance.now()
     renderProjectBars(stats.project_stats || [])
+    _PERF.lap('refreshDashboardViews', 'projectBars: ' + (performance.now() - _ct).toFixed(1) + 'ms')
+
+    if (!_guard()) return
+    _ct = performance.now()
     renderStatusGrid(stats.status_counts || {}, totalLeads)
+    _PERF.lap('refreshDashboardViews', 'statusGrid: ' + (performance.now() - _ct).toFixed(1) + 'ms')
+    _PERF.end('refreshDashboardViews')
   }
 
-  rangeSel.addEventListener('change', () => {
-    const customRow = document.getElementById('dashCustomRange')
-    customRow.style.display = rangeSel.value === 'custom' ? 'flex' : 'none'
+  rangeSel.addEventListener('change', function() {
+    if (!_guard()) return  // stale element — render was superseded
+    var customRow = document.getElementById('dashCustomRange')
+    if (customRow) customRow.style.display = rangeSel.value === 'custom' ? 'flex' : 'none'
     if (rangeSel.value !== 'custom') refreshDashboardViews()
   })
-  document.getElementById('dashDateFrom').addEventListener('change', () => { if (rangeSel.value === 'custom') refreshDashboardViews() })
-  document.getElementById('dashDateTo').addEventListener('change',   () => { if (rangeSel.value === 'custom') refreshDashboardViews() })
-  projectSel.addEventListener('change', refreshDashboardViews)
+  document.getElementById('dashDateFrom').addEventListener('change', function() {
+    if (_guard() && rangeSel.value === 'custom') refreshDashboardViews()
+  })
+  document.getElementById('dashDateTo').addEventListener('change', function() {
+    if (_guard() && rangeSel.value === 'custom') refreshDashboardViews()
+  })
+  projectSel.addEventListener('change', function() { if (_guard()) refreshDashboardViews() })
 
-  // ── Initial render: use cached stats instantly, then update with fresh data ──
-  console.time('[perf] first paint')
+  _PERF.lap('renderDashboard', 'events-wired')
+  _PERF.end('renderDashboard')
+
+  // ── Initial hydration: shell is visible; fill with data ──────────────────
   if (_cachedStats) {
+    // Cache hit: paint immediately with stale data, revalidate silently in background
     refreshDashboardViews(_cachedStats)
-    console.timeEnd('[perf] first paint')
-    _initStatsProm.then(function(data) { if (data) refreshDashboardViews(data) })
+    _initStatsProm.then(function(data) {
+      if (!_guard()) return   // navigated away while the network request was in flight
+      if (data) refreshDashboardViews(data)
+    })
   } else {
-    // No cache (first ever load) — wait for fresh data
-    refreshDashboardViews(await _initStatsProm)
-    console.timeEnd('[perf] first paint')
+    // Cold load: no cache — must await fresh data before painting
+    var _freshData = await _initStatsProm
+    if (!_guard()) { _dashboardRenderInFlight = false; return }  // navigated away while waiting
+    if (_freshData) refreshDashboardViews(_freshData)
   }
+  _dashboardRenderInFlight = false
 }
 

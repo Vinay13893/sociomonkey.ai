@@ -40,6 +40,21 @@
       <div id="app"></div>
     </div>
   </div>
+  <script>
+    // _PERF fallback — guarantees window._PERF is always defined even if perf-tracer.js
+    // fails to load or execute. The full IIFE in perf-tracer.js overwrites this on success.
+    ;(function(){var f=function(){return 0};window._PERF=window._PERF||{mark:f,end:f,count:f,lap:f,cancel:f,report:function(){},reset:f,enabled:false}})()
+    // Global render-lifecycle tracking — set by showContent() before each render call.
+    // _guard() in every render module checks _ACTIVE_ROUTE so stale async callbacks
+    // are killed immediately on navigation even without a new renderDashboard() call.
+    window._ACTIVE_ROUTE     = null
+    window._ACTIVE_RENDER_ID = 0
+    // Boot verification — printed to console on every page load so you can confirm
+    // lifecycle globals are active BEFORE any render code runs.
+    console.log('[BOOT]', { ACTIVE_ROUTE: window._ACTIVE_ROUTE, ACTIVE_RENDER_ID: window._ACTIVE_RENDER_ID, PERF_EXISTS: !!window._PERF })
+    if (window._ACTIVE_RENDER_ID === undefined) console.error('[BOOT] FATAL: Lifecycle bootstrap failed — _ACTIVE_RENDER_ID is undefined. Verify inline script order in index.html.')
+  </script>
+  <script src="src/shared/utils/perf-tracer.js?v=20260602k"></script>
   <script src="env.js"></script>
 
   <!-- ── Config & State ───────────────────────────────────────────── -->
@@ -48,9 +63,9 @@
   <script src="src/config/feature-flags.js?v=20260527z"></script>
   <script src="src/contexts/app-state.js?v=20260527z"></script>
   <!-- Auth Orchestration (must load after app-state, before api) -->
-  <script src="src/auth/auth-manager.js?v=20260602f"></script>
+  <script src="src/auth/auth-manager.js?v=20260602h"></script>
   <!-- Tenant white-label engine (must load after feature-flags + auth-manager) -->
-  <script src="src/tenant-context/tenant-context.js?v=20260602d"></script>
+  <script src="src/tenant-context/tenant-context.js?v=20260602h"></script>
 
   <!-- ── Shared Utilities ─────────────────────────────────────────── -->
   <script src="src/shared/utils/helpers.js?v=20260602c"></script>
@@ -60,13 +75,13 @@
   <script src="src/tenant/auth/login.js?v=20260527z"></script>
 
   <!-- ── Shared Layout & Router ───────────────────────────────────── -->
-  <script src="src/shared/layouts/sidebar.js?v=20260602c"></script>
-  <script src="src/router/router.js?v=20260602g"></script>
+  <script src="src/shared/layouts/sidebar.js?v=20260602k"></script>
+  <script src="src/router/router.js?v=20260602k"></script>
 
   <!-- ── Products / CRM ───────────────────────────────────────────── -->
-  <script src="src/products/crm/dashboard.js?v=20260602g"></script>
+  <script src="src/products/crm/dashboard.js?v=20260602k"></script>
   <script src="src/products/crm/leads.js?v=20260602e"></script>
-  <script src="src/products/crm/pipeline.js?v=20260602e"></script>
+  <script src="src/products/crm/pipeline.js?v=20260602k"></script>
   <script src="src/products/crm/projects.js?v=20260602e"></script>
   <script src="src/products/crm/team.js?v=20260602e"></script>
   <script src="src/products/crm/excel.js?v=20260602e"></script>
@@ -94,6 +109,6 @@
   <script src="src/platform/settings/platform-settings.js?v=20260527z"></script>
 
   <!-- ── Main Entry Point ─────────────────────────────────────────── -->
-  <script src="src/main.js?v=20260602f"></script>
+  <script src="src/main.js?v=20260602h"></script>
 </body>
 </html>

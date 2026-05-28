@@ -1,7 +1,29 @@
-﻿async function renderPipeline() {
-  const content = document.getElementById('content')
+﻿// ── Pipeline lifecycle state ──────────────────────────────────────────────────────────
+var _pipelineRenderId  = 0
+var _pipelineAbortCtrl = null
+
+async function renderPipeline() {
+  _pipelineRenderId++
+  var myId = _pipelineRenderId
+  if (_pipelineAbortCtrl) { _pipelineAbortCtrl.abort(); _pipelineAbortCtrl = null }
+  var ctrl = new AbortController()
+  _pipelineAbortCtrl = ctrl
+  var signal = ctrl.signal
+  // Claim global route ownership — _guard() will fail immediately if user navigates away
+  window._ACTIVE_ROUTE = 'pipeline'
+  function _guard() {
+    return myId === _pipelineRenderId
+        && !signal.aborted
+        && window._ACTIVE_ROUTE === 'pipeline'
+  }
 
   await Promise.all([loadUsers(), loadProjects()])
+  if (!_guard()) return  // navigated away during users/projects load
+
+  // Re-fetch live content reference after await — pre-await ref may be detached
+  var content = document.getElementById('content')
+  if (!content || !content.isConnected) return
+
   const salesManagers = users.filter(u => u.role === 'sales_manager')
 
   content.innerHTML = `
@@ -37,10 +59,22 @@
     </div>
   `
 
-  const res = await fetch(`${API_BASE}/pipeline/stages`, {
-    headers: _apiAuthHeaders()
-  })
-  const data = await res.json()
+  var res
+  try {
+    res = await fetch(`${API_BASE}/pipeline/stages`, {
+      headers: _apiAuthHeaders(),
+      signal: signal
+    })
+  } catch (err) {
+    if (err && err.name === 'AbortError') return  // navigated away
+    return
+  }
+  if (!_guard()) return  // navigated away during fetch
+
+  var data
+  try { data = await res.json() } catch (_e) { return }
+  if (!_guard()) return  // navigated away during JSON parse
+
   window._pipelineData = data.pipeline || {}
 
   document.getElementById('pipelineManagerFilter')?.addEventListener('change', applyPipelineFilters)
@@ -50,6 +84,10 @@
 }
 
 function applyPipelineFilters() {
+  // Guard: bail if pipeline is not the active page (navigated away or never rendered)
+  var container = document.getElementById('pipelineContainer')
+  if (!container || !container.isConnected) return
+
   const managerId  = document.getElementById('pipelineManagerFilter')?.value || ''
   const projectId  = document.getElementById('pipelineProjectFilter')?.value || ''
   const pipeline   = window._pipelineData || {}
@@ -61,7 +99,7 @@ function applyPipelineFilters() {
     managerUserIds.add(parseInt(managerId))
   }
 
-  document.getElementById('pipelineContainer').innerHTML = PIPELINE_STAGES.map(stage => {
+  container.innerHTML = PIPELINE_STAGES.map(stage => {
     const stageData = pipeline[stage] || { count: 0, leads: [] }
     let filtered = stageData.leads
     if (managerUserIds) filtered = filtered.filter(l => l.assigned_to && managerUserIds.has(l.assigned_to))

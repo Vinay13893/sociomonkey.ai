@@ -4,6 +4,8 @@
 
 // Maps activeTab → LMS render function (tenant layer, unchanged)
 function showContent() {
+  _PERF.count('showContent')
+  window._ACTIVE_ROUTE = activeTab  // update global route BEFORE any render function runs — this is what kills stale _guard() checks in renders that are no longer the active route
   if (activeTab === 'dashboard') return renderDashboard()
   if (activeTab === 'leads') return renderLeads()
   if (activeTab === 'projects') return renderProjects()
@@ -148,23 +150,34 @@ function renderAccessDenied(route) {
     '</div>'
 }
 
+var _dispatchInFlight = false
 async function dispatch() {
+  // Prevent re-entrant dispatch — e.g. popstate fires while a render is in progress
+  if (_dispatchInFlight) {
+    _PERF.lap('dispatch', 'skipped-reentrant')
+    return
+  }
+  _dispatchInFlight = true
+  _PERF.count('dispatch')
+  _PERF.mark('dispatch')
   if (typeof showLoader === 'function') showLoader()
-  console.time('[perf] dispatch')
   try {
     await _dispatchInner()
   } catch (err) {
     if (typeof showToast === 'function') showToast((err && err.message) || 'Navigation error', 'error')
   } finally {
+    _dispatchInFlight = false
     if (typeof hideLoader === 'function') hideLoader()
-    console.timeEnd('[perf] dispatch')
+    _PERF.end('dispatch')
   }
 }
 
 async function _dispatchInner() {
   const platRoot     = document.getElementById('platformRoot')
   const tenantLayout = document.getElementById('tenantLayout')
+  _PERF.mark('parseRoute')
   const route = parseRoute()
+  _PERF.end('parseRoute')
 
   // ── Login pages (no auth required) ─────────────────────────────────────────
   if (route.layer === 'platform-login') {
@@ -241,7 +254,9 @@ async function _dispatchInner() {
   }
   if (platRoot)     platRoot.style.display     = 'none'
   if (tenantLayout) tenantLayout.style.display = ''
+  _PERF.mark('render')
   render()
+  _PERF.end('render')
 }
 
 // ─── Programmatic navigation ─────────────────────────────────────────────────

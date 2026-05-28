@@ -4,6 +4,8 @@ var _sidebarForProduct = null
 var _sidebarForSlug = undefined   // tracks platformTenantSlug at last build
 
 function renderApp() {
+  _PERF.count('renderApp')
+  _PERF.mark('renderApp')
   // Only rebuild sidebar when product/slug context changes (not on every tab click)
   if (!_sidebarBuilt || _sidebarForProduct !== currentProduct || _sidebarForSlug !== platformTenantSlug) {
     _buildSidebar()
@@ -15,14 +17,19 @@ function renderApp() {
   }
 
   // Always update the main content area
+  var _domT = performance.now()
   root.innerHTML = '<div id="content"></div>'
+  _PERF.lap('renderApp', 'root-innerHTML: ' + (performance.now() - _domT).toFixed(1) + 'ms')
   _safeShowContent()
 
   // Re-apply tenant branding (logo, CSS vars) after sidebar re-renders
   if (typeof reapplyTenantBranding === 'function') reapplyTenantBranding()
+  _PERF.end('renderApp')
 }
 
 function _buildSidebar() {
+  _PERF.count('_buildSidebar')
+  _PERF.mark('_buildSidebar')
   var navItems = getNavItems()
 
   // ── Product switcher: platform_owner only ──────────────────────────────────────────
@@ -83,6 +90,10 @@ function _buildSidebar() {
       activeTab = btn.dataset.tab
       closeMobileSidebar()
       _syncNavActive()
+      // If a full dispatch() is in flight it will call renderApp() → _safeShowContent()
+      // with the updated activeTab when it completes. Skip the redundant render here
+      // to prevent a duplicate render cycle that would show up in _PERF.count().
+      if (typeof _dispatchInFlight !== 'undefined' && _dispatchInFlight) return
       root.innerHTML = '<div id="content"></div>'
       _safeShowContent()
     })
@@ -102,6 +113,7 @@ function _buildSidebar() {
       dispatch()
     })
   }
+  _PERF.end('_buildSidebar')
 }
 
 function _syncNavActive() {

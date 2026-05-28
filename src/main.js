@@ -90,6 +90,7 @@ function _sidebarRefresh() {
 }
 
 async function init() {
+  _PERF.mark('init')
   // Pre-warm the Railway backend immediately — eliminates cold-start wait.
   // Fires before any user interaction; by the time they authenticate and navigate,
   // the backend is already awake and responsive.
@@ -102,12 +103,14 @@ async function init() {
   var impHandled = _handleImpToken()
 
   if (impHandled) {
+    _PERF.lap('init', 'session=impersonation')
     // Impersonation session: schedule expiry + background refresh
     if (token) authScheduleExpiry()
     loadMe().then(_sidebarRefresh).catch(function() {})
   } else {
     // Normal session restore from storage (validates token expiry locally)
     var hasSession = authRestoreSession()
+    _PERF.lap('init', 'session=' + (hasSession ? 'restored-from-storage' : 'none-redirect-to-login'))
     if (hasSession) {
       if (token) authScheduleExpiry()
       loadMe().then(_sidebarRefresh).catch(function() {})
@@ -115,7 +118,12 @@ async function init() {
   }
 
   if (typeof hideLoader === 'function') hideLoader()
+  _PERF.end('init')
   dispatch()
+  // Remind developer how to see the waterfall after full hydration
+  setTimeout(function () {
+    console.log('%c[PERF] Ready. Call _PERF.report() to see the full timing waterfall.', 'color:#3b82f6;font-style:italic')
+  }, 4000)
 }
 
 init()

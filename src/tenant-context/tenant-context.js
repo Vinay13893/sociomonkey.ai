@@ -30,12 +30,15 @@ var _tenantConfigCache = {}
  *   3. Network fetch                    — cold path, only on first ever load
  */
 async function loadTenantConfig(slug) {
-  if (!slug) return
+  _PERF.mark('loadTenantConfig')
+  if (!slug) { _PERF.end('loadTenantConfig'); return }
 
   // 1. In-memory cache (same page session)
   if (_tenantConfigCache[slug]) {
+    _PERF.lap('loadTenantConfig', 'path=memory-cache')
     tenantConfig = _tenantConfigCache[slug]
     applyTenantBranding(tenantConfig)
+    _PERF.end('loadTenantConfig')
     return
   }
 
@@ -45,9 +48,11 @@ async function loadTenantConfig(slug) {
     if (_stored) {
       var _cached = JSON.parse(_stored)
       if (_cached) {
+        _PERF.lap('loadTenantConfig', 'path=sessionStorage')
         tenantConfig = _cached
         _tenantConfigCache[slug] = _cached
         applyTenantBranding(_cached)
+        _PERF.end('loadTenantConfig')
         // Refresh config from network in background — don't await
         _fetchTenantConfig(slug, true)
         return
@@ -56,7 +61,9 @@ async function loadTenantConfig(slug) {
   } catch (_e) {}
 
   // 3. Network fetch (cold path — first ever load or after sessionStorage cleared)
+  _PERF.lap('loadTenantConfig', 'path=COLD-NETWORK ⚠')
   await _fetchTenantConfig(slug, false)
+  _PERF.end('loadTenantConfig')
 }
 
 /**
