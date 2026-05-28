@@ -242,8 +242,11 @@ def send_otp():
         if resend_key:
             # ── Resend API (HTTPS — works on Railway) ────────────────────────
             import urllib.request as _ur
+            # Use RESEND_FROM if set, else fall back to onboarding@resend.dev
+            # (resend.dev is pre-verified on all Resend accounts — no domain setup needed)
+            resend_from = os.environ.get('RESEND_FROM', 'Ganga Realty LMS <onboarding@resend.dev>')
             payload = {
-                'from':    f'Ganga Realty LMS <{smtp_from}>',
+                'from':    resend_from,
                 'to':      [email],
                 'subject': 'Your Ganga Realty LMS Login OTP',
                 'html':    html_body,
