@@ -3,9 +3,10 @@
 
 async function renderExcelUpload() {
   const content = document.getElementById('content')
+  if (!content) return
   content.innerHTML = `
     <div class="card">
-      <h2>ðŸ“¤ Bulk Import Leads from Excel</h2>
+      <h2>📤 Bulk Import Leads from Excel</h2>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;">
         <div>
           <h3>Import File</h3>
@@ -15,8 +16,8 @@ async function renderExcelUpload() {
               <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" required style="display:block;margin-bottom:10px;padding:10px;border:1px solid #cbd5e1;border-radius:6px;width:100%;box-sizing:border-box;" />
               <small style="color:#64748b;">Maximum file size: 5MB</small>
             </div>
-            <button type="submit" class="button" style="width:100%;margin-bottom:10px;">ðŸ“¤ Upload File</button>
-            <button type="button" class="button secondary" id="downloadTemplate" style="width:100%;">â¬‡ï¸ Download Template</button>
+            <button type="submit" class="button" style="width:100%;margin-bottom:10px;">📤 Upload File</button>
+            <button type="button" class="button secondary" id="downloadTemplate" style="width:100%;">⬇️ Download Template</button>
           </form>
         </div>
         
@@ -114,7 +115,7 @@ function showImportResult(data, success) {
   if (!success) {
     resultDiv.innerHTML = `
       <div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:16px;color:#7f1d1d;">
-        <h3 style="margin:0 0 10px 0;">âŒ Import Failed</h3>
+        <h3 style="margin:0 0 10px 0;">❌ Import Failed</h3>
         <p>${data.errors[0]?.error || 'An error occurred'}</p>
       </div>
     `
@@ -122,7 +123,7 @@ function showImportResult(data, success) {
   }
   
   const downloadBtn = data.report_b64
-    ? `<button onclick="downloadImportReport()" style="margin-top:16px;padding:10px 20px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;">ðŸ“¥ Download Import Report (.xlsx)</button>`
+    ? `<button onclick="downloadImportReport()" style="margin-top:16px;padding:10px 20px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;">📥 Download Import Report (.xlsx)</button>`
     : ''
 
   // Store b64 for the download handler
@@ -130,7 +131,7 @@ function showImportResult(data, success) {
 
   let resultHtml = `
     <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:16px;color:#166534;">
-      <h3 style="margin:0 0 10px 0;">âœ… Import Complete</h3>
+      <h3 style="margin:0 0 10px 0;">✅ Import Complete</h3>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;">
         <div style="padding:12px;background:#dcfce7;border-radius:4px;">
           <div style="font-size:12px;color:#6b7280;">Successfully Imported</div>

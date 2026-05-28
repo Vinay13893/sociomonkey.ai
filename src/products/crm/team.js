@@ -2,8 +2,12 @@
 // TEAM MANAGEMENT
 // ============================================================================
 
+var _teamRenderId = 0
+
 async function renderTeamManagement() {
+  var myId = ++_teamRenderId
   const content = document.getElementById('content')
+  if (!content) return
   content.innerHTML = `
     <div class="card">
       <div class="header" style="margin-bottom:20px;">
@@ -17,8 +21,10 @@ async function renderTeamManagement() {
   document.getElementById('newUserBtn').addEventListener('click', openUserForm)
   
   await loadUsers()
-  
+  if (myId !== _teamRenderId) return
+
   const container = document.getElementById('teamContainer')
+  if (!container) return
 
   const TABLE_HEADERS_BASE = `<thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead>`
   const TABLE_HEADERS_TEAM = `<thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Sales Manager</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead>`
@@ -112,7 +118,8 @@ async function renderTeamManagement() {
 
 async function openEditUserForm(editUser) {
   const content = document.getElementById('content')
-  
+  if (!content) return
+
   let salesManagerOptions = ''
   if (user.role === 'superadmin') {
     const managers = users.filter(u => u.role === 'sales_manager')
@@ -202,6 +209,7 @@ async function openEditUserForm(editUser) {
 
 async function openUserForm() {
   const content = document.getElementById('content')
+  if (!content) return
   content.innerHTML = `
     <div class="card" style="max-width:600px;">
       <h2>Add Team Member</h2>

@@ -2,13 +2,17 @@
 // ACTIVITY LOGS
 // ============================================================================
 
+var _activityLogsRenderId = 0
+
 async function renderActivityLogs() {
+  var myId = ++_activityLogsRenderId
   const content = document.getElementById('content')
+  if (!content) return
   content.innerHTML = `
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
         <h2 style="margin:0;">Activity Logs</h2>
-        <button class="button" onclick="downloadActivityLogs()" style="font-size:13px;padding:8px 16px;">â¬‡ Download Excel</button>
+        <button class="button" onclick="downloadActivityLogs()" style="font-size:13px;padding:8px 16px;">⬇ Download Excel</button>
       </div>
       <div style="display:flex;gap:10px;margin:0 0 20px;">
         <select id="filterUser" class="select" style="width:200px;">
@@ -38,8 +42,10 @@ async function renderActivityLogs() {
   
   await loadActivityLogs()
   await loadUsers()
-  
+  if (myId !== _activityLogsRenderId) return
+
   const userSelect = document.getElementById('filterUser')
+  if (!userSelect) return
   userSelect.innerHTML = '<option value="">All Users</option>' +
     users.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
   

@@ -1,8 +1,12 @@
 ﻿// REPORTS
 // ============================================================================
 
+var _reportsRenderId = 0
+
 async function renderReports(dateFrom = '', dateTo = '') {
+  var myId = ++_reportsRenderId
   const content = document.getElementById('content')
+  if (!content) return
 
   // Generate month options
   const monthOptions = Array.from({length:12}, (_,i) =>
@@ -12,7 +16,7 @@ async function renderReports(dateFrom = '', dateTo = '') {
   const activeFilter = dateFrom || dateTo
   const fmtD = d => new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})
   const filterLabel = !activeFilter      ? 'All Time'
-    : dateFrom && dateTo ? `${fmtD(dateFrom)} â†’ ${fmtD(dateTo)}`
+    : dateFrom && dateTo ? `${fmtD(dateFrom)} → ${fmtD(dateTo)}`
     : dateFrom           ? `From ${fmtD(dateFrom)}`
     :                      `Until ${fmtD(dateTo)}`
 
@@ -21,16 +25,16 @@ async function renderReports(dateFrom = '', dateTo = '') {
       <div class="card" style="padding:20px 24px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;">
           <div>
-            <h2 style="margin:0;color:#0f172a;font-size:1.6rem;letter-spacing:-0.5px;font-weight:700;">ðŸ“Š Reports & Analytics</h2>
+            <h2 style="margin:0;color:#0f172a;font-size:1.6rem;letter-spacing:-0.5px;font-weight:700;">📊 Reports & Analytics</h2>
             <div style="margin-top:4px;display:flex;align-items:center;gap:8px;">
               <span style="font-size:12px;color:#64748b;">Period:</span>
               <span style="font-size:12px;font-weight:600;color:${activeFilter ? '#2563eb' : '#64748b'};background:${activeFilter ? '#eff6ff' : '#f1f5f9'};padding:2px 10px;border-radius:20px;border:1px solid ${activeFilter ? '#bfdbfe' : '#e2e8f0'};">${filterLabel}</span>
             </div>
           </div>
-          <button class="button" onclick="downloadLeadReport()" style="font-size:13px;padding:9px 18px;background:#2563eb;border-color:#2563eb;">â¬‡ Export Excel</button>
+          <button class="button" onclick="downloadLeadReport()" style="font-size:13px;padding:9px 18px;background:#2563eb;border-color:#2563eb;">⬇ Export Excel</button>
         </div>
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;">
-          <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:0.08em;margin-bottom:12px;text-transform:uppercase;">ðŸ—“ Filter by Date Range</div>
+          <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:0.08em;margin-bottom:12px;text-transform:uppercase;">🗓 Filter by Date Range</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
             <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:130px;">
               <label style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:0.04em;">FROM</label>
@@ -43,18 +47,18 @@ async function renderReports(dateFrom = '', dateTo = '') {
             <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:130px;">
               <label style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:0.04em;">QUICK SELECT</label>
               <select id="reportMonth" class="select" style="font-size:13px;padding:8px 10px;">
-                <option value="">â€” Select Month â€”</option>
+                <option value="">— Select Month —</option>
                 ${monthOptions}
               </select>
             </div>
             <div style="display:flex;gap:8px;align-items:flex-end;padding-bottom:1px;">
               <button id="applyReportFilter" class="button" style="font-size:13px;padding:9px 20px;">Apply</button>
-              <button id="clearReportFilter" class="button secondary" style="font-size:13px;padding:9px 14px;">âœ• Clear</button>
+              <button id="clearReportFilter" class="button secondary" style="font-size:13px;padding:9px 14px;">✕ Clear</button>
             </div>
           </div>
         </div>
       </div>
-      <div id="reportContainer"><div class="message">Loading analyticsâ€¦</div></div>
+      <div id="reportContainer"><div class="message">Loading analytics…</div></div>
     </div>
   `
 
@@ -188,8 +192,8 @@ async function renderReports(dateFrom = '', dateTo = '') {
   function personRow(s, isManager, color) {
     const warmCol = s.warm_rate >= 50 ? '#10b981' : s.warm_rate >= 20 ? '#f59e0b' : '#ef4444'
     const nameCell = isManager
-      ? `<td style="font-weight:700;color:${color || '#0f172a'};">â­ ${escape(s.name)} <span style="font-size:10px;font-weight:600;background:${color}18;color:${color};border-radius:8px;padding:1px 7px;margin-left:6px;">Manager</span></td>`
-      : `<td style="font-weight:500;padding-left:24px;">â†³ ${escape(s.name)}</td>`
+      ? `<td style="font-weight:700;color:${color || '#0f172a'};">⭐ ${escape(s.name)} <span style="font-size:10px;font-weight:600;background:${color}18;color:${color};border-radius:8px;padding:1px 7px;margin-left:6px;">Manager</span></td>`
+      : `<td style="font-weight:500;padding-left:24px;">↳ ${escape(s.name)}</td>`
     const rowStyle = isManager ? `style="background:${color}08;border-left:3px solid ${color};"` : ''
     return `
       <tr ${rowStyle}>
@@ -219,7 +223,7 @@ async function renderReports(dateFrom = '', dateTo = '') {
     const totalsRow    = `
       <tr style="background:${color}10;border-top:2px solid ${color}30;font-weight:700;">
         <td colspan="2" style="font-weight:700;color:${color};font-size:12px;text-transform:uppercase;letter-spacing:0.05em;">
-          âˆ‘ Team Total
+          ∑ Team Total
         </td>
         <td style="text-align:center;font-weight:800;font-size:14px;">${teamTotal}</td>
         <td style="text-align:center;color:#0891b2;font-weight:800;">${teamInterest}</td>
@@ -238,7 +242,7 @@ async function renderReports(dateFrom = '', dateTo = '') {
           </div>
           <div style="flex:1;min-width:0;">
             <div style="font-size:14px;font-weight:700;color:#0f172a;">${escape(mgr.name)}</div>
-            <div style="font-size:12px;color:#64748b;">${escape(mgr.email)} &nbsp;Â·&nbsp; ${group.members.length} team member${group.members.length !== 1 ? 's' : ''}</div>
+            <div style="font-size:12px;color:#64748b;">${escape(mgr.email)} &nbsp;·&nbsp; ${group.members.length} team member${group.members.length !== 1 ? 's' : ''}</div>
           </div>
           <div style="display:flex;gap:20px;flex-wrap:wrap;">
             <div style="text-align:center;">
@@ -300,7 +304,10 @@ async function renderReports(dateFrom = '', dateTo = '') {
   const hotRate  = total > 0 ? ((negotiation  / total) * 100).toFixed(1) : '0.0'
   const warmRate = total > 0 ? ((interested   / total) * 100).toFixed(1) : '0.0'
 
-  document.getElementById('reportContainer').innerHTML = `
+  if (myId !== _reportsRenderId) return
+  var reportContainer = document.getElementById('reportContainer')
+  if (!reportContainer) return
+  reportContainer.innerHTML = `
     <!-- KPI row -->
     <div class="rpt-kpi-grid">
       <div class="analytics-kpi">
@@ -360,7 +367,7 @@ async function renderReports(dateFrom = '', dateTo = '') {
           : '<div style="color:#94a3b8;padding:12px 0;font-size:13px;">No data</div>'}
       </div>
       <div class="card" style="margin:0;">
-        <h3 class="analytics-section-title">Leads Trend â€“ Last 30 Days</h3>
+        <h3 class="analytics-section-title">Leads Trend – Last 30 Days</h3>
         <div style="display:flex;align-items:flex-end;gap:3px;height:120px;padding-top:10px;">
           ${trendBars}
         </div>

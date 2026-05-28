@@ -2,8 +2,12 @@
 // PROJECTS
 // ============================================================================
 
+var _projectsRenderId = 0
+
 async function renderProjects() {
+  var myId = ++_projectsRenderId
   const content = document.getElementById('content')
+  if (!content) return
   content.innerHTML = `
     <div class="card">
       <div class="header" style="margin-bottom:20px;">
@@ -18,8 +22,10 @@ async function renderProjects() {
   if (newProjBtn) newProjBtn.addEventListener('click', openProjectForm)
   
   await loadProjects()
-  
+  if (myId !== _projectsRenderId) return
+
   const container = document.getElementById('projectsContainer')
+  if (!container) return
   if (projects.length === 0) {
     container.innerHTML = '<div class="message">No projects found</div>'
     return
@@ -46,7 +52,7 @@ async function renderProjects() {
               <td>${escape(p.location || '-')}</td>
               <td>${escape(p.developer || '-')}</td>
               <td>${escape(p.project_type || '-')}</td>
-              <td>${p.budget_min ? fmtBudget(p.budget_min) + ' â€“ ' + fmtBudget(p.budget_max) : '-'}</td>
+              <td>${p.budget_min ? fmtBudget(p.budget_min) + ' – ' + fmtBudget(p.budget_max) : '-'}</td>
               <td>${escape(p.created_by_name || '-')}</td>
               ${user && user.role === 'superadmin' ? '<td><button class="button secondary" data-id="' + p.id + '" style="font-size:12px;padding:6px 10px;">Edit</button><button class="button" data-del-id="' + p.id + '" data-del-name="' + escape(p.name) + '" style="font-size:12px;padding:6px 10px;background:#ef4444;border-color:#ef4444;margin-left:4px;">Delete</button></td>' : ''}
             </tr>
@@ -79,6 +85,7 @@ async function renderProjects() {
 async function openProjectForm(project = null) {
   const isEdit = project !== null
   const content = document.getElementById('content')
+  if (!content) return
   const budgetVal = (project && project.budget_min && project.budget_max)
     ? `${project.budget_min}|${project.budget_max}` : ''
   content.innerHTML = `
@@ -91,7 +98,7 @@ async function openProjectForm(project = null) {
         <input class="input" id="projType" placeholder="Project Type" value="${isEdit ? escape(project.project_type || '') : ''}" />
         <textarea class="input" id="projDescription" placeholder="Description" style="height:80px;">${isEdit ? escape(project.description || '') : ''}</textarea>
         
-        <label style="font-size:13px;color:#64748b;margin-bottom:4px;display:block;">Budget Range (â‚¹ Cr)</label>
+        <label style="font-size:13px;color:#64748b;margin-bottom:4px;display:block;">Budget Range (₹ Cr)</label>
         <select class="select" id="projBudget">
           ${budgetRangeOptions(project ? project.budget_min : null, project ? project.budget_max : null)}
         </select>

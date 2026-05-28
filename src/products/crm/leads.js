@@ -1,5 +1,7 @@
 async function renderLeads() {
+  var myId = (window._leadsRenderId = (window._leadsRenderId || 0) + 1)
   const content = document.getElementById('content')
+  if (!content) return
   content.innerHTML = `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">

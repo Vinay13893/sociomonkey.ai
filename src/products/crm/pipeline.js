@@ -50,7 +50,7 @@ async function renderPipeline() {
           </select>
         </div>
         <div style="display:flex;align-items:flex-end;">
-          <button onclick="clearPipelineFilters()" class="button secondary" style="font-size:12px;padding:7px 14px;">âœ• Clear</button>
+          <button onclick="clearPipelineFilters()" class="button secondary" style="font-size:12px;padding:7px 14px;">✕ Clear</button>
         </div>
       </div>
 
@@ -129,7 +129,7 @@ function applyPipelineFilters() {
             <div class="pipeline-card" style="border-left:3px solid ${color};" onclick="viewLeadDetails(${lead.id})">
               <div style="font-weight:600;font-size:12px;color:#0f172a;">${escape(lead.name)}</div>
               <div style="font-size:11px;color:#64748b;margin-top:2px;">${escape(lead.phone || '-')}</div>
-              <div style="font-size:11px;color:#94a3b8;margin-top:3px;">${escape(lead.assigned_to_name || 'Unassigned')}${mgrName ? ` <span style="color:#2563eb;">Â· ${escape(mgrName)}</span>` : ''}</div>
+              <div style="font-size:11px;color:#94a3b8;margin-top:3px;">${escape(lead.assigned_to_name || 'Unassigned')}${mgrName ? ` <span style="color:#2563eb;">· ${escape(mgrName)}</span>` : ''}</div>
             </div>`
           }).join('')}
           ${more > 0 ? `<div class="pipeline-more" onclick="openPipelineStage('${stage}','${safeM}','${safeP}')">+${more} more</div>` : ''}
@@ -179,13 +179,13 @@ function openPipelineStage(stage, managerId = '', projectId = '') {
           </div>
           <div style="flex:1;min-width:0;">
             <div style="font-weight:600;color:#0f172a;font-size:14px;">${escape(lead.name)}</div>
-            <div style="color:#64748b;font-size:12px;margin-top:2px;">${escape(lead.phone || '-')}${lead.email ? ' Â· ' + escape(lead.email) : ''}</div>
+            <div style="color:#64748b;font-size:12px;margin-top:2px;">${escape(lead.phone || '-')}${lead.email ? ' · ' + escape(lead.email) : ''}</div>
             ${lead.project_name ? `<div style="font-size:11px;color:#2563eb;margin-top:2px;">${escape(lead.project_name)}</div>` : ''}
           </div>
           <div style="text-align:right;flex-shrink:0;">
             <div style="font-size:12px;color:#475569;">${escape(lead.assigned_to_name || 'Unassigned')}</div>
             ${mgrName ? `<div style="font-size:11px;color:#7c3aed;margin-top:1px;">${escape(mgrName)}</div>` : ''}
-            ${lead.budget_min || lead.budget_max ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px;">${fmtBudget(lead.budget_min)} â€“ ${fmtBudget(lead.budget_max)}</div>` : ''}
+            ${lead.budget_min || lead.budget_max ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px;">${fmtBudget(lead.budget_min)} – ${fmtBudget(lead.budget_max)}</div>` : ''}
           </div>
         </div>`
       }).join('')
@@ -201,7 +201,7 @@ function openPipelineStage(stage, managerId = '', projectId = '') {
           <div style="font-size:20px;font-weight:800;color:#0f172a;">${PIPELINE_STAGE_LABELS[stage]}</div>
           <div style="font-size:13px;color:#64748b;margin-top:2px;">${leads.length} lead${leads.length !== 1 ? 's' : ''}</div>
         </div>
-        <button onclick="closePipelineModal()" class="modal-close" style="position:static;">âœ•</button>
+        <button onclick="closePipelineModal()" class="modal-close" style="position:static;">✕</button>
       </div>
       <div style="max-height:480px;overflow-y:auto;">${leadsHtml}</div>
     </div>

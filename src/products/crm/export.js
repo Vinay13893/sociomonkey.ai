@@ -3,9 +3,10 @@
 
 async function renderExportLeads() {
   const content = document.getElementById('content')
+  if (!content) return
   content.innerHTML = `
     <div class="card">
-      <h2>ðŸ“¥ Export Leads to Excel</h2>
+      <h2>📥 Export Leads to Excel</h2>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;">
         <div>
           <h3>Export Options</h3>
@@ -45,7 +46,7 @@ async function renderExportLeads() {
               <input type="date" id="exportDateTo" style="display:block;width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;" />
             </div>
             
-            <button type="submit" class="button" style="width:100%;">ðŸ“¥ Export to Excel</button>
+            <button type="submit" class="button" style="width:100%;">📥 Export to Excel</button>
           </form>
         </div>
         
@@ -75,7 +76,13 @@ async function renderExportLeads() {
   `
   
   await loadProjects()
-  
+
+  // Rebuild project dropdown with freshly loaded data
+  const exportProjectEl = document.getElementById('exportProject')
+  if (!exportProjectEl) return
+  exportProjectEl.innerHTML = '<option value="">All Projects</option>' +
+    projects.map(p => `<option value="${p.id}">${escape(p.name)}</option>`).join('')
+
   document.getElementById('exportForm').addEventListener('submit', handleExportLeads)
 }
 

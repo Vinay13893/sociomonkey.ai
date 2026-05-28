@@ -3,6 +3,7 @@
 
 async function renderMyProfile() {
   const content = document.getElementById('content')
+  if (!content) return
   content.innerHTML = `
     <div class="card" style="max-width:600px;">
       <h2>My Profile & Password</h2>
@@ -23,7 +24,7 @@ async function renderMyProfile() {
           </div>
           <div>
             <span style="color:#64748b;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Status</span>
-            <div style="color:#059669;font-weight:500;margin-top:4px;">âœ“ Active</div>
+            <div style="color:#059669;font-weight:500;margin-top:4px;">✓ Active</div>
           </div>
         </div>
       </div>
@@ -49,7 +50,7 @@ async function renderMyProfile() {
           </div>
           
           <div style="display:flex;gap:10px;">
-            <button type="submit" class="button">ðŸ” Update Password</button>
+            <button type="submit" class="button">🔒 Update Password</button>
             <button type="button" class="button secondary" onclick="renderApp(); showContent()">Cancel</button>
           </div>
         </div>
