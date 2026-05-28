@@ -242,8 +242,6 @@ def send_otp():
         if resend_key:
             # ── Resend API (HTTPS — works on Railway) ────────────────────────
             import urllib.request as _ur
-            # Use RESEND_FROM if set, else fall back to onboarding@resend.dev
-            # (resend.dev is pre-verified on all Resend accounts — no domain setup needed)
             resend_from = os.environ.get('RESEND_FROM', 'Ganga Realty LMS <onboarding@resend.dev>')
             payload = {
                 'from':    resend_from,
@@ -266,13 +264,13 @@ def send_otp():
                 _body = _he.read().decode('utf-8', errors='replace')
                 raise RuntimeError(f'Resend {_he.code}: {_body}')
         else:
-            # ── SMTP fallback ─────────────────────────────────────────────────
+            # ── Gmail SMTP (port 465 SSL) ─────────────────────────────────────
             import smtplib, socket
             from email.mime.multipart import MIMEMultipart
             from email.mime.text import MIMEText
 
             if not smtp_user or not smtp_pass:
-                raise RuntimeError('No email provider configured (set RESEND_API_KEY or SMTP_USER/SMTP_PASS)')
+                raise RuntimeError('No SMTP credentials configured (set SMTP_USER and SMTP_PASS)')
 
             msg            = MIMEMultipart('alternative')
             msg['Subject'] = 'Your Ganga Realty LMS Login OTP'
