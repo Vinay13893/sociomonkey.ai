@@ -122,19 +122,31 @@ function authSetSession(newToken, newUser, remember) {
 
 /**
  * Clear all auth state (memory + storage) and notify other tabs.
+ * When called inside an impersonation session (flagged by _imp_session in
+ * sessionStorage), only clears sessionStorage so the platform owner's
+ * localStorage session in the originating tab is left intact.
  */
 function authClearSession() {
   token = null
   user  = null
-  localStorage.removeItem('lms_token')
-  localStorage.removeItem('lms_user')
-  localStorage.removeItem('lms_products')
-  sessionStorage.removeItem('lms_token')
-  sessionStorage.removeItem('lms_user')
-  sessionStorage.removeItem('lms_products')
-  try {
-    localStorage.setItem('_auth_sync', JSON.stringify({ type: 'logout', ts: Date.now() }))
-  } catch (e) {}
+  if (sessionStorage.getItem('_imp_session')) {
+    // Impersonation session — protect platform owner's localStorage
+    sessionStorage.removeItem('lms_token')
+    sessionStorage.removeItem('lms_user')
+    sessionStorage.removeItem('lms_products')
+    sessionStorage.removeItem('_imp_session')
+    // Do NOT broadcast logout — it would log out the platform owner's tab
+  } else {
+    localStorage.removeItem('lms_token')
+    localStorage.removeItem('lms_user')
+    localStorage.removeItem('lms_products')
+    sessionStorage.removeItem('lms_token')
+    sessionStorage.removeItem('lms_user')
+    sessionStorage.removeItem('lms_products')
+    try {
+      localStorage.setItem('_auth_sync', JSON.stringify({ type: 'logout', ts: Date.now() }))
+    } catch (e) {}
+  }
 }
 
 /**

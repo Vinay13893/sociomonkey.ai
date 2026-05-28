@@ -602,7 +602,7 @@ function _wizShowSuccess(result) {
         '</div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<button onclick="platOpenOrgApp(\'' + _wiz.data.slug + '\')" class="plat-btn plat-btn-primary" style="width:100%;padding:12px;">Open App &rarr;</button>' +
+        '<button onclick="platOpenOrgApp(' + (result.tenant && result.tenant.id ? result.tenant.id : 0) + ',\'' + _wiz.data.slug + '\')" class="plat-btn plat-btn-primary" style="width:100%;padding:12px;">Open App &rarr;</button>' +
         '<button onclick="_wizClose();renderPlatformOrgs()" class="plat-btn plat-btn-outline" style="width:100%;padding:12px;">Back to Organizations</button>' +
       '</div>'
   }

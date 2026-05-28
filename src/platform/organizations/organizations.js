@@ -237,15 +237,27 @@ function _platOrgCardHtml(t) {
     '</div>' +
 
     '<div style="margin-top:10px;text-align:center;">' +
-      '<button onclick="platOpenOrgApp(\'' + _platEscAttr(t.slug) + '\')" style="border:none;background:none;color:#3b82f6;font-size:12px;cursor:pointer;font-weight:600;">Open App &#x2192;</button>' +
+      '<button onclick="platOpenOrgApp(' + t.id + ',\'' + _platEscAttr(t.slug) + '\')" style="border:none;background:none;color:#3b82f6;font-size:12px;cursor:pointer;font-weight:600;">Open App &#x2192;</button>' +
     '</div>' +
   '</div>'
 }
 
 // -- Actions ------------------------------------------------------------------
 
-function platOpenOrgApp(slug) {
-  window.open('/' + slug + '/lms', '_blank')
+async function platOpenOrgApp(tenantId, slug) {
+  try {
+    var res = await fetch(API_BASE + '/platform/tenants/' + tenantId + '/impersonate', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+    })
+    var data = await res.json()
+    if (!res.ok) { showToast(data.error || 'Could not open app.', 'error'); return }
+    var appUrl = '/' + slug + '/lms?imp=' + encodeURIComponent(data.token) +
+                 '&user=' + encodeURIComponent(JSON.stringify(data.user))
+    window.open(appUrl, '_blank')
+  } catch (e) {
+    showToast('Network error. Could not open app.', 'warning')
+  }
 }
 
 async function platViewOrgUsers(tenantId, tenantName) {
@@ -315,7 +327,7 @@ async function platImpersonateOrg(tenantId, tenantName, slug) {
     sessionStorage.setItem('_platform_token', token)
     sessionStorage.setItem('_platform_user', JSON.stringify(currentUser))
 
-    var loginUrl = '/' + slug + '/crm/login?imp=' + encodeURIComponent(data.token) +
+    var loginUrl = '/' + slug + '/lms?imp=' + encodeURIComponent(data.token) +
                    '&user=' + encodeURIComponent(JSON.stringify(data.user))
     window.open(loginUrl, '_blank')
 
