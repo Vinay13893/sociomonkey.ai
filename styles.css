@@ -61,6 +61,18 @@ body {
   margin-bottom: 0;
 }
 
+.sidebar-product-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: #60a5fa;
+  text-align: center;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 2px 0 4px;
+  opacity: 0.85;
+}
+
 /* Sidebar Navigation */
 .sidebar-nav {
   flex: 1;
@@ -1846,7 +1858,7 @@ body {
 
 
 /* ============================================================
-   PLATFORM LAYER v2 — Premium SaaS design overrides
+   PLATFORM LAYER v2 ï¿½ Premium SaaS design overrides
    All .plat-* rules below supersede earlier declarations.
    ============================================================ */
 
@@ -2003,7 +2015,7 @@ body {
 .plat-app-open-btn:hover { opacity: .75; }
 .plat-app-open-btn.inactive { color: #94a3b8 !important; cursor: default; }
 
-/* Full-width apps grid (for Applications page — 4 cols) */
+/* Full-width apps grid (for Applications page ï¿½ 4 cols) */
 .plat-apps-grid-full { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 18px; margin-bottom: 28px; }
 
 /* -- Dashboard grid ---------------------------------------- */

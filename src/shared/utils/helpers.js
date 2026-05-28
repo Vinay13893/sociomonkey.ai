@@ -4,10 +4,10 @@
 
 function getRoleDisplay(role) {
   const roles = {
-    'superadmin': 'ðŸ” Super Admin',
-    'sales_manager': 'ðŸ‘” Sales Manager',
-    'team_member': 'ðŸ‘¤ Team Member',
-    'platform_owner': 'ðŸŒ Platform Owner',
+    'superadmin': '🔐 Super Admin',
+    'sales_manager': '💼 Sales Manager',
+    'team_member': '👤 Team Member',
+    'platform_owner': '🌐 Platform Owner',
   }
   return roles[role] || role
 }
@@ -31,9 +31,9 @@ function getStatusColor(status) {
 
 function fmtBudget(val) {
   if (!val) return '?'
-  if (val >= 10000000) return 'â‚¹' + (val / 10000000).toFixed(1) + ' Cr'
-  if (val >= 100000) return 'â‚¹' + (val / 100000).toFixed(1) + ' L'
-  return 'â‚¹' + val
+  if (val >= 10000000) return '₹' + (val / 10000000).toFixed(1) + ' Cr'
+  if (val >= 100000) return '₹' + (val / 100000).toFixed(1) + ' L'
+  return '₹' + val
 }
 
 function budgetRangeOptions(selMin, selMax) {
@@ -43,7 +43,7 @@ function budgetRangeOptions(selMin, selMax) {
     const hi = Math.round((i + 0.5) * 10) / 10
     const min = Math.round(lo * 1e7)
     const max = Math.round(hi * 1e7)
-    const label = `â‚¹${lo} Cr â€“ â‚¹${hi} Cr`
+    const label = `₹${lo} Cr – ₹${hi} Cr`
     const sel = (selMin === min && selMax === max) ? ' selected' : ''
     opts += `<option value="${min}|${max}"${sel}>${label}</option>`
   }

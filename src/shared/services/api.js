@@ -90,10 +90,11 @@ async function login(email, password, remember, tenantSlug) {
 
   authSetSession(data.token, data.user, !!remember)
   availableProducts = data.products || []
-  // Stay on CRM if available, else first available product
+  // Prefer lms if available (Ganga Realty default); else first available product
   if (availableProducts.length > 0) {
+    const hasLms = availableProducts.find(p => p.slug === 'lms')
     const hasCrm = availableProducts.find(p => p.slug === 'crm')
-    currentProduct = hasCrm ? 'crm' : ((availableProducts[0] && availableProducts[0].slug) || 'crm')
+    currentProduct = hasLms ? 'lms' : (hasCrm ? 'crm' : ((availableProducts[0] && availableProducts[0].slug) || 'lms'))
     localStorage.setItem('current_product', currentProduct)
   }
   await loadMe()
@@ -106,7 +107,8 @@ async function login(email, password, remember, tenantSlug) {
     if (authIsPlatformUser()) {
       history.replaceState({}, '', '/')
     } else if (user && user.tenant_slug) {
-      history.replaceState({}, '', '/' + user.tenant_slug + '/crm')
+      const preferredProduct = availableProducts.find(p => p.slug === 'lms') ? 'lms' : 'crm'
+      history.replaceState({}, '', '/' + user.tenant_slug + '/' + preferredProduct)
     }
   }
   dispatch()

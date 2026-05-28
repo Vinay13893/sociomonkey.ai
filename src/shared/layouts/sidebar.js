@@ -1,109 +1,137 @@
-﻿function renderApp() {
-  const navItems = getNavItems()
-  
-  // Update product switcher
-  const switcher = document.getElementById('productSwitcher')
-  if (switcher) {
-    if (user.role === 'platform_owner') {
-      // Platform owner sees all active products + direct Platform Admin button
-      switcher.innerHTML = `
-        <div style="padding:8px 12px 4px;font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:.08em;text-transform:uppercase;">Products</div>
-        ${availableProducts.map(p => `
-          <button onclick="switchProduct('${p.slug}')" style="
-            display:block;width:100%;text-align:left;padding:6px 14px;border:none;
-            background:${currentProduct === p.slug ? 'rgba(255,255,255,.15)' : 'transparent'};
-            color:${currentProduct === p.slug ? '#fff' : '#cbd5e1'};
-            font-size:13px;cursor:pointer;border-radius:6px;margin:1px 4px;
-          ">
-            ${p.icon || 'ðŸ“¦'} ${p.name}
-          </button>
-        `).join('')}
-        <div style="border-top:1px solid rgba(255,255,255,.1);margin:6px 0;"></div>
-      `
-    } else if (availableProducts.length > 1) {
-      switcher.innerHTML = `
-        <div style="padding:8px 12px 4px;font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:.08em;text-transform:uppercase;">Switch Product</div>
-        ${availableProducts.map(p => `
-          <button onclick="switchProduct('${p.slug}')" style="
-            display:block;width:100%;text-align:left;padding:6px 14px;border:none;
-            background:${currentProduct === p.slug ? 'rgba(255,255,255,.15)' : 'transparent'};
-            color:${currentProduct === p.slug ? '#fff' : '#cbd5e1'};
-            font-size:13px;cursor:pointer;border-radius:6px;margin:1px 4px;
-          ">
-            ${p.icon || 'ðŸ“¦'} ${p.name}
-          </button>
-        `).join('')}
-        <div style="border-top:1px solid rgba(255,255,255,.1);margin:6px 0;"></div>
-      `
-    } else {
-      switcher.innerHTML = ''
-    }
+// ─── Sidebar Performance State ────────────────────────────────────────────
+var _sidebarBuilt = false
+var _sidebarForProduct = null
+var _sidebarForSlug = undefined   // tracks platformTenantSlug at last build
+
+function renderApp() {
+  // Only rebuild sidebar when product/slug context changes (not on every tab click)
+  if (!_sidebarBuilt || _sidebarForProduct !== currentProduct || _sidebarForSlug !== platformTenantSlug) {
+    _buildSidebar()
+    _sidebarBuilt = true
+    _sidebarForProduct = currentProduct
+    _sidebarForSlug = platformTenantSlug
+  } else {
+    _syncNavActive()
   }
 
-  // Update sidebar
-  const sidebarNav = document.getElementById('sidebarNav')
-  sidebarNav.innerHTML = navItems.map((item, idx) => `
-    <button class="nav-item ${activeTab === item.key ? 'active' : ''}" id="nav${item.key}" data-tab="${item.key}">
-      ${item.label}
-    </button>
-  `).join('')
-  
-  // Update user display
-  const userDisplay = document.getElementById('userDisplay')
-  userDisplay.innerHTML = `<strong>${user.name}</strong><br/><small>${getRoleDisplay(user.role)}</small>`
-  
-  // Render main content area
+  // Always update the main content area
   root.innerHTML = '<div id="content"></div>'
-  
-  // Logout button
-  const logoutBtn = document.getElementById('logoutBtn')
-  logoutBtn.addEventListener('click', () => {
-    mobileNavInitialized = false
-    authClearSession()
-    clearTenantContext()
-    history.replaceState({}, '', '/login')
-    dispatch()
-  })
-  
-  // Sidebar navigation click handlers
-  navItems.forEach(item => {
-    const btn = document.getElementById(`nav${item.key}`)
-    if (btn) {
-      btn.addEventListener('click', () => {
-        activeTab = item.key
-        closeMobileSidebar()
-        renderApp()
-      })
-    }
-  })
-  
   _safeShowContent()
 
   // Re-apply tenant branding (logo, CSS vars) after sidebar re-renders
   if (typeof reapplyTenantBranding === 'function') reapplyTenantBranding()
 }
 
+function _buildSidebar() {
+  var navItems = getNavItems()
+
+  // ── Product switcher: platform_owner only ──────────────────────────────────────────
+  var switcher = document.getElementById('productSwitcher')
+  if (switcher) {
+    if (user.role === 'platform_owner' && availableProducts.length > 0) {
+      switcher.innerHTML =
+        '<div style="padding:8px 12px 4px;font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:.08em;text-transform:uppercase;">Products</div>' +
+        availableProducts.map(function(p) {
+          return '<button onclick="switchProduct(\'' + p.slug + '\')" style="' +
+            'display:block;width:100%;text-align:left;padding:6px 14px;border:none;' +
+            'background:' + (currentProduct === p.slug ? 'rgba(255,255,255,.15)' : 'transparent') + ';' +
+            'color:' + (currentProduct === p.slug ? '#fff' : '#cbd5e1') + ';' +
+            'font-size:13px;cursor:pointer;border-radius:6px;margin:1px 4px;">' +
+            (p.icon || '&#x1F4E6;') + ' ' + p.name +
+          '</button>'
+        }).join('') +
+        '<div style="border-top:1px solid rgba(255,255,255,.1);margin:6px 0;"></div>'
+    } else {
+      // Tenant users: no product switcher
+      switcher.innerHTML = ''
+    }
+  }
+
+  // ── Product label below logo (tenant users) ──────────────────────────────────
+  var productLabel = document.getElementById('sidebarProductLabel')
+  if (productLabel) {
+    if (user.role !== 'platform_owner' || platformTenantSlug) {
+      var prod = availableProducts.find(function(p) { return p.slug === currentProduct })
+      productLabel.textContent = (prod && prod.name) || 'Lead Management System'
+      productLabel.style.display = 'block'
+    } else {
+      productLabel.style.display = 'none'
+    }
+  }
+
+  // ── User display ─────────────────────────────────────────────────────────────
+  var userDisplay = document.getElementById('userDisplay')
+  if (userDisplay) {
+    userDisplay.innerHTML = '<strong>' + escape(user.name) + '</strong><br/><small>' + getRoleDisplay(user.role) + '</small>'
+  }
+
+  // ── Nav items: rebuild HTML + attach single delegated listener ─────────────────────
+  var sidebarNav = document.getElementById('sidebarNav')
+  if (sidebarNav) {
+    sidebarNav.innerHTML = navItems.map(function(item) {
+      return '<button class="nav-item' + (activeTab === item.key ? ' active' : '') + '" data-tab="' + item.key + '">' +
+        item.label +
+      '</button>'
+    }).join('')
+    // Clone to drop any previous delegated listener, then re-attach once
+    var freshNav = sidebarNav.cloneNode(false)
+    freshNav.innerHTML = sidebarNav.innerHTML
+    sidebarNav.parentNode.replaceChild(freshNav, sidebarNav)
+    freshNav.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-tab]')
+      if (!btn) return
+      activeTab = btn.dataset.tab
+      closeMobileSidebar()
+      _syncNavActive()
+      root.innerHTML = '<div id="content"></div>'
+      _safeShowContent()
+    })
+  }
+
+  // ── Logout: clone to reset accumulated listeners ───────────────────────────────────────
+  var logoutBtn = document.getElementById('logoutBtn')
+  if (logoutBtn) {
+    var freshBtn = logoutBtn.cloneNode(true)
+    logoutBtn.parentNode.replaceChild(freshBtn, logoutBtn)
+    freshBtn.addEventListener('click', function () {
+      _sidebarBuilt = false
+      mobileNavInitialized = false
+      authClearSession()
+      clearTenantContext()
+      history.replaceState({}, '', '/login')
+      dispatch()
+    })
+  }
+}
+
+function _syncNavActive() {
+  var navEl = document.getElementById('sidebarNav')
+  if (!navEl) return
+  navEl.querySelectorAll('[data-tab]').forEach(function (btn) {
+    btn.classList.toggle('active', btn.dataset.tab === activeTab)
+  })
+}
+
 function getNavItems() {
-  // Platform owner outside tenant context → Platform Admin nav only
+  // Platform owner outside tenant context
   if (user.role === 'platform_owner' && !platformTenantSlug) {
     return [
       { key: 'platform', label: '🌐 Platform Admin' },
-      { key: 'profile', label: '⚙️ My Profile' },
+      { key: 'profile',  label: '⚙️ My Profile' },
     ]
   }
 
-  // Non-CRM/LMS product → single "Coming Soon" page
+  // Non-CRM/LMS product → single page
   if (currentProduct !== 'crm' && currentProduct !== 'lms') {
-    const prod = availableProducts.find(p => p.slug === currentProduct)
+    var prod0 = availableProducts.find(function(p) { return p.slug === currentProduct })
     return [
-      { key: 'product_home', label: `${prod?.icon || 'ðŸ“¦'} Overview` },
-      { key: 'profile', label: 'âš™ï¸ My Profile' },
+      { key: 'product_home', label: (prod0 && prod0.icon ? prod0.icon + ' ' : '📦 ') + 'Overview' },
+      { key: 'profile',      label: '⚙️ My Profile' },
     ]
   }
 
-  // CRM product (default)
-  // CRM product (default)
-  const items = [
+  // LMS / CRM product nav
+  var items = [
     { key: 'dashboard', label: '📊 Dashboard' },
     { key: 'leads',     label: '👥 Leads' },
     { key: 'projects',  label: '🏢 Projects' },
@@ -137,28 +165,28 @@ function switchProduct(slug) {
   currentProduct = slug
   localStorage.setItem('current_product', slug)
   activeTab = (slug === 'crm' || slug === 'lms') ? 'dashboard' : 'product_home'
+  _sidebarBuilt = false   // force full sidebar rebuild on product switch
   renderApp()
 }
 
 function renderProductHome() {
-  const prod = availableProducts.find(p => p.slug === currentProduct)
-  const content = document.getElementById('content')
-  content.innerHTML = `
-    <div style="padding:40px;text-align:center;max-width:600px;margin:0 auto;">
-      <div style="font-size:64px;margin-bottom:16px;">${prod?.icon || 'ðŸ“¦'}</div>
-      <h2 style="font-size:28px;margin-bottom:8px;color:${prod?.color || '#1e3a5f'}">${prod?.name || currentProduct}</h2>
-      <p style="color:#64748b;font-size:15px;margin-bottom:8px;">${prod?.description || ''}</p>
-      <div style="display:inline-block;padding:4px 14px;border-radius:20px;background:#fef3c7;color:#92400e;font-size:13px;font-weight:600;margin-bottom:32px;">
-        ðŸš§ Coming Soon
-      </div>
-      <p style="color:#94a3b8;font-size:14px;">
-        This module is under active development.<br/>
-        Check back soon for updates.
-      </p>
-      <button class="button" onclick="switchProduct('crm')" style="margin-top:24px;">
-        â† Back to CRM
-      </button>
-    </div>
-  `
+  var prod = availableProducts.find(function(p) { return p.slug === currentProduct })
+  var content = document.getElementById('content')
+  var icon  = prod && prod.icon  ? prod.icon  : '📦'
+  var name  = prod && prod.name  ? prod.name  : currentProduct
+  var color = prod && prod.color ? prod.color : '#1e3a5f'
+  var desc  = prod && prod.description ? prod.description : ''
+  content.innerHTML =
+    '<div style="padding:40px;text-align:center;max-width:600px;margin:0 auto;">' +
+      '<div style="font-size:64px;margin-bottom:16px;">' + icon + '</div>' +
+      '<h2 style="font-size:28px;margin-bottom:8px;color:' + color + '">' + name + '</h2>' +
+      '<p style="color:#64748b;font-size:15px;margin-bottom:8px;">' + desc + '</p>' +
+      '<div style="display:inline-block;padding:4px 14px;border-radius:20px;background:#fef3c7;color:#92400e;font-size:13px;font-weight:600;margin-bottom:32px;">' +
+        '🚧 Coming Soon' +
+      '</div>' +
+      '<p style="color:#94a3b8;font-size:14px;">This module is under active development.<br/>Check back soon for updates.</p>' +
+      '<button class="button" onclick="switchProduct(\'lms\')" style="margin-top:24px;">' +
+        '← Back to LMS' +
+      '</button>' +
+    '</div>'
 }
-

@@ -84,7 +84,7 @@ function parseRoute() {
   // Tenant login page: /:slug/login (stable) or /:slug/:product/login (legacy)
   const tenantLoginSimpleMatch = path.match(/^\/([^\/]+)\/login$/)
   if (tenantLoginSimpleMatch) {
-    return { layer: 'tenant-login', slug: tenantLoginSimpleMatch[1], product: 'crm' }
+    return { layer: 'tenant-login', slug: tenantLoginSimpleMatch[1], product: 'lms' }
   }
 
   // Legacy tenant login page: /:slug/:product/login
@@ -95,7 +95,16 @@ function parseRoute() {
 
   // Tenant product paths:  /:slug/:product  (e.g. /ganga/crm  or /ganga/lms)
   const m = path.match(/^\/([^\/]+)\/([^\/]+)/)
-  if (m && m[1] !== 'products') return { layer: 'tenant', slug: m[1], product: m[2] }
+  if (m && m[1] !== 'products') {
+    const slug = m[1]
+    let product = m[2]
+    // Backward compat: /ganga/crm silently redirects to /ganga/lms
+    if (product === 'crm') {
+      history.replaceState({}, '', '/' + slug + '/lms')
+      product = 'lms'
+    }
+    return { layer: 'tenant', slug: slug, product: product }
+  }
 
   // Default: platform dashboard
   return { layer: 'platform', view: 'dashboard' }
@@ -112,7 +121,7 @@ function renderAccessDenied(route) {
   // For tenant users hitting platform routes, redirect them to their own tenant app
   if (user && authIsTenantUser() && (route.layer === 'platform' || route.layer === 'product-hub')) {
     if (user.tenant_slug) {
-      history.replaceState({}, '', '/' + user.tenant_slug + '/crm')
+      history.replaceState({}, '', '/' + user.tenant_slug + '/lms')
       dispatch()
       return
     }
@@ -131,7 +140,7 @@ function renderAccessDenied(route) {
         '<p style="color:#64748b;font-size:14px;margin-bottom:24px;">You don\'t have permission to access this page.</p>' +
         '<div style="display:flex;flex-direction:column;gap:10px;">' +
           (user && user.tenant_slug
-            ? '<button onclick="history.pushState({},\'\',' + "'/'+(user.tenant_slug)+'/crm');dispatch()" + '" class="button" style="font-size:14px;">Go to My App</button>'
+            ? '<button onclick="history.pushState({},\'\',' + "'/'+(user.tenant_slug)+'/lms');dispatch()" + '" class="button" style="font-size:14px;">Go to My App</button>'
             : '') +
           '<button onclick="authClearSession();history.replaceState({},' + "'','/login');dispatch()" + '" class="button" style="font-size:14px;background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0;">Sign Out</button>' +
         '</div>' +
@@ -169,10 +178,10 @@ async function _dispatchInner() {
     return
   }
   if (route.layer === 'tenant-login') {
-    // Already authenticated → go to tenant CRM
+    // Already authenticated → go to tenant LMS
     if (token && user) {
       const slug = (user && user.tenant_slug) || route.slug
-      history.replaceState({}, '', '/' + slug + '/crm')
+      history.replaceState({}, '', '/' + slug + '/lms')
       return _dispatchInner()
     }
     if (platRoot)     platRoot.style.display     = 'none'
