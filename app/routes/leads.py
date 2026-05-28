@@ -1,6 +1,8 @@
 from flask import Blueprint, jsonify, request
 from datetime import datetime, timedelta
 
+from sqlalchemy.orm import selectinload, joinedload
+
 from app.middleware import require_auth, require_role
 from app.models.base import db
 from app.models.lead import Lead, StatusHistory, LeadNote, LeadAssignmentHistory, CallbackReminder
@@ -28,6 +30,15 @@ def get_leads():
         query = query.filter_by(project_id=int(project_id))
     if status:
         query = query.filter_by(status=status)
+
+    # Eager-load all relationships used by to_dict() to avoid N+1 queries.
+    # Without this, each lead triggers separate SELECT for notes, callbacks,
+    # and assigned_user.manager — causing thousands of DB round-trips.
+    query = query.options(
+        selectinload(Lead.notes),
+        selectinload(Lead.callbacks),
+        joinedload(Lead.assigned_user).joinedload(User.manager),
+    )
 
     leads = query.order_by(Lead.created_at.desc()).all()
     return jsonify({'leads': [l.to_dict() for l in leads]}), 200
