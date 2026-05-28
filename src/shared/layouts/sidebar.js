@@ -108,12 +108,10 @@ function _buildSidebar() {
       _sidebarBuilt = false
       mobileNavInitialized = false
       // Capture slug BEFORE clearing session (user becomes null after clear)
-      var _logoutPath = (typeof authIsTenantUser === 'function' && authIsTenantUser() && user && user.tenant_slug)
-        ? '/' + user.tenant_slug + '/login'
-        : '/login'
+      var _slug = (user && user.tenant_slug) ? user.tenant_slug : null
       authClearSession()
       clearTenantContext()
-      history.replaceState({}, '', _logoutPath)
+      history.replaceState({}, '', _slug ? '/' + _slug + '/login' : '/login')
       dispatch()
     })
   }
