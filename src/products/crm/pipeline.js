@@ -1,4 +1,4 @@
-﻿// ── Pipeline lifecycle state ──────────────────────────────────────────────────────────
+// ── Pipeline lifecycle state ──────────────────────────────────────────────────────────
 var _pipelineRenderId  = 0
 var _pipelineAbortCtrl = null
 

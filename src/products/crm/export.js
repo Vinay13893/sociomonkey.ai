@@ -1,4 +1,4 @@
-﻿// EXPORT LEADS
+// EXPORT LEADS
 // ============================================================================
 
 async function renderExportLeads() {

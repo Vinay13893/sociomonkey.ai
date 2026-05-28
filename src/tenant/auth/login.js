@@ -1,4 +1,4 @@
-﻿function renderLogin(context) {
+function renderLogin(context) {
   // Auto-detect context from URL when not explicitly provided
   if (!context) {
     var path = window.location.pathname.replace(/\/+$/, '')

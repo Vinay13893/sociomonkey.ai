@@ -1,4 +1,4 @@
-﻿// MY PROFILE
+// MY PROFILE
 // ============================================================================
 
 async function renderMyProfile() {

@@ -1,4 +1,4 @@
-﻿// EXCEL IMPORT
+// EXCEL IMPORT
 // ============================================================================
 
 async function renderExcelUpload() {

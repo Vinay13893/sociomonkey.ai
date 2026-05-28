@@ -1,4 +1,4 @@
-﻿// API FUNCTIONS
+// API FUNCTIONS
 // ============================================================================
 
 function _apiAuthHeaders() {

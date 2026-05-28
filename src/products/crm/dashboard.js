@@ -1,4 +1,4 @@
-﻿// ── Dashboard lifecycle state ─────────────────────────────────────────────
+// ── Dashboard lifecycle state ─────────────────────────────────────────────
 // These live at module scope so a new renderDashboard() call can cancel all
 // async callbacks (network requests, DOM writes) from the previous render.
 var _dashboardRenderId     = 0    // incremented on every renderDashboard() entry
