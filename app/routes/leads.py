@@ -536,7 +536,10 @@ def dashboard_stats():
 
     def project_stats_for(base_query):
         """Return per-project status counts for the given base query."""
-        projects = Project.query.filter_by(is_active=True, tenant_id=user.tenant_id).order_by(Project.name).all()
+        # Use the request-scoped tenant_id so platform_owner drilling into a
+        # tenant sees that tenant's projects (not the platform's empty set).
+        tid_scope = request.current_tenant_id
+        projects = Project.query.filter_by(is_active=True, tenant_id=tid_scope).order_by(Project.name).all()
         result = []
         for p in projects:
             q = base_query.filter(Lead.project_id == p.id)
@@ -554,8 +557,11 @@ def dashboard_stats():
         return result
 
     def scoped_query_for_role():
-        tid = user.tenant_id
-        if user.role == 'superadmin':
+        # request.current_tenant_id is the authoritative tenant scope.
+        # For normal tenant users it equals user.tenant_id; for platform_owner
+        # drilling into a tenant via X-Tenant-Slug it is the target tenant's id.
+        tid = request.current_tenant_id
+        if user.role in ('superadmin', 'platform_owner'):
             q = Lead.query.filter_by(is_active=True, tenant_id=tid)
         elif user.role == 'sales_manager':
             team_ids = [tm.id for tm in user.team_members]
@@ -574,17 +580,20 @@ def dashboard_stats():
         q = apply_project_filter(q)
         return q
 
-    if user.role == 'superadmin':
+    if user.role in ('superadmin', 'platform_owner'):
         base_q = scoped_query_for_role()
         status_counts = {s: base_q.filter_by(status=s).count() for s in statuses}
         status_counts['assigned']   = base_q.filter(Lead.assigned_to.isnot(None)).count()
         status_counts['unassigned'] = base_q.filter(Lead.assigned_to.is_(None)).count()
         total = base_q.count()
         rates = calc_rates(total, status_counts)
+        # Use request.current_tenant_id for tenant-scoped counts so platform_owner
+        # viewing a tenant via X-Tenant-Slug gets that tenant's data.
+        tid_scope = request.current_tenant_id
         stats = {
             'total_leads': total,
-            'total_team_members': User.query.filter_by(role='team_member', tenant_id=user.tenant_id).count(),
-            'total_projects': Project.query.filter_by(is_active=True, tenant_id=user.tenant_id).count(),
+            'total_team_members': User.query.filter_by(role='team_member', tenant_id=tid_scope).count(),
+            'total_projects': Project.query.filter_by(is_active=True, tenant_id=tid_scope).count(),
             'status_counts': status_counts,
             'hot_rate': rates['hot_rate'],
             'warm_rate': rates['warm_rate'],

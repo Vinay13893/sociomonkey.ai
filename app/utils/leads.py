@@ -1,5 +1,6 @@
 from app.models.lead import Lead
 from app import db
+from flask import request as flask_request
 
 VALID_STATUSES = [
     'new', 'attempted', 'connected', 'interested',
@@ -9,11 +10,23 @@ VALID_STATUSES = [
 
 
 def get_user_visible_leads(user):
-    """Return a SQLAlchemy query filtered to leads visible to *user*, scoped by tenant."""
+    """Return a SQLAlchemy query filtered to leads visible to *user*, scoped by tenant.
+
+    For platform_owner, the active tenant is taken from request.current_tenant_id
+    (set by the auth middleware when X-Tenant-Slug header is present).  This
+    ensures the same tenant isolation that all other endpoints already enjoy.
+    """
     tid = user.tenant_id
 
-    # Platform owner — cross-tenant analytics (should not be used for direct lead ops)
+    # Platform owner — use the request-scoped tenant when drilling into a tenant.
+    # Falls back to cross-tenant (all) if no tenant context is active.
     if user.role == 'platform_owner':
+        try:
+            scoped_tid = flask_request.current_tenant_id
+            if scoped_tid and scoped_tid != user.tenant_id:
+                return Lead.query.filter_by(is_active=True, tenant_id=scoped_tid)
+        except RuntimeError:
+            pass  # Outside of request context (tests, scripts)
         return Lead.query.filter_by(is_active=True)
 
     if user.role == 'superadmin':
