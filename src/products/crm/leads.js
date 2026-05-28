@@ -204,9 +204,12 @@ function setLeadsPageSize(size) {
   filterAndRenderLeads(false)
 }
 
+var _filterRenderId = 0
 async function filterAndRenderLeads(resetPage = true) {
+  var myId = ++_filterRenderId
   if (resetPage) leadsPage = 1
   await loadLeads()
+  if (myId !== _filterRenderId) return  // a newer filter call superseded this one
 
   let filtered = leads
   const statusFilter       = document.getElementById('filterStatus')?.value

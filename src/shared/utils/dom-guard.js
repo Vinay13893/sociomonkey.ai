@@ -23,3 +23,18 @@ function _safeEl(elOrId) {
   var el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId
   return (el && el.isConnected) ? el : null
 }
+
+/**
+ * _debounce(fn, ms)
+ * Returns a debounced version of fn that delays invocation by ms milliseconds.
+ * Useful for date/text filter inputs where rapid changes should batch into one render.
+ */
+function _debounce(fn, ms) {
+  var timer
+  return function () {
+    var args = arguments
+    var ctx  = this
+    clearTimeout(timer)
+    timer = setTimeout(function () { fn.apply(ctx, args) }, ms)
+  }
+}

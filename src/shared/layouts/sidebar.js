@@ -107,9 +107,13 @@ function _buildSidebar() {
     freshBtn.addEventListener('click', function () {
       _sidebarBuilt = false
       mobileNavInitialized = false
+      // Capture slug BEFORE clearing session (user becomes null after clear)
+      var _logoutPath = (typeof authIsTenantUser === 'function' && authIsTenantUser() && user && user.tenant_slug)
+        ? '/' + user.tenant_slug + '/login'
+        : '/login'
       authClearSession()
       clearTenantContext()
-      history.replaceState({}, '', '/login')
+      history.replaceState({}, '', _logoutPath)
       dispatch()
     })
   }

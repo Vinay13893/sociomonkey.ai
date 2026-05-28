@@ -167,12 +167,16 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 5px;
   padding: 10px 16px;
   border: none;
   border-radius: 12px;
   background: #2563eb;
   color: #fff;
+  font-size: 14px;
   font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
   cursor: pointer;
   transition: transform 0.12s ease, background 0.12s ease;
 }
@@ -180,6 +184,14 @@ body {
 .button:hover {
   transform: translateY(-1px);
   background: #1d4ed8;
+}
+
+.button:disabled,
+.button[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+  transform: none;
 }
 
 .button.secondary {
