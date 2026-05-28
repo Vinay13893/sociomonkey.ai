@@ -1,8 +1,7 @@
 from datetime import datetime, timedelta
 import hashlib
 import os
-import random
-import string
+import secrets
 
 from flask import Blueprint, jsonify, request
 
@@ -106,106 +105,211 @@ def change_password():
 # OTP Login
 # ---------------------------------------------------------------------------
 
+_OTP_MAX_ATTEMPTS    = 5
+_OTP_RESEND_COOLDOWN = 30  # seconds
+
+
 def _hash_otp(otp: str) -> str:
     return hashlib.sha256(otp.encode()).hexdigest()
 
 
+def _client_ip(req) -> str:
+    forwarded = req.headers.get('X-Forwarded-For', '')
+    if forwarded:
+        return forwarded.split(',')[0].strip()[:45]
+    return (req.remote_addr or '')[:45]
+
+
 @auth_bp.route('/send-otp', methods=['POST'])
 def send_otp():
-    data = request.get_json() or {}
-    email = (data.get('email') or '').strip().lower()
+    data        = request.get_json() or {}
+    email       = (data.get('email')       or '').strip().lower()
+    tenant_slug = (data.get('tenant_slug') or '').strip().lower()
+
     if not email:
         return jsonify({'error': 'Email is required'}), 400
+    if '@' not in email or '.' not in email.split('@')[-1]:
+        return jsonify({'error': 'Invalid email address'}), 400
 
+    # Look up user (generic response prevents email enumeration)
     user = User.query.filter_by(email=email).first()
     if not user or not user.is_active:
-        # Return generic message to avoid email enumeration
         return jsonify({'message': 'If this email is registered, an OTP has been sent.'}), 200
 
+    # Validate tenant_slug when provided
+    if tenant_slug and user.role != 'platform_owner':
+        from app.models.tenant import Tenant
+        tenant = Tenant.query.filter_by(slug=tenant_slug).first()
+        if not tenant:
+            return jsonify({'error': 'Tenant not found'}), 400
+        if user.tenant and user.tenant.slug != tenant_slug:
+            return jsonify({'message': 'If this email is registered, an OTP has been sent.'}), 200
+
     from app.models.base import db as _db
-    from app.models.otp import OtpToken
+    from app.models.otp import OtpCode
 
-    # Invalidate any existing unused OTPs for this email
-    _db.session.query(OtpToken).filter_by(email=email, used=False).update({'used': True})
-
-    otp = ''.join(random.choices(string.digits, k=6))
-    token = OtpToken(
-        email=email,
-        otp_hash=_hash_otp(otp),
-        expires_at=datetime.utcnow() + timedelta(minutes=10),
+    # Resend cooldown — block OTP spam
+    cooldown_cutoff = datetime.utcnow() - timedelta(seconds=_OTP_RESEND_COOLDOWN)
+    recent = (
+        OtpCode.query
+        .filter_by(email=email, used=False)
+        .filter(OtpCode.created_at >= cooldown_cutoff)
+        .filter(OtpCode.expires_at  >  datetime.utcnow())
+        .first()
     )
-    _db.session.add(token)
+    if recent:
+        elapsed  = int((datetime.utcnow() - recent.created_at).total_seconds())
+        wait_sec = max(1, _OTP_RESEND_COOLDOWN - elapsed)
+        return jsonify({
+            'error':    f'Please wait {wait_sec} second(s) before requesting a new OTP.',
+            'cooldown': wait_sec,
+        }), 429
+
+    # Invalidate all previous unused OTPs for this email
+    _db.session.query(OtpCode).filter_by(email=email, used=False).update({'used': True})
+
+    # Crypto-safe OTP (never random.choices / Math.random)
+    otp_length = max(4, min(8, int(os.environ.get('OTP_LENGTH', '6'))))
+    raw_otp    = ''.join(str(secrets.randbelow(10)) for _ in range(otp_length))
+    expiry_min = max(1, int(os.environ.get('OTP_EXPIRY_MINUTES', '5')))
+
+    code_row = OtpCode(
+        email       = email,
+        otp_hash    = _hash_otp(raw_otp),
+        tenant_slug = tenant_slug or None,
+        expires_at  = datetime.utcnow() + timedelta(minutes=expiry_min),
+        ip_address  = _client_ip(request),
+    )
+    _db.session.add(code_row)
     _db.session.commit()
 
+    # ── Send email ────────────────────────────────────────────────────────────
+    smtp_host = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+    smtp_port = int(os.environ.get('SMTP_PORT', '587'))
     smtp_user = os.environ.get('SMTP_USER', '')
-    smtp_pass = os.environ.get('SMTP_PASSWORD', '')
+    smtp_pass = os.environ.get('SMTP_PASS', '')
+    smtp_from = os.environ.get('SMTP_FROM', smtp_user)
 
     if not smtp_user or not smtp_pass:
-        return jsonify({'error': 'Email service not configured'}), 503
+        _db.session.delete(code_row)
+        _db.session.commit()
+        return jsonify({'error': 'Email service not configured on this server'}), 503
+
+    html_body = (
+        '<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;'
+        'padding:24px;background:#f8fafc;border-radius:12px;">'
+        '<div style="text-align:center;margin-bottom:20px;">'
+        '<h2 style="color:#1e3a5f;margin:0;">Ganga Realty LMS</h2>'
+        '</div>'
+        '<div style="background:#ffffff;border-radius:8px;padding:32px;'
+        'box-shadow:0 2px 8px rgba(0,0,0,0.06);">'
+        f'<p style="color:#334155;font-size:16px;margin-top:0;">Hello {user.name},</p>'
+        '<p style="color:#334155;font-size:14px;">Use the code below to sign in. '
+        f'It is valid for <strong>{expiry_min} minutes</strong> and can only be used once.</p>'
+        '<div style="text-align:center;margin:28px 0;">'
+        '<div style="display:inline-block;background:#1e3a5f;color:#ffffff;'
+        'font-size:36px;font-weight:700;letter-spacing:14px;'
+        'padding:18px 36px;border-radius:8px;font-family:Courier New,monospace;">'
+        f'{raw_otp}</div>'
+        '</div>'
+        '<p style="color:#64748b;font-size:13px;margin-bottom:0;">'
+        'If you did not request this code, please ignore this email. '
+        'Never share this code with anyone.</p>'
+        '</div>'
+        '<p style="text-align:center;color:#94a3b8;font-size:11px;margin-top:16px;">'
+        'Ganga Realty &mdash; Powered by SocioMonkey.ai</p>'
+        '</div>'
+    )
 
     try:
         import smtplib
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
 
-        msg = MIMEMultipart('alternative')
+        msg            = MIMEMultipart('alternative')
         msg['Subject'] = 'Your Ganga Realty LMS Login OTP'
-        msg['From'] = f'Ganga Realty LMS <{smtp_user}>'
-        msg['To'] = email
-        html_body = (
-            f'<p>Hello {user.name},</p>'
-            f'<p>Your one-time login code is:</p>'
-            f'<h2 style="letter-spacing:6px;font-family:monospace;">{otp}</h2>'
-            f'<p>This code expires in <strong>10 minutes</strong>. Do not share it with anyone.</p>'
-            f'<p style="color:#64748b;font-size:12px;">Ganga Realty LMS</p>'
-        )
+        msg['From']    = f'Ganga Realty LMS <{smtp_from}>'
+        msg['To']      = email
         msg.attach(MIMEText(html_body, 'html'))
 
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, email, msg.as_string())
-    except Exception as exc:
-        return jsonify({'error': f'Failed to send email: {str(exc)}'}), 503
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as srv:
+            srv.ehlo()
+            srv.starttls()
+            srv.login(smtp_user, smtp_pass)
+            srv.sendmail(smtp_from, email, msg.as_string())
 
-    return jsonify({'message': 'OTP sent successfully'}), 200
+    except Exception as exc:
+        _db.session.delete(code_row)
+        _db.session.commit()
+        return jsonify({'error': f'Failed to send OTP email: {exc}'}), 503
+
+    log_activity(user.id, 'otp_sent', 'auth', description=f'OTP sent to {email}')
+    return jsonify({
+        'message':    'OTP sent successfully',
+        'expires_in': expiry_min * 60,
+    }), 200
 
 
 @auth_bp.route('/verify-otp', methods=['POST'])
 def verify_otp():
-    data = request.get_json() or {}
-    email = (data.get('email') or '').strip().lower()
-    otp = (data.get('otp') or '').strip()
+    data        = request.get_json() or {}
+    email       = (data.get('email')       or '').strip().lower()
+    otp         = (data.get('otp')         or '').strip()
+    tenant_slug = (data.get('tenant_slug') or '').strip().lower()
 
     if not email or not otp:
         return jsonify({'error': 'Email and OTP are required'}), 400
 
     from app.models.base import db as _db
-    from app.models.otp import OtpToken
+    from app.models.otp import OtpCode
 
-    token_row = (
-        OtpToken.query
+    code_row = (
+        OtpCode.query
         .filter_by(email=email, used=False)
-        .order_by(OtpToken.created_at.desc())
+        .order_by(OtpCode.created_at.desc())
         .first()
     )
 
-    if not token_row:
-        return jsonify({'error': 'Invalid or expired OTP'}), 401
+    if not code_row:
+        return jsonify({'error': 'No active OTP found. Please request a new one.'}), 401
 
-    if datetime.utcnow() > token_row.expires_at:
+    if datetime.utcnow() > code_row.expires_at:
+        code_row.used = True
+        _db.session.commit()
         return jsonify({'error': 'OTP has expired. Please request a new one.'}), 401
 
-    if token_row.otp_hash != _hash_otp(otp):
-        return jsonify({'error': 'Incorrect OTP'}), 401
+    if code_row.attempts >= _OTP_MAX_ATTEMPTS:
+        code_row.used = True
+        _db.session.commit()
+        return jsonify({'error': 'Too many failed attempts. Please request a new OTP.'}), 429
 
-    token_row.used = True
+    # Increment attempts before hash check (timing-attack mitigation)
+    code_row.attempts += 1
+    _db.session.commit()
+
+    if code_row.otp_hash != _hash_otp(otp):
+        remaining = _OTP_MAX_ATTEMPTS - code_row.attempts
+        if remaining <= 0:
+            code_row.used = True
+            _db.session.commit()
+            return jsonify({
+                'error': 'Incorrect OTP. No attempts remaining — please request a new one.'
+            }), 401
+        return jsonify({
+            'error': f'Incorrect OTP. {remaining} attempt(s) remaining.'
+        }), 401
+
+    # ── OTP verified ──────────────────────────────────────────────────────────
+    code_row.used = True
     _db.session.commit()
 
     user = User.query.filter_by(email=email).first()
     if not user or not user.is_active:
         return jsonify({'error': 'Account not found or inactive'}), 403
+
+    if tenant_slug and user.role != 'platform_owner':
+        if user.tenant and user.tenant.slug != tenant_slug:
+            return jsonify({'error': 'Access denied for this tenant'}), 403
 
     user.last_login = datetime.utcnow()
     _db.session.commit()
@@ -213,7 +317,11 @@ def verify_otp():
     jwt_token = create_token(user.id, user.role, tenant_id=user.tenant_id)
     log_activity(user.id, 'login_otp', 'auth', description=f'{user.email} logged in via OTP')
 
-    return jsonify({'token': jwt_token, 'user': user.to_dict(), 'products': _get_user_products(user)}), 200
+    return jsonify({
+        'token':    jwt_token,
+        'user':     user.to_dict(),
+        'products': _get_user_products(user),
+    }), 200
 
 
 def _get_user_products(user):

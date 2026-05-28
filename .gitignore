@@ -31,3 +31,4 @@ instance/
 
 # Railway local link
 .railway/
+.env*

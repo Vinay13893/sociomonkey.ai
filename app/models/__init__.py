@@ -5,6 +5,7 @@ from .user import User, Role
 from .project import Project
 from .lead import Lead, StatusHistory, LeadNote, LeadAssignmentHistory
 from .activity import ActivityLog
+from .otp import OtpCode, OtpToken
 
 __all__ = [
     'db',
@@ -14,4 +15,5 @@ __all__ = [
     'Project',
     'Lead', 'StatusHistory', 'LeadNote', 'LeadAssignmentHistory',
     'ActivityLog',
+    'OtpCode', 'OtpToken',
 ]
