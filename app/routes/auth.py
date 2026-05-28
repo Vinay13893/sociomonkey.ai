@@ -105,8 +105,10 @@ def change_password():
 # OTP Login
 # ---------------------------------------------------------------------------
 
-_OTP_MAX_ATTEMPTS    = 5
-_OTP_RESEND_COOLDOWN = 30  # seconds
+_OTP_MAX_ATTEMPTS        = 5
+_OTP_RESEND_COOLDOWN     = 30   # seconds between resends (UX guard)
+_OTP_RATE_LIMIT          = 5    # max OTP requests per email per window
+_OTP_RATE_WINDOW_MINUTES = 15   # rolling window in minutes
 
 
 def _hash_otp(otp: str) -> str:
@@ -148,17 +150,30 @@ def send_otp():
     from app.models.base import db as _db
     from app.models.otp import OtpCode
 
-    # Resend cooldown — block OTP spam
-    cooldown_cutoff = datetime.utcnow() - timedelta(seconds=_OTP_RESEND_COOLDOWN)
+    now = datetime.utcnow()
+
+    # Per-email rate limit: max 5 OTP requests in any rolling 15-minute window
+    rate_cutoff = now - timedelta(minutes=_OTP_RATE_WINDOW_MINUTES)
+    recent_count = OtpCode.query.filter_by(email=email).filter(
+        OtpCode.created_at >= rate_cutoff
+    ).count()
+    if recent_count >= _OTP_RATE_LIMIT:
+        return jsonify({
+            'error': f'Too many OTP requests. Please wait {_OTP_RATE_WINDOW_MINUTES} minutes before trying again.',
+            'cooldown': _OTP_RATE_WINDOW_MINUTES * 60,
+        }), 429
+
+    # 30-second resend cooldown (UX guard — prevents accidental double-sends)
+    cooldown_cutoff = now - timedelta(seconds=_OTP_RESEND_COOLDOWN)
     recent = (
         OtpCode.query
         .filter_by(email=email, used=False)
         .filter(OtpCode.created_at >= cooldown_cutoff)
-        .filter(OtpCode.expires_at  >  datetime.utcnow())
+        .filter(OtpCode.expires_at  >  now)
         .first()
     )
     if recent:
-        elapsed  = int((datetime.utcnow() - recent.created_at).total_seconds())
+        elapsed  = int((now - recent.created_at).total_seconds())
         wait_sec = max(1, _OTP_RESEND_COOLDOWN - elapsed)
         return jsonify({
             'error':    f'Please wait {wait_sec} second(s) before requesting a new OTP.',
