@@ -82,7 +82,7 @@ function renderLogin(context) {
             ? ''
             : ('<div style="text-align:center;margin-top:18px;">' +
                '<a href="#" id="switchToPassword" style="font-size:12px;color:#94a3b8;">' +
-               'Admin? Sign in with password</a></div>')) +
+               'Sign in with password</a></div>')) +
         '</div>' +
         // Password section — PRIMARY for platform, HIDDEN for tenant
         '<div id="passwordSection" style="display:' + passwordDisplay + ';margin-top:24px;">' +
