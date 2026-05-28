@@ -144,7 +144,7 @@ function renderAccessDenied(route) {
           (user && user.tenant_slug
             ? '<button onclick="history.pushState({},\'\',' + "'/'+(user.tenant_slug)+'/lms');dispatch()" + '" class="button" style="font-size:14px;">Go to My App</button>'
             : '') +
-          '<button onclick="var _sl=(user&&user.tenant_slug)?user.tenant_slug:null;authClearSession();clearTenantContext();history.replaceState({},' + "''" + ',_sl?\'/\'+_sl+\'/login\':\'/login\');dispatch()" class="button" style="font-size:14px;background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0;">Sign Out</button>' +
+'<button onclick="var _sl=(user&&user.tenant_slug)?user.tenant_slug:null;authClearSession();clearTenantContext();history.replaceState({},' + "''" + ',_sl?\'/'+ _sl+\'/login\':\'/login\');dispatch()" class="button" style="font-size:14px;background:#64748b;color:#fff;">Sign Out</button>'
         '</div>' +
       '</div>' +
     '</div>'

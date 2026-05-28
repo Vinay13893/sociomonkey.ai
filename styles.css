@@ -195,12 +195,12 @@ body {
 }
 
 .button.secondary {
-  background: #e2e8f0;
-  color: #0f172a;
+  background: #64748b;
+  color: #fff;
 }
 
 .button.secondary:hover {
-  background: #cbd5e1;
+  background: #475569;
 }
 
 /* Form Elements */

@@ -75,7 +75,7 @@ async function renderPlatformTenants() {
                   onclick="toggleTenantStatus(${t.id},'${t.status === 'active' ? 'inactive' : 'active'}','${escape(t.name)}')">
                   ${t.status === 'active' ? 'Deactivate' : 'Activate'}
                 </button>
-                <button class="button" style="font-size:12px;padding:4px 10px;background:#f1f5f9;color:#1e293b;margin-left:4px;"
+                <button class="button" style="font-size:12px;padding:4px 10px;background:#64748b;color:#fff;margin-left:4px;"
                   onclick="showTenantProductsModal(${t.id},'${escape(t.name)}')">
                   📦 Products
                 </button>
@@ -104,7 +104,7 @@ async function renderPlatformTenants() {
         <div id="ctError" style="color:#dc2626;font-size:13px;margin-bottom:8px;"></div>
         <div style="display:flex;gap:8px;">
           <button class="button" onclick="submitCreateTenant()" style="flex:1;">Create</button>
-          <button class="button" style="flex:1;background:#e2e8f0;color:#1e293b;" onclick="document.getElementById('createTenantModal').style.display='none'">Cancel</button>
+          <button class="button" style="flex:1;background:#64748b;color:#fff;" onclick="document.getElementById('createTenantModal').style.display='none'">Cancel</button>
         </div>
       </div>
     </div>
@@ -115,7 +115,7 @@ async function renderPlatformTenants() {
         <h3 id="tpmTitle">Products</h3>
         <div id="tpmBody"><p style="color:#64748b;">Loading…</p></div>
         <div style="text-align:right;margin-top:12px;">
-          <button class="button" style="background:#e2e8f0;color:#1e293b;" onclick="document.getElementById('tenantProductsModal').style.display='none'">Close</button>
+          <button class="button" style="background:#64748b;color:#fff;" onclick="document.getElementById('tenantProductsModal').style.display='none'">Close</button>
         </div>
       </div>
     </div>
@@ -157,7 +157,7 @@ async function showTenantProductsModal(tenantId, tenantName) {
             </td>
             <td style="padding:8px 10px;text-align:center;">
               ${subscribed.has(p.id)
-                ? `<button class="button" style="font-size:11px;padding:3px 10px;background:#fee2e2;color:#dc2626;"
+                ? `<button class="button" style="font-size:11px;padding:3px 10px;background:#ef4444;color:#fff;"
                     onclick="tenantUnsubscribeProduct(${tenantId},${p.id})">Revoke</button>`
                 : `<button class="button" style="font-size:11px;padding:3px 10px;"
                     onclick="tenantSubscribeProduct(${tenantId},${p.id},'${escape(tenantName)}')">Enable</button>`}
