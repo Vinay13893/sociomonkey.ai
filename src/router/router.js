@@ -150,12 +150,14 @@ function renderAccessDenied(route) {
 
 async function dispatch() {
   if (typeof showLoader === 'function') showLoader()
+  console.time('[perf] dispatch')
   try {
     await _dispatchInner()
   } catch (err) {
     if (typeof showToast === 'function') showToast((err && err.message) || 'Navigation error', 'error')
   } finally {
     if (typeof hideLoader === 'function') hideLoader()
+    console.timeEnd('[perf] dispatch')
   }
 }
 
@@ -233,7 +235,9 @@ async function _dispatchInner() {
       localStorage.setItem('current_product', route.product)
     }
     activeTab = 'dashboard'
-    await loadTenantConfig(route.slug)
+    // Don't block render — cached paths (in-memory/sessionStorage) apply branding
+    // synchronously; cold-path network fetch applies branding when it resolves.
+    loadTenantConfig(route.slug)
   }
   if (platRoot)     platRoot.style.display     = 'none'
   if (tenantLayout) tenantLayout.style.display = ''

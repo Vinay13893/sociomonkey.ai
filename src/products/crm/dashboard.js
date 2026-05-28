@@ -73,20 +73,36 @@
   const projectSel = document.getElementById('dashProjectFilter')
   const rangeSel   = document.getElementById('dashRangeFilter')
 
-  // Fire the dashboard stats request in parallel with the project list fetch.
-  // Both hit Railway simultaneously — total time = max(projects, stats) not the sum.
-  // Use _apiAuthHeaders() so X-Tenant-Slug is included when platform owner views a tenant.
+  // ── Stats: stale-while-revalidate — show cached data instantly, refresh in background ──
+  var _statsKey = '_ds_' + (platformTenantSlug || 'def') + '_week'
+  var _cachedStats = null
+  try {
+    var _sc = sessionStorage.getItem(_statsKey)
+    if (_sc) _cachedStats = JSON.parse(_sc)
+  } catch (_e) {}
+
+  console.time('[perf] stats api')
   const _initStatsProm = fetch(
     API_BASE + '/leads/dashboard/stats?range=this_week',
     { headers: _apiAuthHeaders() }
-  ).then(function(r) { return r.json() }).catch(function() { return null })
+  ).then(function(r) { return r.json() })
+   .then(function(data) {
+     console.timeEnd('[perf] stats api')
+     try { sessionStorage.setItem(_statsKey, JSON.stringify(data)) } catch (_e) {}
+     return data
+   })
+   .catch(function() { return null })
 
-  await loadProjects()
-  projects.forEach(p => {
-    const opt = document.createElement('option')
-    opt.value = p.id
-    opt.textContent = p.name
-    projectSel.appendChild(opt)
+  // ── Projects: populate dropdown in background — don't block event wiring ──
+  console.time('[perf] projects api')
+  loadProjects().then(function() {
+    console.timeEnd('[perf] projects api')
+    projects.forEach(function(p) {
+      var opt = document.createElement('option')
+      opt.value = p.id
+      opt.textContent = p.name
+      projectSel.appendChild(opt)
+    })
   })
 
   const SOURCE_COLORS = ['#3b82f6', '#14b8a6', '#f59e0b', '#8b5cf6', '#ef4444', '#64748b', '#10b981']
@@ -302,6 +318,10 @@
       const url = `${API_BASE}/leads/dashboard/stats${params.toString() ? `?${params.toString()}` : ''}`
       const res = await fetch(url, { headers: _apiAuthHeaders() })
       data = await res.json()
+      // Update stale-while-revalidate cache for the default range with no project filter
+      if (!projectVal && (rangeVal === 'this_week' || !rangeVal)) {
+        try { sessionStorage.setItem(_statsKey, JSON.stringify(data)) } catch (_e) {}
+      }
     }
     const stats = data.stats || {}
     const totalLeads = stats.total_leads || stats.my_leads || 0
@@ -327,7 +347,17 @@
   document.getElementById('dashDateFrom').addEventListener('change', () => { if (rangeSel.value === 'custom') refreshDashboardViews() })
   document.getElementById('dashDateTo').addEventListener('change',   () => { if (rangeSel.value === 'custom') refreshDashboardViews() })
   projectSel.addEventListener('change', refreshDashboardViews)
-  // Use the already-in-flight stats data (fetched in parallel with loadProjects)
-  refreshDashboardViews(await _initStatsProm)
+
+  // ── Initial render: use cached stats instantly, then update with fresh data ──
+  console.time('[perf] first paint')
+  if (_cachedStats) {
+    refreshDashboardViews(_cachedStats)
+    console.timeEnd('[perf] first paint')
+    _initStatsProm.then(function(data) { if (data) refreshDashboardViews(data) })
+  } else {
+    // No cache (first ever load) — wait for fresh data
+    refreshDashboardViews(await _initStatsProm)
+    console.timeEnd('[perf] first paint')
+  }
 }
 
