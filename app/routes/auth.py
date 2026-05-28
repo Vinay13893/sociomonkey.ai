@@ -238,6 +238,7 @@ def send_otp():
 
     try:
         import smtplib
+        import socket
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
 
@@ -247,11 +248,22 @@ def send_otp():
         msg['To']      = email
         msg.attach(MIMEText(html_body, 'html'))
 
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as srv:
-            srv.ehlo()
-            srv.starttls()
-            srv.login(smtp_user, smtp_pass)
-            srv.sendmail(smtp_from, email, msg.as_string())
+        # Force IPv4 — Railway containers may not have IPv6 routing
+        try:
+            smtp_ip = socket.getaddrinfo(smtp_host, smtp_port, socket.AF_INET)[0][4][0]
+        except Exception:
+            smtp_ip = smtp_host
+
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_ip, smtp_port, timeout=15) as srv:
+                srv.login(smtp_user, smtp_pass)
+                srv.sendmail(smtp_from, email, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_ip, smtp_port, timeout=15) as srv:
+                srv.ehlo()
+                srv.starttls()
+                srv.login(smtp_user, smtp_pass)
+                srv.sendmail(smtp_from, email, msg.as_string())
 
     except Exception as exc:
         _db.session.delete(code_row)
