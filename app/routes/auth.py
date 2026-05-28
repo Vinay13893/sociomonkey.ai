@@ -260,7 +260,11 @@ def send_otp():
                 },
                 method='POST',
             )
-            _ur.urlopen(api_req, timeout=15)
+            try:
+                _ur.urlopen(api_req, timeout=15)
+            except __import__('urllib').error.HTTPError as _he:
+                _body = _he.read().decode('utf-8', errors='replace')
+                raise RuntimeError(f'Resend {_he.code}: {_body}')
         else:
             # ── SMTP fallback ─────────────────────────────────────────────────
             import smtplib, socket
