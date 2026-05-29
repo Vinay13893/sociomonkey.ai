@@ -1,8 +1,156 @@
-from flask import Flask, jsonify
+import time
+import uuid
+
+from flask import Flask, g, has_request_context, jsonify, request
 from flask_cors import CORS
+from sqlalchemy import event
 
 from app.models.base import db
 from app.config import config_map, get_config_name
+
+
+def _perf_now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _perf_elapsed_ms(start: float) -> float:
+    return round((time.perf_counter() - start) * 1000, 2)
+
+
+def _perf_match_route(req) -> str:
+    path = req.path or ''
+    method = (req.method or 'GET').upper()
+    if method == 'POST' and path == '/api/auth/login':
+        return 'login'
+    if method == 'GET' and path.startswith('/api/public/tenants/') and path.endswith('/config'):
+        return 'tenant_config'
+    if method == 'GET' and path == '/api/leads/dashboard/stats':
+        return 'dashboard_stats'
+    if method == 'GET' and path == '/api/leads':
+        return 'leads'
+    return ''
+
+
+def _perf_sql_snippet(statement: str) -> str:
+    compact = ' '.join((statement or '').split())
+    return compact[:180]
+
+
+def _perf_emit(app: Flask, message: str):
+    app.logger.info(message)
+    print(message, flush=True)
+
+
+def _register_api_perf(app: Flask):
+    if getattr(app, '_api_perf_registered', False):
+        return
+
+    @app.before_request
+    def _api_perf_before_request():
+        route_key = _perf_match_route(request)
+        if not route_key:
+            return None
+        g._api_perf_route = route_key
+        g._api_perf_request_id = uuid.uuid4().hex[:10]
+        g._api_perf_started = time.perf_counter()
+        g._api_perf_request_received_at_ms = _perf_now_ms()
+        g._api_perf_db_total_ms = 0.0
+        g._api_perf_db_query_count = 0
+        _perf_emit(
+            app,
+            '[API-PERF] req={req} route={route} stage=request_received method={method} path={path} received_at_ms={received}'.format(
+                req=g._api_perf_request_id,
+                route=g._api_perf_route,
+                method=request.method,
+                path=request.full_path.rstrip('?'),
+                received=g._api_perf_request_received_at_ms,
+            ),
+        )
+        return None
+
+    @app.after_request
+    def _api_perf_after_request(response):
+        route_key = getattr(g, '_api_perf_route', '')
+        if not route_key:
+            return response
+
+        backend_ms = _perf_elapsed_ms(g._api_perf_started)
+        response_sent_at_ms = _perf_now_ms()
+        db_ms = round(float(getattr(g, '_api_perf_db_total_ms', 0.0)), 2)
+        query_count = int(getattr(g, '_api_perf_db_query_count', 0) or 0)
+        response.headers['X-Perf-Route-Key'] = route_key
+        response.headers['X-Perf-Request-Id'] = g._api_perf_request_id
+        response.headers['X-Perf-Request-Received-At-Ms'] = str(g._api_perf_request_received_at_ms)
+        response.headers['X-Perf-Response-Sent-At-Ms'] = str(response_sent_at_ms)
+        response.headers['X-Perf-Backend-Duration-Ms'] = f'{backend_ms:.2f}'
+        response.headers['X-Perf-Db-Duration-Ms'] = f'{db_ms:.2f}'
+        response.headers['X-Perf-Db-Query-Count'] = str(query_count)
+        _perf_emit(
+            app,
+            '[API-PERF] req={req} route={route} stage=response_sent status={status} backend_ms={backend:.2f} db_ms={db_ms:.2f} queries={queries} received_at_ms={received} response_sent_at_ms={sent}'.format(
+                req=g._api_perf_request_id,
+                route=route_key,
+                status=response.status_code,
+                backend=backend_ms,
+                db_ms=db_ms,
+                queries=query_count,
+                received=g._api_perf_request_received_at_ms,
+                sent=response_sent_at_ms,
+            ),
+        )
+        return response
+
+    app._api_perf_registered = True
+
+
+def _register_db_perf(app: Flask):
+    if getattr(app, '_db_perf_registered', False):
+        return
+
+    engine = db.engine
+
+    @event.listens_for(engine, 'before_cursor_execute')
+    def _before_cursor_execute(_conn, _cursor, statement, _parameters, context, _executemany):
+        if not has_request_context() or not getattr(g, '_api_perf_route', ''):
+            return
+        context._db_perf_started = time.perf_counter()
+        context._db_perf_started_at_ms = _perf_now_ms()
+        next_index = int(getattr(g, '_api_perf_db_query_count', 0) or 0) + 1
+        _perf_emit(
+            app,
+            '[DB-PERF] req={req} route={route} stage=query_start query_index={index} started_at_ms={started} sql="{sql}"'.format(
+                req=g._api_perf_request_id,
+                route=g._api_perf_route,
+                index=next_index,
+                started=context._db_perf_started_at_ms,
+                sql=_perf_sql_snippet(statement),
+            ),
+        )
+
+    @event.listens_for(engine, 'after_cursor_execute')
+    def _after_cursor_execute(_conn, cursor, _statement, _parameters, context, _executemany):
+        if not has_request_context() or not getattr(g, '_api_perf_route', ''):
+            return
+        started = getattr(context, '_db_perf_started', None)
+        if started is None:
+            return
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        ended_at_ms = _perf_now_ms()
+        g._api_perf_db_total_ms = float(getattr(g, '_api_perf_db_total_ms', 0.0)) + duration_ms
+        g._api_perf_db_query_count = int(getattr(g, '_api_perf_db_query_count', 0) or 0) + 1
+        _perf_emit(
+            app,
+            '[DB-PERF] req={req} route={route} stage=query_end query_index={index} ended_at_ms={ended} duration_ms={duration:.2f} rowcount={rowcount}'.format(
+                req=g._api_perf_request_id,
+                route=g._api_perf_route,
+                index=g._api_perf_db_query_count,
+                ended=ended_at_ms,
+                duration=duration_ms,
+                rowcount=getattr(cursor, 'rowcount', -1),
+            ),
+        )
+
+    app._db_perf_registered = True
 
 
 def create_app(config_name: str = None) -> Flask:
@@ -17,6 +165,7 @@ def create_app(config_name: str = None) -> Flask:
     # ------------------------------------------------------------------ Extensions
     db.init_app(app)
     CORS(app, resources={r'/api/*': {'origins': app.config.get('CORS_ORIGINS', '*')}})
+    _register_api_perf(app)
 
     # ------------------------------------------------------------------ Blueprints
     from app.routes.auth import auth_bp
@@ -59,6 +208,7 @@ def create_app(config_name: str = None) -> Flask:
 
     # ------------------------------------------------------------------ DB init + seed
     with app.app_context():
+        _register_db_perf(app)
         # Import all models so SQLAlchemy registers the tables
         from app.models import (  # noqa: F401
             User, Role, Project, Lead,

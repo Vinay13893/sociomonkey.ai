@@ -1,10 +1,12 @@
 from flask import Blueprint, jsonify, request
 from datetime import datetime, timedelta
 
+from sqlalchemy import case, func
 from sqlalchemy.orm import selectinload, joinedload
 
 from app.middleware import require_auth, require_role
 from app.models.base import db
+from app.models.activity import ActivityLog
 from app.models.lead import Lead, StatusHistory, LeadNote, LeadAssignmentHistory, CallbackReminder
 from app.models.project import Project
 from app.models.user import User
@@ -12,6 +14,14 @@ from app.utils.activity import log_activity
 from app.utils.leads import get_user_visible_leads, VALID_STATUSES
 
 leads_bp = Blueprint('leads', __name__, url_prefix='/api/leads')
+
+CALL_OUTCOME_LABELS = {
+    'connected': 'Connected',
+    'no_answer': 'No Answer',
+    'busy': 'Busy',
+    'wrong_number': 'Wrong Number',
+    'callback_scheduled': 'Callback Scheduled',
+}
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +478,6 @@ def add_lead_note(lead_id):
 @require_auth
 def dashboard_stats():
     user = request.current_user
-
     statuses = VALID_STATUSES
 
     def apply_time_filter(query):
@@ -513,11 +522,9 @@ def dashboard_stats():
         return query
 
     def calc_rates(total, counts):
-        """Calculate hot_rate and warm_rate."""
         if total == 0:
             return {'hot_rate': 0, 'warm_rate': 0}
-        warm = (counts.get('follow_up', 0) + counts.get('callback_scheduled', 0)
-                + counts.get('interested', 0))
+        warm = (counts.get('follow_up', 0) + counts.get('callback_scheduled', 0) + counts.get('interested', 0))
         site_visit = counts.get('site_visit_planned', 0) + counts.get('site_visit_done', 0)
         hot = site_visit + counts.get('negotiation', 0) + counts.get('booking_done', 0)
         return {
@@ -525,129 +532,145 @@ def dashboard_stats():
             'warm_rate': round(warm / total * 100, 1),
         }
 
-    def source_stats_for(base_query):
-        rows = (
-            base_query
-            .with_entities(Lead.source, db.func.count(Lead.id))
-            .group_by(Lead.source)
-            .all()
-        )
-        total = sum(r[1] for r in rows)
-        out = []
-        for source, count in rows:
-            if count == 0:
-                continue
-            out.append({
-                'source': source or 'Unknown',
-                'count': count,
-                'percent': round((count / total * 100), 1) if total else 0,
-            })
-        out.sort(key=lambda x: x['count'], reverse=True)
-        return out
+    tid_scope = request.current_tenant_id
+    team_ids = None
 
-    def project_stats_for(base_query):
-        """Return per-project status counts for the given base query."""
-        # Use the request-scoped tenant_id so platform_owner drilling into a
-        # tenant sees that tenant's projects (not the platform's empty set).
-        tid_scope = request.current_tenant_id
-        projects = Project.query.filter_by(is_active=True, tenant_id=tid_scope).order_by(Project.name).all()
-        result = []
-        for p in projects:
-            q = base_query.filter(Lead.project_id == p.id)
-            counts = {s: q.filter(Lead.status == s).count() for s in statuses}
-            total = q.count()
-            rates = calc_rates(total, counts)
-            result.append({
-                'project_id':   p.id,
-                'project_name': p.name,
-                'total':        total,
-                'status_counts': counts,
-                'hot_rate': rates['hot_rate'],
-                'warm_rate': rates['warm_rate'],
-            })
-        return result
+    if user.role == 'sales_manager':
+        team_ids = [r[0] for r in User.query.filter_by(manager_id=user.id).with_entities(User.id).all()]
 
     def scoped_query_for_role():
-        # request.current_tenant_id is the authoritative tenant scope.
-        # For normal tenant users it equals user.tenant_id; for platform_owner
-        # drilling into a tenant via X-Tenant-Slug it is the target tenant's id.
-        tid = request.current_tenant_id
         if user.role in ('superadmin', 'platform_owner'):
-            q = Lead.query.filter_by(is_active=True, tenant_id=tid)
+            q = Lead.query.filter_by(is_active=True, tenant_id=tid_scope)
         elif user.role == 'sales_manager':
-            team_ids = [tm.id for tm in user.team_members]
             q = Lead.query.filter(
                 Lead.is_active == True,
-                Lead.tenant_id == tid,
+                Lead.tenant_id == tid_scope,
                 db.or_(
                     Lead.sales_manager_id == user.id,
                     Lead.assigned_to == user.id,
-                    Lead.assigned_to.in_(team_ids),
+                    Lead.assigned_to.in_(team_ids or [-1]),
                 )
             )
         else:
-            q = Lead.query.filter_by(assigned_to=user.id, is_active=True, tenant_id=tid)
-        q = apply_time_filter(q)
-        q = apply_project_filter(q)
-        return q
+            q = Lead.query.filter_by(assigned_to=user.id, is_active=True, tenant_id=tid_scope)
+        return apply_project_filter(apply_time_filter(q))
+
+    base_q = scoped_query_for_role()
+    lead_scope = base_q.with_entities(
+        Lead.id.label('id'),
+        Lead.status.label('status'),
+        Lead.source.label('source'),
+        Lead.project_id.label('project_id'),
+        Lead.assigned_to.label('assigned_to'),
+    ).subquery()
+
+    status_count_exprs = [
+        func.coalesce(func.sum(case((lead_scope.c.status == s, 1), else_=0)), 0).label(f'{s}_count')
+        for s in statuses
+    ]
+    overall_row = db.session.query(
+        func.count(lead_scope.c.id).label('total'),
+        func.coalesce(func.sum(case((lead_scope.c.assigned_to.isnot(None), 1), else_=0)), 0).label('assigned'),
+        func.coalesce(func.sum(case((lead_scope.c.assigned_to.is_(None), 1), else_=0)), 0).label('unassigned'),
+        *status_count_exprs,
+    ).select_from(lead_scope).one()
+
+    status_counts = {s: int(getattr(overall_row, f'{s}_count') or 0) for s in statuses}
+    status_counts['assigned'] = int(overall_row.assigned or 0)
+    status_counts['unassigned'] = int(overall_row.unassigned or 0)
+    total = int(overall_row.total or 0)
+    rates = calc_rates(total, status_counts)
+
+    source_rows = (
+        db.session.query(
+            lead_scope.c.source.label('source'),
+            func.count(lead_scope.c.id).label('count'),
+        )
+        .select_from(lead_scope)
+        .group_by(lead_scope.c.source)
+        .order_by(func.count(lead_scope.c.id).desc())
+        .all()
+    )
+    source_total = sum(int(r.count or 0) for r in source_rows)
+    source_stats = []
+    for row in source_rows:
+        count = int(row.count or 0)
+        if count == 0:
+            continue
+        source_stats.append({
+            'source': row.source or 'Unknown',
+            'count': count,
+            'percent': round((count / source_total * 100), 1) if source_total else 0,
+        })
+
+    project_count_exprs = [
+        func.coalesce(func.sum(case((lead_scope.c.status == s, 1), else_=0)), 0).label(f'{s}_count')
+        for s in statuses
+    ]
+    project_rows = (
+        db.session.query(
+            Project.id.label('project_id'),
+            Project.name.label('project_name'),
+            func.count(lead_scope.c.id).label('total'),
+            *project_count_exprs,
+        )
+        .select_from(Project)
+        .outerjoin(lead_scope, lead_scope.c.project_id == Project.id)
+        .filter(Project.is_active == True, Project.tenant_id == tid_scope)
+        .group_by(Project.id, Project.name)
+        .order_by(Project.name)
+        .all()
+    )
+
+    def _project_row_to_dict(row):
+        counts = {s: int(getattr(row, f'{s}_count') or 0) for s in statuses}
+        total_count = int(row.total or 0)
+        project_rates = calc_rates(total_count, counts)
+        return {
+            'project_id': row.project_id,
+            'project_name': row.project_name,
+            'total': total_count,
+            'status_counts': counts,
+            'hot_rate': project_rates['hot_rate'],
+            'warm_rate': project_rates['warm_rate'],
+        }
+
+    project_stats = [_project_row_to_dict(row) for row in project_rows]
 
     if user.role in ('superadmin', 'platform_owner'):
-        base_q = scoped_query_for_role()
-        status_counts = {s: base_q.filter_by(status=s).count() for s in statuses}
-        status_counts['assigned']   = base_q.filter(Lead.assigned_to.isnot(None)).count()
-        status_counts['unassigned'] = base_q.filter(Lead.assigned_to.is_(None)).count()
-        total = base_q.count()
-        rates = calc_rates(total, status_counts)
-        # Use request.current_tenant_id for tenant-scoped counts so platform_owner
-        # viewing a tenant via X-Tenant-Slug gets that tenant's data.
-        tid_scope = request.current_tenant_id
         stats = {
             'total_leads': total,
-            'total_team_members': User.query.filter_by(role='team_member', tenant_id=tid_scope).count(),
-            'total_projects': Project.query.filter_by(is_active=True, tenant_id=tid_scope).count(),
+            'total_team_members': db.session.query(func.count(User.id)).filter(
+                User.role == 'team_member',
+                User.tenant_id == tid_scope,
+                User.is_active == True,
+            ).scalar(),
+            'total_projects': len(project_rows),
             'status_counts': status_counts,
             'hot_rate': rates['hot_rate'],
             'warm_rate': rates['warm_rate'],
-            'source_stats': source_stats_for(base_q),
-            'project_stats': project_stats_for(scoped_query_for_role()),
+            'source_stats': source_stats,
+            'project_stats': project_stats,
         }
     elif user.role == 'sales_manager':
-        base_q = scoped_query_for_role()
-        status_counts = {
-            s: base_q.filter(Lead.status == s).count()
-            for s in statuses
-        }
-        status_counts['assigned']   = base_q.filter(Lead.assigned_to.isnot(None)).count()
-        status_counts['unassigned'] = base_q.filter(Lead.assigned_to.is_(None)).count()
-        total = base_q.count()
-        rates = calc_rates(total, status_counts)
         stats = {
             'my_leads': total,
-            'team_size': len(user.team_members),
-            'total_projects': Project.query.filter_by(is_active=True, tenant_id=user.tenant_id).count(),
+            'team_size': len(team_ids or []),
+            'total_projects': len(project_rows),
             'status_counts': status_counts,
             'hot_rate': rates['hot_rate'],
             'warm_rate': rates['warm_rate'],
-            'source_stats': source_stats_for(base_q),
-            'project_stats': project_stats_for(scoped_query_for_role()),
+            'source_stats': source_stats,
+            'project_stats': project_stats,
         }
     else:
-        base_q = scoped_query_for_role()
-        status_counts = {
-            s: base_q.filter_by(status=s).count()
-            for s in statuses
-        }
-        status_counts['assigned']   = base_q.count()
-        status_counts['unassigned'] = 0
-        total = base_q.count()
-        rates = calc_rates(total, status_counts)
         stats = {
             'my_leads': total,
             'status_counts': status_counts,
             'hot_rate': rates['hot_rate'],
             'warm_rate': rates['warm_rate'],
-            'source_stats': source_stats_for(base_q),
-            'project_stats': project_stats_for(scoped_query_for_role()),
+            'source_stats': source_stats,
+            'project_stats': project_stats,
         }
 
     return jsonify({'stats': stats}), 200
@@ -662,11 +685,46 @@ def dashboard_stats():
 def action_board():
     """Return all data needed for the Daily Action Board for the current user."""
     user = request.current_user
+    page_size = 20
     now = datetime.utcnow()
     today_start = datetime(now.year, now.month, now.day)
     today_end   = today_start + timedelta(days=1)
 
+    date_from_str = (request.args.get('date_from') or '').strip()
+    date_to_str = (request.args.get('date_to') or '').strip()
+    range_requested = bool(date_from_str or date_to_str)
+
+    range_start = today_start
+    range_end = today_end
+    if range_requested:
+        try:
+            if date_from_str:
+                range_start = datetime.strptime(date_from_str, '%Y-%m-%d')
+            elif date_to_str:
+                range_start = datetime.strptime(date_to_str, '%Y-%m-%d')
+
+            if date_to_str:
+                range_end = datetime.strptime(date_to_str, '%Y-%m-%d') + timedelta(days=1)
+            else:
+                range_end = range_start + timedelta(days=1)
+        except ValueError:
+            range_requested = False
+            range_start = today_start
+            range_end = today_end
+
     visible = get_user_visible_leads(user)
+
+    if range_requested:
+        lead_scope = visible.filter(
+            db.or_(
+                db.and_(Lead.created_at >= range_start, Lead.created_at < range_end),
+                db.and_(Lead.updated_at >= range_start, Lead.updated_at < range_end),
+            )
+        )
+    else:
+        lead_scope = visible
+
+    visible_ids = [r[0] for r in visible.with_entities(Lead.id).all()]
 
     # ── Callback queries (scoped by role) ────────────────────────────────────
     cb_base = CallbackReminder.query.filter(
@@ -685,53 +743,173 @@ def action_board():
             )
         )
 
-    today_callbacks   = cb_base.filter(
-        CallbackReminder.callback_datetime >= today_start,
-        CallbackReminder.callback_datetime <  today_end,
+    # Keep callbacks in the same visibility boundary as lead lists.
+    if visible_ids:
+        cb_base = cb_base.filter(CallbackReminder.lead_id.in_(visible_ids))
+    else:
+        cb_base = cb_base.filter(db.text('1=0'))
+
+    callback_window_start = range_start if range_requested else today_start
+    callback_window_end   = range_end if range_requested else today_end
+
+    current_callbacks = cb_base.filter(
+        CallbackReminder.callback_datetime >= callback_window_start,
+        CallbackReminder.callback_datetime <  callback_window_end,
     ).order_by(CallbackReminder.callback_datetime.asc()).all()
 
     overdue_callbacks = cb_base.filter(
-        CallbackReminder.callback_datetime < today_start,
+        CallbackReminder.callback_datetime < callback_window_start,
     ).order_by(CallbackReminder.callback_datetime.asc()).all()
+
+    def _page_param(name):
+        try:
+            return max(1, int(request.args.get(name, 1)))
+        except (TypeError, ValueError):
+            return 1
+
+    section_pages = {
+        'today_callbacks': _page_param('today_callbacks_page'),
+        'overdue_callbacks': _page_param('overdue_callbacks_page'),
+        'new_leads_today': _page_param('new_leads_today_page'),
+        'follow_up': _page_param('follow_up_page'),
+        'no_answer': _page_param('no_answer_page'),
+        'warm_leads': _page_param('warm_leads_page'),
+        'hot_leads': _page_param('hot_leads_page'),
+    }
+
+    def _slice_page(items, page):
+        start = (page - 1) * page_size
+        end = start + page_size
+        return items[start:end]
+
+    def _query_page(query, page, sort_col, desc=False):
+        ordered = query.order_by(sort_col.desc() if desc else sort_col.asc())
+        start = (page - 1) * page_size
+        return ordered.offset(start).limit(page_size).all()
+
+    def _pagination_meta(total, page, shown):
+        start = ((page - 1) * page_size) + 1 if shown else 0
+        end = start + shown - 1 if shown else 0
+        return {
+            'page': page,
+            'page_size': page_size,
+            'total': total,
+            'shown': shown,
+            'start': start,
+            'end': end,
+            'has_prev': page > 1,
+            'has_next': end < total,
+        }
 
     def _cb_dict(c):
         d = c.to_dict()
-        d['lead_name']   = c.lead.name   if c.lead else f'Lead #{c.lead_id}'
-        d['lead_phone']  = c.lead.phone  if c.lead else None
-        d['lead_status'] = c.lead.status if c.lead else None
+        lead = c.lead
+        d['lead_name'] = lead.name if lead else f'Lead #{c.lead_id}'
+        d['lead_phone'] = lead.phone if lead else None
+        d['lead_status'] = lead.status if lead else None
+        d['project_name'] = lead.project.name if lead and lead.project else None
+        d['project_id'] = lead.project_id if lead else None
+        if lead and lead.notes:
+            latest_note = sorted(lead.notes, key=lambda n: n.created_at or datetime.min, reverse=True)[0]
+            d['latest_note'] = latest_note.note if latest_note else None
+        else:
+            d['latest_note'] = None
         return d
 
-    # ── Lead section counts (for summary, separate from limited lists) ────────
-    hot_statuses = ['interested', 'site_visit_planned', 'site_visit_done', 'negotiation']
-    new_today_count      = visible.filter(Lead.created_at >= today_start, Lead.created_at < today_end).count()
-    follow_up_count      = visible.filter(Lead.status.in_(['follow_up', 'callback_scheduled'])).count()
-    no_answer_count      = visible.filter(Lead.status == 'no_answer').count()
-    hot_count            = visible.filter(Lead.status.in_(hot_statuses)).count()
+    # ── Lead section buckets (per Action Board spec) ─────────────────────────
+    # 2.3 New Leads Today: status=new + created today/range + newly assigned in range
+    # 2.4 Follow Up: follow_up + callback_scheduled where callback is from previous days
+    # 2.5 No Answer: all no_answer (today + past)
+    # 2.6 Warm: interested + site_visit_planned
+    # 2.7 Hot:  site_visit_done + negotiation
+    warm_statuses = ['interested', 'site_visit_planned']
+    hot_statuses = ['site_visit_done', 'negotiation']
 
-    # ── Lead lists (limited to 20 per section) ────────────────────────────────
-    new_today   = visible.filter(Lead.created_at >= today_start, Lead.created_at < today_end
-                                ).order_by(Lead.created_at.desc()).limit(20).all()
-    follow_up   = visible.filter(Lead.status.in_(['follow_up', 'callback_scheduled'])
-                                ).order_by(Lead.updated_at.asc()).limit(20).all()
-    no_answer   = visible.filter(Lead.status == 'no_answer'
-                                ).order_by(Lead.updated_at.asc()).limit(20).all()
-    hot_leads   = visible.filter(Lead.status.in_(hot_statuses)
-                                ).order_by(Lead.updated_at.desc()).limit(20).all()
+    # assignment-based expansion for "new assigned for today/range"
+    assigned_ids = []
+    if visible_ids:
+        assign_q = LeadAssignmentHistory.query.filter(
+            LeadAssignmentHistory.lead_id.in_(visible_ids),
+            LeadAssignmentHistory.assigned_at >= callback_window_start,
+            LeadAssignmentHistory.assigned_at < callback_window_end,
+            LeadAssignmentHistory.assigned_to.isnot(None),
+        )
+        if user.role == 'team_member':
+            assign_q = assign_q.filter(LeadAssignmentHistory.assigned_to == user.id)
+        elif user.role == 'sales_manager':
+            team_ids = [u.id for u in User.query.filter_by(manager_id=user.id).all()]
+            team_ids.append(user.id)
+            assign_q = assign_q.filter(LeadAssignmentHistory.assigned_to.in_(team_ids))
+        assigned_ids = [r[0] for r in assign_q.with_entities(LeadAssignmentHistory.lead_id).distinct().all()]
+
+    overdue_callback_lead_ids = list({c.lead_id for c in overdue_callbacks if c.lead_id})
+
+    new_clauses = [
+        Lead.status == 'new',
+        db.and_(Lead.created_at >= callback_window_start, Lead.created_at < callback_window_end),
+    ]
+    if assigned_ids:
+        new_clauses.append(Lead.id.in_(assigned_ids))
+    new_bucket_q = visible.filter(db.or_(*new_clauses))
+
+    follow_clauses = [Lead.status == 'follow_up']
+    if overdue_callback_lead_ids:
+        follow_clauses.append(
+            db.and_(Lead.status == 'callback_scheduled', Lead.id.in_(overdue_callback_lead_ids))
+        )
+    follow_up_q = visible.filter(db.or_(*follow_clauses))
+    no_answer_q = visible.filter(Lead.status == 'no_answer')
+    warm_q = visible.filter(Lead.status.in_(warm_statuses))
+    hot_q = visible.filter(Lead.status.in_(hot_statuses))
+
+    # counts
+    today_callbacks_count = len(current_callbacks)
+    overdue_callbacks_count = len(overdue_callbacks)
+    new_today_count = new_bucket_q.count()
+    follow_up_count = follow_up_q.count()
+    no_answer_count = no_answer_q.count()
+    warm_count = warm_q.count()
+    hot_count = hot_q.count()
+
+    # paged section lists
+    current_callbacks_page = _slice_page(current_callbacks, section_pages['today_callbacks'])
+    overdue_callbacks_page = _slice_page(overdue_callbacks, section_pages['overdue_callbacks'])
+    new_today = _query_page(new_bucket_q, section_pages['new_leads_today'], Lead.created_at, desc=True)
+    follow_up = _query_page(follow_up_q, section_pages['follow_up'], Lead.updated_at, desc=False)
+    no_answer = _query_page(no_answer_q, section_pages['no_answer'], Lead.updated_at, desc=False)
+    warm_leads = _query_page(warm_q, section_pages['warm_leads'], Lead.updated_at, desc=True)
+    hot_leads = _query_page(hot_q, section_pages['hot_leads'], Lead.updated_at, desc=True)
 
     return jsonify({
-        'today_callbacks':   [_cb_dict(c) for c in today_callbacks],
-        'overdue_callbacks':  [_cb_dict(c) for c in overdue_callbacks],
+        'today_callbacks':   [_cb_dict(c) for c in current_callbacks_page],
+        'overdue_callbacks':  [_cb_dict(c) for c in overdue_callbacks_page],
         'new_leads_today':   [l.to_dict() for l in new_today],
         'follow_up_leads':   [l.to_dict() for l in follow_up],
         'no_answer_leads':   [l.to_dict() for l in no_answer],
+        'warm_leads':        [l.to_dict() for l in warm_leads],
         'hot_leads':         [l.to_dict() for l in hot_leads],
         'summary': {
-            'today_callbacks_count': len(today_callbacks),
-            'overdue_count':         len(overdue_callbacks),
+            'today_callbacks_count': today_callbacks_count,
+            'overdue_count':         overdue_callbacks_count,
             'new_leads_count':       new_today_count,
             'follow_up_count':       follow_up_count,
             'no_answer_count':       no_answer_count,
+            'warm_leads_count':      warm_count,
             'hot_leads_count':       hot_count,
+        },
+        'pagination': {
+            'today_callbacks': _pagination_meta(today_callbacks_count, section_pages['today_callbacks'], len(current_callbacks_page)),
+            'overdue_callbacks': _pagination_meta(overdue_callbacks_count, section_pages['overdue_callbacks'], len(overdue_callbacks_page)),
+            'new_leads_today': _pagination_meta(new_today_count, section_pages['new_leads_today'], len(new_today)),
+            'follow_up': _pagination_meta(follow_up_count, section_pages['follow_up'], len(follow_up)),
+            'no_answer': _pagination_meta(no_answer_count, section_pages['no_answer'], len(no_answer)),
+            'warm_leads': _pagination_meta(warm_count, section_pages['warm_leads'], len(warm_leads)),
+            'hot_leads': _pagination_meta(hot_count, section_pages['hot_leads'], len(hot_leads)),
+        },
+        'selected_range': {
+            'date_from': range_start.date().isoformat(),
+            'date_to': (range_end - timedelta(days=1)).date().isoformat(),
+            'range_requested': range_requested,
         },
     }), 200
 
@@ -748,13 +926,51 @@ RECYCLE_STATUSES = ['no_answer', 'not_interested', 'follow_up', 'callback_schedu
 def recycle_queue():
     """Return leads eligible for recycling/reshuffling."""
     user = request.current_user
+    stale_mode = (request.args.get('stale_mode') or '').strip().lower()
     stale_days = max(1, int(request.args.get('stale_days', 3)))
+    date_from_str = (request.args.get('date_from') or '').strip()
+    date_to_str = (request.args.get('date_to') or '').strip()
     status_filter = request.args.get('status')   # optional single-status filter
-    stale_before  = datetime.utcnow() - timedelta(days=stale_days)
+    now = datetime.utcnow()
+    today_start = datetime(now.year, now.month, now.day)
+    tomorrow_start = today_start + timedelta(days=1)
+    yesterday_start = today_start - timedelta(days=1)
 
     base = get_user_visible_leads(user)
     statuses = [status_filter] if status_filter and status_filter in RECYCLE_STATUSES else RECYCLE_STATUSES
-    base = base.filter(Lead.status.in_(statuses), Lead.updated_at <= stale_before)
+
+    if stale_mode == 'today':
+        base = base.filter(
+            Lead.status.in_(statuses),
+            Lead.updated_at >= today_start,
+            Lead.updated_at < tomorrow_start,
+        )
+    elif stale_mode == 'yesterday':
+        base = base.filter(
+            Lead.status.in_(statuses),
+            Lead.updated_at >= yesterday_start,
+            Lead.updated_at < today_start,
+        )
+    elif stale_mode == 'custom':
+        range_start = None
+        range_end = None
+        try:
+            if date_from_str:
+                range_start = datetime.strptime(date_from_str, '%Y-%m-%d')
+            if date_to_str:
+                range_end = datetime.strptime(date_to_str, '%Y-%m-%d') + timedelta(days=1)
+        except ValueError:
+            range_start = None
+            range_end = None
+
+        base = base.filter(Lead.status.in_(statuses))
+        if range_start:
+            base = base.filter(Lead.updated_at >= range_start)
+        if range_end:
+            base = base.filter(Lead.updated_at < range_end)
+    else:
+        stale_before = now - timedelta(days=stale_days)
+        base = base.filter(Lead.status.in_(statuses), Lead.updated_at <= stale_before)
 
     total = base.count()
     leads = base.order_by(Lead.updated_at.asc()).limit(100).all()
@@ -776,6 +992,11 @@ def recycle_queue():
         'leads':      [_with_history(l) for l in leads],
         'total':      total,
         'stale_days': stale_days,
+        'stale_mode': stale_mode or 'older_than_days',
+        'selected_range': {
+            'date_from': date_from_str or None,
+            'date_to': date_to_str or None,
+        },
     }), 200
 
 
@@ -966,6 +1187,76 @@ def _check_lead_access(user, lead):
         if lead.assigned_to not in team_ids and lead.sales_manager_id != user.id:
             return jsonify({'error': 'Access denied'}), 403
     return None
+
+
+@leads_bp.route('/<int:lead_id>/call-activity', methods=['POST'])
+@require_auth
+def log_call_activity(lead_id):
+    user = request.current_user
+    lead = Lead.query.get(lead_id)
+    err = _check_lead_access(user, lead)
+    if err:
+        return err
+
+    data = request.get_json() or {}
+    event_type = (data.get('event_type') or 'outcome').strip().lower()
+    outcome = (data.get('outcome') or '').strip().lower()
+    note = (data.get('note') or '').strip()
+    source = (data.get('source') or '').strip()
+
+    if event_type not in ('initiated', 'outcome'):
+        return jsonify({'error': 'event_type must be initiated or outcome'}), 400
+    if event_type == 'outcome' and outcome not in CALL_OUTCOME_LABELS:
+        return jsonify({'error': 'Valid outcome is required'}), 400
+
+    action = 'call_initiated' if event_type == 'initiated' else f'call_{outcome}'
+    description = (
+        f'Initiated call for lead {lead.name}'
+        if event_type == 'initiated'
+        else f'Call outcome for lead {lead.name}: {CALL_OUTCOME_LABELS[outcome]}'
+    )
+    if note:
+        description = description + (f' — {note}' if event_type == 'outcome' else f' ({note})')
+
+    log_activity(
+        user.id,
+        action,
+        'leads',
+        lead_id,
+        'LeadCall',
+        new_value={
+            'event_type': event_type,
+            'outcome': outcome or None,
+            'outcome_label': CALL_OUTCOME_LABELS.get(outcome),
+            'note': note or None,
+            'source': source or None,
+            'phone': lead.phone,
+        },
+        description=description,
+    )
+    return jsonify({'ok': True}), 200
+
+
+@leads_bp.route('/<int:lead_id>/activity-timeline', methods=['GET'])
+@require_auth
+def get_call_activity_timeline(lead_id):
+    user = request.current_user
+    lead = Lead.query.get(lead_id)
+    err = _check_lead_access(user, lead)
+    if err:
+        return err
+
+    call_logs = (
+        ActivityLog.query
+        .filter(
+            ActivityLog.resource_id == lead_id,
+            ActivityLog.module == 'leads',
+            ActivityLog.action.like('call_%'),
+        )
+        .order_by(ActivityLog.created_at.asc())
+        .all()
+    )
+    return jsonify({'call_activities': [log.to_dict() for log in call_logs]}), 200
 
 
 @leads_bp.route('/<int:lead_id>/callbacks', methods=['GET'])
