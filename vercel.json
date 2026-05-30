@@ -1,13 +1,5 @@
 {
   "alias": ["app.sociomonkey.com", "sociomonkey-ai.vercel.app", "gangarealty-lms.vercel.app"],
-  "redirects": [
-    {
-      "source": "/(.*)",
-      "has": [{ "type": "host", "value": "gangarealty-lms.vercel.app" }],
-      "destination": "https://app.sociomonkey.com/ganga/login",
-      "permanent": true
-    }
-  ],
   "headers": [
     {
       "source": "/env.js",
