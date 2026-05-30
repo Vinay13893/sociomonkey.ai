@@ -1,0 +1,112 @@
+/* ============================================================================
+   SOCIOMONKEY DESIGN SYSTEM — Button System
+   ============================================================================
+   One button system. All products use these classes.
+   Tenants may NOT add custom button styles.
+   ============================================================================ */
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+.sm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border: none;
+  border-radius: var(--radius-md, 10px);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, transform 100ms ease, box-shadow 100ms ease;
+  text-decoration: none;
+  line-height: 1.4;
+  min-height: 38px;
+}
+
+.sm-btn:disabled,
+.sm-btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ── Primary — Brand Red ─────────────────────────────────────────────────── */
+.sm-btn-primary {
+  background: var(--sm-brand, #de2e2e);
+  color: #ffffff;
+}
+
+.sm-btn-primary:hover {
+  background: var(--sm-brand-dark, #c22828);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(222, 46, 46, .25);
+}
+
+.sm-btn-primary:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+/* ── Secondary — White with border ──────────────────────────────────────── */
+.sm-btn-secondary {
+  background: #ffffff;
+  color: var(--sm-ink, #111111);
+  border: 1.5px solid var(--sm-divider, #e4e4e4);
+}
+
+.sm-btn-secondary:hover {
+  background: #f5f5f3;
+  border-color: #c4c4c0;
+}
+
+/* ── Ghost — transparent with border ────────────────────────────────────── */
+.sm-btn-ghost {
+  background: transparent;
+  color: var(--sm-ink, #111111);
+  border: 1.5px solid var(--sm-divider, #e4e4e4);
+}
+
+.sm-btn-ghost:hover {
+  background: var(--sm-surface, #f8f8f6);
+  border-color: var(--sm-ink, #111111);
+}
+
+/* ── Danger — Red destructive ───────────────────────────────────────────── */
+.sm-btn-danger {
+  background: var(--color-error, #dc2626);
+  color: #ffffff;
+}
+
+.sm-btn-danger:hover {
+  background: #b91c1c;
+}
+
+/* ── Sizes ───────────────────────────────────────────────────────────────── */
+.sm-btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+  min-height: 30px;
+  border-radius: 7px;
+}
+
+.sm-btn-lg {
+  padding: 12px 24px;
+  font-size: 15px;
+  min-height: 46px;
+}
+
+.sm-btn-icon {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 9px;
+}
+
+/* ── Mobile touch target ─────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .sm-btn { min-height: 44px; }
+  .sm-btn-sm { min-height: 38px; }
+}

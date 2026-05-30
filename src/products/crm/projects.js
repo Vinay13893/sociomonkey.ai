@@ -10,9 +10,9 @@ async function renderProjects() {
   if (!content) return
   content.innerHTML = `
     <div class="card">
-      <div class="header" style="margin-bottom:20px;">
+      <div class="header">
         <h2>Projects</h2>
-        ${user && user.role === 'superadmin' ? '<button class="button" id="newProjectBtn">+ New Project</button>' : ''}
+        ${user && user.role === 'superadmin' ? '<button class="sm-btn sm-btn-primary" id="newProjectBtn">+ New Project</button>' : ''}
       </div>
       <div id="projectsContainer"></div>
     </div>
@@ -90,7 +90,7 @@ async function openProjectForm(project = null) {
     ? `${project.budget_min}|${project.budget_max}` : ''
   content.innerHTML = `
     <div class="card" style="max-width:600px;">
-      <h2>${isEdit ? 'Edit Project' : 'New Project'}</h2>
+      <h2 class="sm-section-heading" style="margin-bottom:20px;">${isEdit ? 'Edit Project' : 'New Project'}</h2>
       <form id="projectForm">
         <input class="input" id="projName" placeholder="Project Name" required value="${isEdit ? escape(project.name) : ''}" />
         <input class="input" id="projLocation" placeholder="Location" value="${isEdit ? escape(project.location || '') : ''}" />

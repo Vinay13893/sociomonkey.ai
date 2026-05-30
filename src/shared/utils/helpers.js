@@ -14,16 +14,21 @@ function getRoleDisplay(role) {
 
 function getStatusColor(status) {
   const colors = {
-    'new': '#3b82f6',
-    'attempted': '#f59e0b',
-    'connected': '#10b981',
-    'interested': '#8b5cf6',
-    'site_visit_planned': '#f97316',
-    'site_visit_done': '#06b6d4',
-    'negotiation': '#ec4899',
-    'booking_done': '#22c55e',
-    'lost': '#ef4444',
-    'junk': '#6b7280'
+    'new':                '#1d4ed8',
+    'no_answer':          '#ea580c',
+    'follow_up':          '#7c3aed',
+    'callback_scheduled': '#4338ca',
+    'interested':         '#16a34a',
+    'site_visit_planned': '#0891b2',
+    'site_visit_done':    '#0d9488',
+    'negotiation':        '#ca8a04',
+    'booking_done':       '#059669',
+    'not_interested':     '#64748b',
+    'lost':               '#dc2626',
+    'junk':               '#374151',
+    // legacy aliases
+    'attempted':          '#ea580c',
+    'connected':          '#7c3aed',
   }
   return colors[status] || '#6b7280'
 }

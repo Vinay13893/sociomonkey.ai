@@ -6,10 +6,10 @@ async function renderExportLeads() {
   if (!content) return
   content.innerHTML = `
     <div class="card">
-      <h2>📥 Export Leads to Excel</h2>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;">
+      <h2 class="sm-page-title" style="margin-bottom:20px;">📥 Export Leads to Excel</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
         <div>
-          <h3>Export Options</h3>
+          <h3 class="sm-section-heading" style="margin-bottom:16px;">Export Options</h3>
           <form id="exportForm">
             <div style="margin-bottom:15px;">
               <label style="display:block;font-weight:600;margin-bottom:8px;">Filter by Status (optional)</label>
@@ -51,7 +51,7 @@ async function renderExportLeads() {
         </div>
         
         <div>
-          <h3>Export Information</h3>
+          <h3 class="sm-section-heading" style="margin-bottom:16px;">Export Information</h3>
           <ul style="list-style:none;padding:0;color:#475569;">
             <li style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
               <strong>Format:</strong>

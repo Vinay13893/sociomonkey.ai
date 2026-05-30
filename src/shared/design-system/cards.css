@@ -1,0 +1,154 @@
+/* ============================================================================
+   SOCIOMONKEY DESIGN SYSTEM — Card System
+   ============================================================================
+   Dashboard cards, lead cards, team cards, project cards, analytics cards.
+   Same border radius, shadows, padding, and spacing everywhere.
+   ============================================================================ */
+
+/* ── Base card ───────────────────────────────────────────────────────────── */
+.sm-card {
+  background: #ffffff;
+  border: 1px solid var(--sm-divider, #e4e4e4);
+  border-radius: var(--radius-lg, 14px);
+  padding: 20px 22px;
+  box-shadow: var(--shadow-card, 0 0 0 1px rgba(17,17,17,.07), 0 2px 8px rgba(17,17,17,.05));
+}
+
+/* ── Card header row ────────────────────────────────────────────────────── */
+.sm-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--sm-divider-soft, #f0f0ee);
+}
+
+.sm-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--sm-ink, #111111);
+  margin: 0;
+}
+
+.sm-card-subtitle {
+  font-size: 12px;
+  color: var(--sm-muted, #888888);
+  margin-top: 2px;
+}
+
+/* ── KPI / stat card ────────────────────────────────────────────────────── */
+.sm-kpi-card {
+  background: #ffffff;
+  border: 1px solid var(--sm-divider, #e4e4e4);
+  border-radius: var(--radius-lg, 14px);
+  padding: 18px 20px;
+  box-shadow: 0 1px 3px rgba(17, 17, 17, .05);
+}
+
+.sm-kpi-card-inner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.sm-kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--sm-muted, #888888);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.sm-kpi-icon {
+  font-size: 20px;
+  opacity: 0.6;
+  line-height: 1;
+}
+
+.sm-kpi-value {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--sm-ink, #111111);
+  line-height: 1;
+  letter-spacing: -0.015em;
+  margin-bottom: 4px;
+}
+
+.sm-kpi-subtext {
+  font-size: 11px;
+  color: var(--sm-muted, #888888);
+  margin-top: 4px;
+}
+
+/* ── Empty state card ───────────────────────────────────────────────────── */
+.sm-empty-state {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--sm-muted, #888888);
+}
+
+.sm-empty-state-icon {
+  font-size: 40px;
+  margin-bottom: 14px;
+  opacity: 0.5;
+}
+
+.sm-empty-state-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--sm-body, #444444);
+  margin-bottom: 6px;
+}
+
+.sm-empty-state-desc {
+  font-size: 13px;
+  color: var(--sm-muted, #888888);
+  line-height: 1.6;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+/* ── Error / warning banner ─────────────────────────────────────────────── */
+.sm-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid;
+  margin-bottom: 16px;
+}
+
+.sm-banner-success {
+  background: var(--color-success-bg, #dcfce7);
+  border-color: var(--color-success-border, #86efac);
+  color: var(--color-success, #16a34a);
+}
+
+.sm-banner-warning {
+  background: var(--color-warning-bg, #fef9c3);
+  border-color: var(--color-warning-border, #fde047);
+  color: var(--color-warning, #ca8a04);
+}
+
+.sm-banner-error {
+  background: var(--color-error-bg, #fee2e2);
+  border-color: var(--color-error-border, #fca5a5);
+  color: var(--color-error, #dc2626);
+}
+
+.sm-banner-info {
+  background: var(--color-info-bg, #e0f2fe);
+  border-color: var(--color-info-border, #7dd3fc);
+  color: var(--color-info, #0284c7);
+}
+
+/* ── Mobile ─────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .sm-card {
+    padding: 16px;
+    border-radius: 12px;
+  }
+}

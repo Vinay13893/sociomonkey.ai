@@ -1,0 +1,310 @@
+/* ============================================================================
+   SOCIOMONKEY DESIGN SYSTEM — Sidebar Component
+   ============================================================================
+   ONE sidebar used by every Sociomonkey product:
+     Platform · LMS · CRM · Procurement · Inventory · Amazon Intelligence
+
+   Class hierarchy:
+     .sm-sidebar                  — shell / scroll container
+       .sm-sidebar-brand          — logo section (120 px, white bg)
+         .sm-sidebar-logo-wrap    — logo centering wrapper
+           .sm-sidebar-logo       — <img> — tenant logo
+         .sm-sidebar-company      — tenant company name (max 2 lines)
+         .sm-sidebar-product      — product name (small, uppercase)
+         .sm-sidebar-tagline      — "AI Powered…" (Platform only)
+       .sm-sidebar-switcher       — product-switcher slot (platform owner only)
+       .sm-sidebar-nav            — <nav> scroll area
+         .sm-sidebar-nav-item     — <button> per nav link
+         .sm-sidebar-divider      — 1px separator
+       .sm-sidebar-footer         — user info + logout + status
+         .sm-sidebar-user         — user name / role
+         .sm-sidebar-logout       — <button> logout
+         .sm-sidebar-status-row   — "All Systems Operational" row
+         .sm-sidebar-status-dot   — green dot
+         .sm-sidebar-status-label — status text
+         .sm-sidebar-status-uptime— uptime line
+         .sm-sidebar-status-btn   — "View Status Page" link-button
+         .sm-sidebar-copy         — copyright line
+
+   Tenant customisation: ONLY sidebar background color, logo image, company name.
+   Width, typography, spacing, nav styles are LOCKED by Sociomonkey.
+   ============================================================================ */
+
+/* ── Shell ─────────────────────────────────────────────────────────────────── */
+.sm-sidebar {
+  width: var(--sm-sidebar-width, 260px);
+  background: var(--tenant-sidebar-bg, #c22828);
+  color: rgba(255, 255, 255, .92);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-sidebar, 100);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+.sm-sidebar::-webkit-scrollbar { display: none; }
+
+/* ── Brand / Logo Section ────────────────────────────────────────────────────
+   Fixed 120 px minimum height, white background.
+   Logo is horizontally + vertically centred, never stretched or cropped.     */
+.sm-sidebar-brand {
+  background: #ffffff;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 16px 12px;
+  border-bottom: 3px solid var(--tenant-sidebar-bg, #c22828);
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.sm-sidebar-logo-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+/* Logo image — object-fit: contain guarantees no stretch / crop */
+.sm-sidebar-logo {
+  max-width: 148px;
+  max-height: 72px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  border-radius: 6px;
+}
+
+/* Tenant company name — max 2 lines, ellipsis after overflow */
+.sm-sidebar-company {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111111;
+  text-align: center;
+  max-width: 224px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.35;
+  margin-bottom: 2px;
+}
+
+/* Product name — e.g. "Lead Management System" */
+.sm-sidebar-product {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111111;
+  text-align: center;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+
+/* Platform-only tagline */
+.sm-sidebar-tagline {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sm-muted, #888888);
+  text-align: center;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  max-width: 204px;
+  margin-top: 2px;
+}
+
+/* ── Product Switcher slot ───────────────────────────────────────────────── */
+.sm-sidebar-switcher {
+  flex-shrink: 0;
+}
+
+/* ── Navigation area ─────────────────────────────────────────────────────── */
+.sm-sidebar-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  min-height: 0;
+}
+.sm-sidebar-nav::-webkit-scrollbar { display: none; }
+
+/* Individual nav button */
+.sm-sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, .88);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .12);
+  transition: background 100ms ease, color 100ms ease;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 1px;
+  white-space: nowrap;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+.sm-sidebar-nav-item:hover {
+  background: rgba(0, 0, 0, .18);
+  color: #ffffff;
+}
+
+.sm-sidebar-nav-item.active {
+  background: rgba(0, 0, 0, .22);
+  color: #ffffff;
+  font-weight: 700;
+  border-left: 3px solid rgba(255, 255, 255, .90);
+  padding-left: 9px;
+}
+
+/* Icon inside nav item (Font Awesome) */
+.sm-sidebar-nav-item i {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.sm-sidebar-nav-item.active i {
+  color: #ffffff !important;
+}
+
+/* Divider between nav groups */
+.sm-sidebar-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, .10);
+  margin: 6px 8px;
+  flex-shrink: 0;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────── */
+.sm-sidebar-footer {
+  flex-shrink: 0;
+  border-top: 1px solid rgba(255, 255, 255, .12);
+  padding: 10px;
+}
+
+/* User info line */
+.sm-sidebar-user {
+  font-size: 11px;
+  color: rgba(255, 255, 255, .70);
+  text-align: center;
+  padding: 4px 8px 6px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+/* Logout button */
+.sm-sidebar-logout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  color: rgba(255, 255, 255, .88);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .12);
+  transition: background 100ms ease;
+  white-space: nowrap;
+}
+
+.sm-sidebar-logout i {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.sm-sidebar-logout:hover {
+  background: rgba(0, 0, 0, .22);
+  color: #ffffff;
+}
+
+/* ── Platform Status section (Platform sidebar only) ─────────────────────── */
+.sm-sidebar-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 3px;
+}
+
+.sm-sidebar-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #86efac;
+  flex-shrink: 0;
+}
+
+.sm-sidebar-status-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, .85);
+}
+
+.sm-sidebar-status-uptime {
+  font-size: 10px;
+  color: rgba(255, 255, 255, .65);
+  margin-bottom: 4px;
+}
+
+.sm-sidebar-status-btn {
+  display: inline-block;
+  font-size: 10px;
+  color: rgba(255, 255, 255, .65);
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 6px;
+  padding: 3px 8px;
+  margin-bottom: 6px;
+  transition: background 100ms;
+  background: transparent;
+}
+
+.sm-sidebar-status-btn:hover {
+  color: #ffffff;
+  background: rgba(0, 0, 0, .15);
+}
+
+.sm-sidebar-copy {
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, .40);
+  line-height: 1.6;
+  text-align: center;
+}
+
+/* ── Mobile: slide-in drawer ─────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .sm-sidebar {
+    width: 260px;
+    transform: translateX(-100%);
+    transition: transform 0.28s ease;
+    z-index: 200;
+  }
+
+  .sm-sidebar.open {
+    transform: translateX(0);
+  }
+}

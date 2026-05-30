@@ -15,24 +15,124 @@ function _apiJsonHeaders(extra) {
   return Object.assign({ 'Content-Type': 'application/json' }, extra || {})
 }
 
+var _perfReqSeq = 0
+
+function _perfRound(ms) {
+  return Math.round(Number(ms || 0) * 100) / 100
+}
+
+function _perfTrackedRoute(path, method) {
+  var normalizedMethod = String(method || 'GET').toUpperCase()
+  if (normalizedMethod === 'POST' && path === '/auth/login') return 'login'
+  if (normalizedMethod === 'GET' && path === '/leads') return 'leads'
+  if (normalizedMethod === 'GET' && path.indexOf('/leads/dashboard/stats') === 0) return 'dashboard_stats'
+  return ''
+}
+
+function _perfLog(routeKey, stage, payload) {
+  if (!routeKey) return
+  console.log('[PERF]', Object.assign({ route: routeKey, stage: stage }, payload || {}))
+}
+
+function _perfStartRequest(routeKey, path, method) {
+  if (!routeKey || typeof performance === 'undefined') return null
+  var trace = {
+    id: 'perf-' + (++_perfReqSeq),
+    route: routeKey,
+    path: path,
+    method: String(method || 'GET').toUpperCase(),
+    browserRequestStartPerf: performance.now(),
+    browserRequestStartAtMs: Date.now(),
+  }
+  _perfLog(routeKey, 'browser_request_start', {
+    traceId: trace.id,
+    method: trace.method,
+    path: path,
+    browserRequestStartAtMs: trace.browserRequestStartAtMs,
+  })
+  return trace
+}
+
+function _perfMarkSent(trace) {
+  if (!trace || typeof performance === 'undefined') return
+  trace.apiRequestSentPerf = performance.now()
+  trace.apiRequestSentAtMs = Date.now()
+  _perfLog(trace.route, 'api_request_sent', {
+    traceId: trace.id,
+    apiRequestSentAtMs: trace.apiRequestSentAtMs,
+  })
+}
+
+function _perfReadResponse(trace, res) {
+  if (!trace || typeof performance === 'undefined' || !res) return null
+  trace.browserResponseReceivedPerf = performance.now()
+  trace.browserResponseReceivedAtMs = Date.now()
+
+  var backendMs = Number(res.headers.get('X-Perf-Backend-Duration-Ms') || 0)
+  var dbMs = Number(res.headers.get('X-Perf-Db-Duration-Ms') || 0)
+  var totalMs = _perfRound(trace.browserResponseReceivedPerf - trace.browserRequestStartPerf)
+  var summary = {
+    traceId: trace.id,
+    requestId: res.headers.get('X-Perf-Request-Id') || '',
+    browserResponseReceivedAtMs: trace.browserResponseReceivedAtMs,
+    serverRequestReceivedAtMs: Number(res.headers.get('X-Perf-Request-Received-At-Ms') || 0),
+    serverResponseSentAtMs: Number(res.headers.get('X-Perf-Response-Sent-At-Ms') || 0),
+    totalRequestDurationMs: totalMs,
+    backendProcessingDurationMs: _perfRound(backendMs),
+    databaseDurationMs: _perfRound(dbMs),
+    networkDurationMs: _perfRound(Math.max(0, totalMs - backendMs)),
+    dbQueryCount: Number(res.headers.get('X-Perf-Db-Query-Count') || 0),
+  }
+  trace.summary = summary
+  _perfLog(trace.route, 'browser_response_received', summary)
+  return summary
+}
+
+function _perfMarkRenderComplete(routeKey, trace, extra) {
+  if (!routeKey || !trace || typeof performance === 'undefined') return
+  _perfLog(routeKey, 'dashboard_render_complete', Object.assign({}, trace.summary || {}, {
+    totalToRenderDurationMs: _perfRound(performance.now() - trace.browserRequestStartPerf),
+    renderDurationMs: typeof trace.browserResponseReceivedPerf === 'number'
+      ? _perfRound(performance.now() - trace.browserResponseReceivedPerf)
+      : undefined,
+  }, extra || {}))
+}
+
+window._perfLog = _perfLog
+window._perfStartRequest = _perfStartRequest
+window._perfMarkSent = _perfMarkSent
+window._perfReadResponse = _perfReadResponse
+window._perfMarkRenderComplete = _perfMarkRenderComplete
+
 async function _apiRequest(path, opts) {
   const options = opts || {}
   const retries = typeof options.retries === 'number' ? options.retries : 1
   const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : 12000
+  const method = String(options.method || 'GET').toUpperCase()
+  const perfRoute = _perfTrackedRoute(path, method)
 
   let lastErr = null
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let timedOut = false
+    let perfTrace = null
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
 
     try {
       const fetchOptions = Object.assign({}, options, { signal: controller.signal })
       delete fetchOptions.retries
       delete fetchOptions.timeoutMs
 
+      perfTrace = _perfStartRequest(perfRoute, path, method)
+      _perfMarkSent(perfTrace)
+
       const res = await fetch(`${API_BASE}${path}`, fetchOptions)
       clearTimeout(timer)
+      _perfReadResponse(perfTrace, res)
 
       const ct = (res.headers.get('content-type') || '').toLowerCase()
       const payload = ct.indexOf('application/json') !== -1 ? await res.json() : null
@@ -52,7 +152,22 @@ async function _apiRequest(path, opts) {
       return payload
     } catch (err) {
       clearTimeout(timer)
-      lastErr = err
+      if (perfRoute) {
+        _perfLog(perfRoute, 'request_error', {
+          path: path,
+          method: method,
+          attempt: attempt + 1,
+          message: (err && err.message) || 'Request failed',
+          errorName: (err && err.name) || '',
+        })
+      }
+      if (timedOut && err && err.name === 'AbortError') {
+        const timeoutErr = new Error('Request timed out. Please try again.')
+        timeoutErr.name = 'TimeoutError'
+        lastErr = timeoutErr
+      } else {
+        lastErr = err
+      }
 
       // Retry transient network/timeout errors only
       const isAbort = err && err.name === 'AbortError'
@@ -74,8 +189,8 @@ async function login(email, password, remember, tenantSlug) {
       method: 'POST',
       headers: _apiJsonHeaders(),
       body: JSON.stringify(body),
-      retries: 0,
-      timeoutMs: 18000,
+      retries: 1,
+      timeoutMs: 45000,
     })
   } catch (e) {
     const msg = (e && e.message) || 'Login failed. Please try again.'
@@ -125,7 +240,7 @@ async function loadMe() {
     data = await _apiRequest('/auth/me', {
       headers: _apiAuthHeaders(),
       retries: 0,
-      timeoutMs: 12000,
+      timeoutMs: 30000,
     })
   } catch (_e) {
     authClearSession()
@@ -137,6 +252,11 @@ async function loadMe() {
   if (data.products) {
     availableProducts = data.products
   }
+  try {
+    var _sessionStore = localStorage.getItem('lms_token') ? localStorage : sessionStorage
+    _sessionStore.setItem('lms_user', JSON.stringify(user))
+    _sessionStore.setItem('lms_products', JSON.stringify(availableProducts || []))
+  } catch (_e) {}
   // Ensure activeTab is valid for this user's role
   if (user && user.role === 'platform_owner' && activeTab === 'dashboard') {
     activeTab = 'platform'

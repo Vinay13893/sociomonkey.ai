@@ -8,6 +8,8 @@ function showContent() {
   window._ACTIVE_ROUTE = activeTab  // update global route BEFORE any render function runs — this is what kills stale _guard() checks in renders that are no longer the active route
   if (activeTab === 'dashboard') return renderDashboard()
   if (activeTab === 'leads') return renderLeads()
+  if (activeTab === 'action_board') return renderActionBoard()
+  if (activeTab === 'recycle_queue') return renderRecycleQueue()
   if (activeTab === 'projects') return renderProjects()
   if (activeTab === 'team') return renderTeamManagement()
   if (activeTab === 'pipeline') return renderPipeline()
@@ -201,8 +203,12 @@ async function _dispatchInner() {
     }
     if (platRoot)     platRoot.style.display     = 'none'
     if (tenantLayout) tenantLayout.style.display = ''
-    await loadTenantConfig(route.slug)
     renderLogin({ type: 'tenant', slug: route.slug, product: route.product })
+    loadTenantConfig(route.slug).then(function () {
+      if (!token && window.location.pathname === '/' + route.slug + '/login') {
+        renderLogin({ type: 'tenant', slug: route.slug, product: route.product })
+      }
+    }).catch(function () {})
     return
   }
 
@@ -215,8 +221,12 @@ async function _dispatchInner() {
     if (tenantLayout) tenantLayout.style.display = ''
     const loginRoute = parseRoute()
     if (loginRoute.layer === 'tenant-login') {
-      await loadTenantConfig(loginRoute.slug)
       renderLogin({ type: 'tenant', slug: loginRoute.slug, product: loginRoute.product })
+      loadTenantConfig(loginRoute.slug).then(function () {
+        if (!token && window.location.pathname === '/' + loginRoute.slug + '/login') {
+          renderLogin({ type: 'tenant', slug: loginRoute.slug, product: loginRoute.product })
+        }
+      }).catch(function () {})
     } else {
       clearTenantContext()
       renderLogin({ type: 'platform' })

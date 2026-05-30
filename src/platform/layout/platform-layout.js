@@ -46,37 +46,34 @@ function renderPlatformLayout(activeView) {
 
   const navItems = PLAT_NAV.map(function(n) {
     var isActive = n.view === highlightView
-    return '<button class="plat-nav-item' + (isActive ? ' active' : '') + '"' +
+    return '<button class="sm-sidebar-nav-item' + (isActive ? ' active' : '') + '"' +
            ' onclick="platNavigate(\'' + n.view + '\')">' +
            '<i class="' + n.icon + '" style="color:' + (isActive ? '#fff' : n.color) + ';"></i>' +
            n.label + '</button>'
   }).join('')
 
   platRoot.innerHTML =
-    '<aside class="plat-sidebar">' +
-      '<div class="plat-sidebar-brand">' +
-        '<div class="plat-sidebar-logo">' +
-          '<div class="plat-sidebar-logo-icon">&#x1F412;</div>' +
-          '<span class="plat-sidebar-title">sociomonkey.ai</span>' +
+    '<aside class="sm-sidebar">' +
+      '<div class="sm-sidebar-brand">' +
+        '<div class="sm-sidebar-logo-wrap">' +
+          '<img src="Assets/credentials-card-logo.png" alt="Sociomonkey" class="sm-sidebar-logo" />' +
         '</div>' +
-        '<div class="plat-sidebar-subtitle">AI Powered Enterprise SaaS Platform</div>' +
+        '<div class="sm-sidebar-tagline">AI Powered Software Suite for Businesses</div>' +
       '</div>' +
-      '<nav class="plat-nav">' +
+      '<nav class="sm-sidebar-nav">' +
         navItems +
-        '<div style="height:1px;background:rgba(255,255,255,.07);margin:10px 8px 8px;"></div>' +
-        '<button class="plat-nav-item" style="color:#f87171;" onclick="platLogout()">' +
-          '<i class="fa-solid fa-right-from-bracket" style="color:#f87171;"></i>' +
-          'Sign Out' +
+        '<div class="sm-sidebar-divider"></div>' +
+        '<button class="sm-sidebar-nav-item" onclick="platLogout()">' +
+          '<i class="fa-solid fa-right-from-bracket"></i> Sign Out' +
         '</button>' +
       '</nav>' +
-      '<div class="plat-sidebar-footer">' +
-        '<div class="plat-status-row">' +
-          '<span class="plat-status-dot"></span>' +
-          '<span class="plat-status-label">All Systems Operational</span>' +
+      '<div class="sm-sidebar-footer">' +
+        '<div class="sm-sidebar-status-row">' +
+          '<span class="sm-sidebar-status-dot"></span>' +
+          '<span class="sm-sidebar-status-label">All Systems Operational</span>' +
         '</div>' +
-        '<div class="plat-status-uptime">Uptime 99.98%</div>' +
-        '<div class="plat-sidebar-status-btn" onclick="platOpenStatus()">View Status Page &#x2192;</div>' +
-        '<div class="plat-sidebar-copy">&#169; 2025 sociomonkey.ai<br>All rights reserved.</div>' +
+        '<div class="sm-sidebar-status-uptime">Uptime 99.98%</div>' +
+        '<div class="sm-sidebar-copy">&#169; 2026 sociomonkey.ai<br>All rights reserved.</div>' +
       '</div>' +
     '</aside>' +
     '<div class="plat-wrapper">' +

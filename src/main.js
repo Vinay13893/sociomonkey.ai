@@ -3,14 +3,27 @@
 // ============================================================================
 
 function render() {
+  // Clear any previously visible shell immediately so login routes do not flash the sidebar.
+  const sidebar = document.querySelector('.sm-sidebar')
+  if (sidebar) sidebar.style.display = 'none'
+  const overlay = document.getElementById('mobileOverlay')
+  if (overlay) overlay.classList.remove('active')
+  const mobileSidebar = document.getElementById('sidebar')
+  if (mobileSidebar) mobileSidebar.classList.remove('open')
+
   if (!token) return renderLogin()
-  
+
+  // Reset overflow/height overrides applied by renderLogin()
+  document.body.style.overflow = ''
+  document.body.style.margin = ''
+  document.documentElement.style.overflow = ''
+  document.documentElement.style.margin = ''
+  var _mc = document.querySelector('.main-content')
+  if (_mc) { _mc.style.overflow = ''; _mc.style.height = ''; _mc.style.marginLeft = '' }
+  if (root) { root.style.overflow = ''; root.style.height = ''; root.style.padding = '' }
+
   // Show sidebar when logged in
-  const sidebar = document.querySelector('.sidebar')
   if (sidebar) sidebar.style.display = 'flex'
-  
-  const mainContent = document.querySelector('.main-content')
-  if (mainContent && window.innerWidth > 768) mainContent.style.marginLeft = '220px'
   
   initMobileNav()
   renderApp()
@@ -75,12 +88,23 @@ function _handleImpToken() {
   }
 }
 
-function _sidebarRefresh() {
+function _sessionUiSignature() {
+  return JSON.stringify({
+    userId: user && user.id,
+    userRole: user && user.role,
+    tenantSlug: user && user.tenant_slug,
+    currentProduct: currentProduct,
+    productSlugs: (availableProducts || []).map(function(p) { return p.slug })
+  })
+}
+
+function _sidebarRefreshIfChanged(previousSignature) {
+  if (previousSignature === _sessionUiSignature()) return
   if (typeof _sidebarBuilt !== 'undefined') {
     _sidebarBuilt = false
     if (typeof _buildSidebar === 'function' &&
-        document.querySelector('.sidebar') &&
-        document.querySelector('.sidebar').style.display !== 'none') {
+        document.querySelector('.sm-sidebar') &&
+        document.querySelector('.sm-sidebar').style.display !== 'none') {
       _buildSidebar()
       _sidebarBuilt = true
       if (typeof _sidebarForProduct !== 'undefined') _sidebarForProduct = currentProduct
@@ -102,24 +126,37 @@ async function init() {
   // so the platform owner's main-tab session is not disturbed.
   var impHandled = _handleImpToken()
 
+  var _needsHydrateBeforeDispatch = false
+
   if (impHandled) {
     _PERF.lap('init', 'session=impersonation')
-    // Impersonation session: schedule expiry + background refresh
+    // Impersonation session: schedule expiry now and refresh session data after first paint.
     if (token) authScheduleExpiry()
-    loadMe().then(_sidebarRefresh).catch(function() {})
+    _needsHydrateBeforeDispatch = availableProducts.length === 0
   } else {
     // Normal session restore from storage (validates token expiry locally)
     var hasSession = authRestoreSession()
     _PERF.lap('init', 'session=' + (hasSession ? 'restored-from-storage' : 'none-redirect-to-login'))
     if (hasSession) {
       if (token) authScheduleExpiry()
-      loadMe().then(_sidebarRefresh).catch(function() {})
+      _needsHydrateBeforeDispatch = availableProducts.length === 0
     }
+  }
+
+  if (_needsHydrateBeforeDispatch) {
+    try { await loadMe() } catch (_e) {}
   }
 
   if (typeof hideLoader === 'function') hideLoader()
   _PERF.end('init')
   dispatch()
+
+  if (token && !_needsHydrateBeforeDispatch) {
+    var _beforeHydrateSig = _sessionUiSignature()
+    loadMe()
+      .then(function () { _sidebarRefreshIfChanged(_beforeHydrateSig) })
+      .catch(function () {})
+  }
   // Remind developer how to see the waterfall after full hydration
   setTimeout(function () {
     console.log('%c[PERF] Ready. Call _PERF.report() to see the full timing waterfall.', 'color:#3b82f6;font-style:italic')

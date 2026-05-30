@@ -10,9 +10,9 @@ async function renderTeamManagement() {
   if (!content) return
   content.innerHTML = `
     <div class="card">
-      <div class="header" style="margin-bottom:20px;">
+      <div class="header">
         <h2>Team Management</h2>
-        <button class="button" id="newUserBtn">+ Add Team Member</button>
+        <button class="sm-btn sm-btn-primary" id="newUserBtn">+ Add Team Member</button>
       </div>
       <div id="teamContainer"></div>
     </div>
@@ -130,7 +130,7 @@ async function openEditUserForm(editUser) {
   
   content.innerHTML = `
     <div class="card" style="max-width:600px;">
-      <h2>Edit ${editUser.role === 'sales_manager' ? 'Sales Manager' : editUser.role === 'superadmin' ? 'Super Admin' : 'Team Member'}</h2>
+      <h2 class="sm-section-heading" style="margin-bottom:20px;">Edit ${editUser.role === 'sales_manager' ? 'Sales Manager' : editUser.role === 'superadmin' ? 'Super Admin' : 'Team Member'}</h2>
       <form id="userForm">
         <input class="input" id="userName" placeholder="Full Name" value="${escape(editUser.name)}" required />
         <input class="input" id="userEmail" placeholder="Email Address" type="email" value="${escape(editUser.email)}" required />
@@ -212,7 +212,7 @@ async function openUserForm() {
   if (!content) return
   content.innerHTML = `
     <div class="card" style="max-width:600px;">
-      <h2>Add Team Member</h2>
+      <h2 class="sm-section-heading" style="margin-bottom:20px;">Add Team Member</h2>
       <form id="userForm">
         <input class="input" id="userName" placeholder="Full Name" required />
         <input class="input" id="userEmail" placeholder="Email Address" type="email" required />

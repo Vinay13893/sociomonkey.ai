@@ -6,23 +6,23 @@ async function renderExcelUpload() {
   if (!content) return
   content.innerHTML = `
     <div class="card">
-      <h2>📤 Bulk Import Leads from Excel</h2>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;">
+      <h2 class="sm-page-title" style="margin-bottom:20px;">📤 Bulk Import Leads from Excel</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
         <div>
-          <h3>Import File</h3>
+          <h3 class="sm-section-heading" style="margin-bottom:16px;">Import File</h3>
           <form id="uploadForm">
             <div style="margin-bottom:15px;">
               <label style="display:block;font-weight:600;margin-bottom:8px;">Select Excel File (.xlsx, .xls, .csv)</label>
               <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" required style="display:block;margin-bottom:10px;padding:10px;border:1px solid #cbd5e1;border-radius:6px;width:100%;box-sizing:border-box;" />
               <small style="color:#64748b;">Maximum file size: 5MB</small>
             </div>
-            <button type="submit" class="button" style="width:100%;margin-bottom:10px;">📤 Upload File</button>
-            <button type="button" class="button secondary" id="downloadTemplate" style="width:100%;">⬇️ Download Template</button>
+            <button type="submit" class="sm-btn sm-btn-primary" style="width:100%;margin-bottom:10px;">📤 Upload File</button>
+            <button type="button" class="sm-btn sm-btn-secondary" id="downloadTemplate" style="width:100%;">⬇️ Download Template</button>
           </form>
         </div>
         
         <div>
-          <h3>Required Columns</h3>
+          <h3 class="sm-section-heading" style="margin-bottom:16px;">Required Columns</h3>
           <ul style="list-style:none;padding:0;color:#475569;">
             <li style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
               <strong>name</strong>
@@ -115,7 +115,7 @@ function showImportResult(data, success) {
   if (!success) {
     resultDiv.innerHTML = `
       <div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:16px;color:#7f1d1d;">
-        <h3 style="margin:0 0 10px 0;">❌ Import Failed</h3>
+        <h3 class="sm-section-heading" style="margin-bottom:10px;">❌ Import Failed</h3>
         <p>${data.errors[0]?.error || 'An error occurred'}</p>
       </div>
     `
@@ -131,7 +131,7 @@ function showImportResult(data, success) {
 
   let resultHtml = `
     <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:16px;color:#166534;">
-      <h3 style="margin:0 0 10px 0;">✅ Import Complete</h3>
+      <h3 class="sm-section-heading" style="margin-bottom:10px;">✅ Import Complete</h3>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;">
         <div style="padding:12px;background:#dcfce7;border-radius:4px;">
           <div style="font-size:12px;color:#6b7280;">Successfully Imported</div>

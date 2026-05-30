@@ -28,29 +28,29 @@ async function renderPipeline() {
 
   content.innerHTML = `
     <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;">
-        <h2 style="margin:0;">Pipeline View</h2>
+      <div class="sm-page-header" style="margin-bottom:12px;">
+        <h2 class="sm-page-title">Pipeline View</h2>
       </div>
 
       <!-- Pipeline Filters -->
       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
         ${user.role === 'superadmin' ? `
         <div style="display:flex;flex-direction:column;gap:4px;min-width:180px;flex:1;">
-          <label style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:0.05em;">SALES MANAGER</label>
+          <label class="sm-label">SALES MANAGER</label>
           <select id="pipelineManagerFilter" class="select" style="font-size:13px;">
             <option value="">All Sales Managers</option>
             ${salesManagers.map(m => `<option value="${m.id}">${escape(m.name)}</option>`).join('')}
           </select>
         </div>` : ''}
         <div style="display:flex;flex-direction:column;gap:4px;min-width:160px;flex:1;">
-          <label style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:0.05em;">PROJECT</label>
+          <label class="sm-label">PROJECT</label>
           <select id="pipelineProjectFilter" class="select" style="font-size:13px;">
             <option value="">All Projects</option>
             ${projects.map(p => `<option value="${p.id}">${escape(p.name)}</option>`).join('')}
           </select>
         </div>
         <div style="display:flex;align-items:flex-end;">
-          <button onclick="clearPipelineFilters()" class="button secondary" style="font-size:12px;padding:7px 14px;">✕ Clear</button>
+          <button onclick="clearPipelineFilters()" class="sm-btn sm-btn-secondary">✕ Clear</button>
         </div>
       </div>
 

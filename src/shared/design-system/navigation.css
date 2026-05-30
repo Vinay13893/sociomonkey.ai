@@ -1,0 +1,121 @@
+/* ============================================================================
+   SOCIOMONKEY DESIGN SYSTEM — Navigation Patterns
+   ============================================================================
+   Tab bars, breadcrumbs, top-page headers, and inline nav patterns.
+   ============================================================================ */
+
+/* ── Tab bar ────────────────────────────────────────────────────────────── */
+.sm-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 2px solid var(--sm-divider, #e4e4e4);
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.sm-tab {
+  padding: 9px 18px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--sm-muted, #888888);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 120ms ease;
+  border-radius: 6px 6px 0 0;
+  white-space: nowrap;
+}
+
+.sm-tab:hover {
+  color: var(--sm-body, #444444);
+}
+
+.sm-tab.active {
+  color: var(--sm-brand, #de2e2e);
+  font-weight: 700;
+  border-bottom-color: var(--sm-brand, #de2e2e);
+}
+
+/* ── Breadcrumb ─────────────────────────────────────────────────────────── */
+.sm-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--sm-muted, #888888);
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.sm-breadcrumb-sep {
+  color: var(--sm-disabled, #bbbbbb);
+}
+
+.sm-breadcrumb a {
+  color: var(--sm-muted, #888888);
+  text-decoration: none;
+}
+
+.sm-breadcrumb a:hover {
+  color: var(--sm-body, #444444);
+  text-decoration: underline;
+}
+
+.sm-breadcrumb span:last-child {
+  color: var(--sm-body, #444444);
+  font-weight: 600;
+}
+
+/* ── Back button ────────────────────────────────────────────────────────── */
+.sm-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 16px;
+  border: 1px solid var(--sm-divider, #e4e4e4);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--sm-body, #444444);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: 20px;
+  transition: background 100ms ease;
+}
+
+.sm-back-btn:hover {
+  background: #f5f5f3;
+}
+
+/* ── Inline pill nav (e.g. sub-sections) ────────────────────────────────── */
+.sm-nav-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.sm-nav-pill {
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1.5px solid var(--sm-divider, #e4e4e4);
+  background: #ffffff;
+  color: var(--sm-muted, #888888);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.sm-nav-pill:hover {
+  border-color: var(--sm-brand, #de2e2e);
+  color: var(--sm-brand, #de2e2e);
+}
+
+.sm-nav-pill.active {
+  background: var(--sm-brand, #de2e2e);
+  color: #ffffff;
+  border-color: var(--sm-brand, #de2e2e);
+}

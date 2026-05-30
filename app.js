@@ -399,25 +399,30 @@ function renderProductHome() {
 
 const STATUS_COLORS = {
   new:                 { bg: '#dbeafe', color: '#1d4ed8', label: 'New' },
-  attempted:           { bg: '#fef9c3', color: '#854d0e', label: 'Attempted' },
-  connected:           { bg: '#d1fae5', color: '#065f46', label: 'Connected' },
-  interested:          { bg: '#dcfce7', color: '#166534', label: 'Interested' },
-  site_visit_planned:  { bg: '#e0e7ff', color: '#3730a3', label: 'Site Visit Planned' },
-  site_visit_done:     { bg: '#ede9fe', color: '#5b21b6', label: 'Site Visit Done' },
-  negotiation:         { bg: '#fef3c7', color: '#92400e', label: 'Negotiation' },
-  booking_done:        { bg: '#bbf7d0', color: '#14532d', label: 'Booking Done' },
-  lost:                { bg: '#fee2e2', color: '#991b1b', label: 'Lost' },
-  junk:                { bg: '#f1f5f9', color: '#475569', label: 'Junk' },
+  no_answer:           { bg: '#ffedd5', color: '#ea580c', label: 'No Answer' },
+  follow_up:           { bg: '#ede9fe', color: '#7c3aed', label: 'Follow Up' },
+  callback_scheduled:  { bg: '#e0e7ff', color: '#4338ca', label: 'Callback Scheduled' },
+  interested:          { bg: '#dcfce7', color: '#16a34a', label: 'Interested' },
+  site_visit_planned:  { bg: '#cffafe', color: '#0891b2', label: 'Site Visit Planned' },
+  site_visit_done:     { bg: '#ccfbf1', color: '#0d9488', label: 'Site Visit Done' },
+  negotiation:         { bg: '#fef9c3', color: '#ca8a04', label: 'Negotiation' },
+  booking_done:        { bg: '#d1fae5', color: '#059669', label: 'Booking Done' },
+  not_interested:      { bg: '#f1f5f9', color: '#64748b', label: 'Not Interested' },
+  lost:                { bg: '#fee2e2', color: '#dc2626', label: 'Lost' },
+  junk:                { bg: '#e5e7eb', color: '#374151', label: 'Junk' },
+  // legacy aliases (backward compat for old activity logs / exports)
+  attempted:           { bg: '#ffedd5', color: '#ea580c', label: 'No Answer' },
+  connected:           { bg: '#ede9fe', color: '#7c3aed', label: 'Follow Up' },
   assigned:            { bg: '#cffafe', color: '#155e75', label: 'Assigned' },
   unassigned:          { bg: '#fce7f3', color: '#9d174d', label: 'Unassigned' },
 }
 
 // Exact display order for the dashboard status grid
 const STATUS_ORDER = [
-  'new', 'attempted', 'connected', 'interested',
+  'new', 'no_answer', 'follow_up', 'callback_scheduled', 'interested',
   'site_visit_planned', 'site_visit_done',
   'negotiation', 'booking_done',
-  'lost', 'junk',
+  'not_interested', 'lost', 'junk',
   'assigned', 'unassigned',
 ]
 
@@ -1060,7 +1065,7 @@ async function filterAndRenderLeads(resetPage = true) {
       ? [{ id: user.id, name: `${user.name} (me)` }, ...users.filter(u => u.manager_id === user.id)]
       : []
 
-  const VALID_STATUSES_LIST = ['new','attempted','connected','interested','site_visit_planned','site_visit_done','negotiation','booking_done','lost','junk']
+  const VALID_STATUSES_LIST = ['new','attempted','connected','interested','follow_up','site_visit_planned','site_visit_done','negotiation','booking_done','not_interested','lost','junk']
   const allChecked = paginated.length > 0 && paginated.every(l => selectedLeads.has(l.id))
 
   container.innerHTML = `
@@ -1445,16 +1450,18 @@ async function quickExportLeads() {
 
 function getStatusColor(status) {
   const colors = {
-    'new': '#3b82f6',
-    'attempted': '#f59e0b',
-    'connected': '#10b981',
-    'interested': '#8b5cf6',
-    'site_visit_planned': '#f97316',
-    'site_visit_done': '#06b6d4',
-    'negotiation': '#ec4899',
-    'booking_done': '#22c55e',
-    'lost': '#ef4444',
-    'junk': '#6b7280'
+    'new':                '#3b82f6',
+    'attempted':          '#f59e0b',
+    'connected':          '#10b981',
+    'interested':         '#8b5cf6',
+    'follow_up':          '#f97316',
+    'site_visit_planned': '#0ea5e9',
+    'site_visit_done':    '#06b6d4',
+    'negotiation':        '#ec4899',
+    'booking_done':       '#22c55e',
+    'not_interested':     '#f43f5e',
+    'lost':               '#ef4444',
+    'junk':               '#6b7280'
   }
   return colors[status] || '#6b7280'
 }

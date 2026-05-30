@@ -1,0 +1,144 @@
+/* ============================================================================
+   SOCIOMONKEY DESIGN SYSTEM — Form System
+   ============================================================================
+   Inputs, dropdowns, search bars, text areas, date pickers.
+   Same styling across all products.
+   ============================================================================ */
+
+/* ── Base input, textarea, select ────────────────────────────────────────── */
+.sm-input,
+.sm-textarea,
+.sm-select {
+  width: 100%;
+  padding: 9px 13px;
+  border: 1.5px solid var(--sm-divider, #e4e4e4);
+  border-radius: var(--radius-md, 10px);
+  background: #ffffff;
+  font-size: 14px;
+  color: var(--sm-ink, #111111);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  line-height: 1.5;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.sm-input::placeholder,
+.sm-textarea::placeholder {
+  color: var(--sm-muted, #888888);
+}
+
+.sm-input:focus,
+.sm-textarea:focus,
+.sm-select:focus {
+  border-color: var(--sm-brand, #de2e2e);
+  box-shadow: 0 0 0 3px rgba(222, 46, 46, .10);
+}
+
+.sm-textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+/* Error state */
+.sm-input.error,
+.sm-select.error,
+.sm-textarea.error {
+  border-color: var(--color-error, #dc2626);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, .10);
+}
+
+/* ── Custom select arrow ────────────────────────────────────────────────── */
+.sm-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 34px;
+  cursor: pointer;
+}
+
+/* ── Field wrapper ──────────────────────────────────────────────────────── */
+.sm-field {
+  margin-bottom: 16px;
+}
+
+.sm-field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sm-body, #444444);
+  margin-bottom: 5px;
+  letter-spacing: 0.02em;
+}
+
+.sm-field-hint {
+  font-size: 11px;
+  color: var(--sm-muted, #888888);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.sm-field-error {
+  font-size: 11px;
+  color: var(--color-error, #dc2626);
+  margin-top: 4px;
+}
+
+/* ── Search input with icon ─────────────────────────────────────────────── */
+.sm-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.sm-search-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--sm-muted, #888888);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.sm-search .sm-input {
+  padding-left: 34px;
+}
+
+/* ── Filter bar (dashboard / table controls) ────────────────────────────── */
+.sm-filter-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  background: #ffffff;
+  border: 1px solid var(--sm-divider, #e4e4e4);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 1px 3px rgba(17, 17, 17, .04);
+}
+
+.sm-filter-ctl {
+  height: 34px;
+  min-width: 150px;
+  font-size: 12.5px;
+  border: 1px solid var(--sm-divider, #e4e4e4);
+  border-radius: 7px;
+  padding: 0 10px;
+  color: var(--sm-body, #444444);
+  background: #f8f8f6;
+  outline: none;
+  transition: border-color 120ms;
+}
+
+.sm-filter-ctl:focus {
+  border-color: var(--sm-brand, #de2e2e);
+}
+
+/* ── Mobile ─────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .sm-input,
+  .sm-select,
+  .sm-textarea {
+    font-size: 16px !important; /* Prevent iOS auto-zoom */
+    min-height: 44px;
+  }
+}

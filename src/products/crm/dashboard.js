@@ -6,6 +6,8 @@ var _dashboardAbortCtrl    = null // AbortController for the render lifecycle si
 var _dashboardRefreshAbort   = null  // AbortController for filter-triggered refreshes
 var _statsPromise            = null  // deduplicated in-flight stats request (shared across renders)
 var _dashboardRenderInFlight = false // dedup: prevents concurrent renderDashboard() calls
+var _dashboardPerfTrace      = null
+var _lastDashboardDataSig    = null
 
 async function renderDashboard() {  // ── Dedup: if a render is already in flight, skip rather than cancel it ──
   if (_dashboardRenderInFlight) {
@@ -36,7 +38,6 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
   // Logs every write to [DOM WRITE] and wraps in try/catch to prevent null explosions.
   function safeMutate(elOrId, html) {
     if (!_guard()) { return false }
-    if (typeof _dispatchInFlight !== 'undefined' && _dispatchInFlight) { return false }
     var el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId
     if (!el || !el.isConnected) { return false }
     var _id = typeof elOrId === 'string' ? elOrId : (el.id || '(el)')
@@ -50,16 +51,16 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
   var content = document.getElementById('content')
   if (!content) { _dashboardRenderInFlight = false; _PERF.end('renderDashboard'); return }
   content.innerHTML = `
-    <div style="max-width:1600px;margin:0 auto;padding:0;">
+    <div style="max-width:1600px;margin:0 auto;padding:0 4px;">
       <div class="dash-header-row">
         <div>
-          <h2 class="dash-title">Dashboard</h2>
+          <h2 class="sm-page-title dash-title">Dashboard</h2>
           <p style="margin:0;color:#64748b;font-size:13px;">Performance snapshot for ${escape(user.name)}</p>
         </div>
         <div class="dash-filters">
-          <div>
-            <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:5px;">Time Range</label>
-            <select id="dashRangeFilter" class="select dash-filter-sel">
+          <div class="dash-filter-group">
+            <label class="dash-filter-label">Time Range</label>
+            <select id="dashRangeFilter" class="dash-filter-ctl">
               <option value="">All Time</option>
               <option value="today">Today</option>
               <option value="this_week" selected>This Week</option>
@@ -68,52 +69,54 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
               <option value="custom">Custom Date</option>
             </select>
           </div>
-          <div id="dashCustomRange" style="display:none;gap:6px;align-items:flex-end;">
-            <div>
-              <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:5px;">From</label>
-              <input type="date" id="dashDateFrom" class="select dash-filter-sel" style="padding:7px 10px;" />
+          <div id="dashCustomRange" style="display:none;gap:8px;align-items:flex-end;">
+            <div class="dash-filter-group">
+              <label class="dash-filter-label">From</label>
+              <input type="date" id="dashDateFrom" class="dash-filter-ctl" />
             </div>
-            <div>
-              <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:5px;">To</label>
-              <input type="date" id="dashDateTo" class="select dash-filter-sel" style="padding:7px 10px;" />
+            <div class="dash-filter-group">
+              <label class="dash-filter-label">To</label>
+              <input type="date" id="dashDateTo" class="dash-filter-ctl" />
             </div>
           </div>
-          <div>
-            <label style="font-size:11px;font-weight:600;color:#64748b;display:block;margin-bottom:5px;">Project</label>
-            <select id="dashProjectFilter" class="select dash-filter-sel">
+          <div class="dash-filter-group">
+            <label class="dash-filter-label">Project</label>
+            <select id="dashProjectFilter" class="dash-filter-ctl">
               <option value="">All Projects</option>
             </select>
+          </div>
+          <div class="dash-filter-group">
+            <label class="dash-filter-label" style="visibility:hidden;">↺</label>
+            <button onclick="renderDashboard()" class="dash-refresh-btn">↻ Refresh</button>
           </div>
         </div>
       </div>
 
       <div id="kpiSection" class="dash-kpi-grid">
-        ${['Total Leads','Site Visit Planned','Site Visit Done','Warm Rate'].map(l=>`
-          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(2,6,23,0.08);">
-            <div style="font-size:11px;color:#64748b;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;">${l}</div>
-            <div style="margin-top:8px;height:32px;background:#f1f5f9;border-radius:6px;animation:_loaderBar 1.4s infinite;"></div>
+        ${[['Total Leads','#1d4ed8'],['Unassigned','#d97706'],['Site Visit Planned','#7c3aed'],['Site Visit Done','#059669'],['Warm Rate','#c2410c']].map(([l,a])=>`
+          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;border-left:4px solid ${a};box-shadow:0 1px 3px rgba(2,6,23,0.06);">
+            <div style="font-size:11px;color:#64748b;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:10px;">${l}</div>
+            <div style="height:30px;background:#f1f5f9;border-radius:6px;animation:_loaderBar 1.4s infinite;"></div>
           </div>`).join('')}
       </div>
 
       <div class="dash-charts-row">
-        <div class="card" style="padding:16px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-            <h3 style="margin:0;font-size:15px;color:#0f172a;">Drip Lead Funnel</h3>
-          </div>
+        <div class="card" style="padding:20px;">
+          <h3 class="sm-label" style="margin-bottom:14px;border-bottom:1px solid #f1f5f9;padding-bottom:10px;">Drip Lead Funnel</h3>
           <div id="dashFunnel"><div style="display:flex;align-items:center;justify-content:center;padding:40px;color:#9ca3af;font-size:13px;"><span style="animation:spin 1s linear infinite;display:inline-block;border:3px solid #e5e7eb;border-top-color:#6366f1;border-radius:50%;width:22px;height:22px;margin-right:10px;"></span>Loading…</div></div>
         </div>
-        <div class="card" style="padding:16px;display:flex;flex-direction:column;">
-          <h3 style="margin:0 0 8px;font-size:15px;color:#0f172a;">Leads by Source</h3>
+        <div class="card" style="padding:20px;display:flex;flex-direction:column;">
+          <h3 class="sm-label" style="margin-bottom:14px;border-bottom:1px solid #f1f5f9;padding-bottom:10px;">Leads by Source</h3>
           <div id="dashSourceChart" class="dash-source-inner"><div style="display:flex;align-items:center;justify-content:center;padding:40px;color:#9ca3af;font-size:13px;"><span style="animation:spin 1s linear infinite;display:inline-block;border:3px solid #e5e7eb;border-top-color:#6366f1;border-radius:50%;width:22px;height:22px;margin-right:10px;"></span>Loading…</div></div>
         </div>
-        <div class="card" style="padding:16px;display:flex;flex-direction:column;">
-          <h3 style="margin:0 0 10px;font-size:15px;color:#0f172a;">Leads by Project</h3>
+        <div class="card" style="padding:20px;display:flex;flex-direction:column;">
+          <h3 class="sm-label" style="margin-bottom:14px;border-bottom:1px solid #f1f5f9;padding-bottom:10px;">Leads by Project</h3>
           <div id="dashProjectBars" style="flex:1;display:flex;flex-direction:column;gap:8px;"><div style="display:flex;align-items:center;color:#9ca3af;font-size:13px;"><span style="animation:spin 1s linear infinite;display:inline-block;border:3px solid #e5e7eb;border-top-color:#6366f1;border-radius:50%;width:22px;height:22px;margin-right:10px;"></span>Loading…</div></div>
         </div>
       </div>
 
-      <div class="card" style="padding:18px 18px 16px;">
-        <h3 style="margin:0 0 12px;font-size:15px;color:#0f172a;">Lead Status Distribution</h3>
+      <div class="card" style="padding:20px;">
+        <h3 class="sm-label" style="margin-bottom:14px;border-bottom:1px solid #f1f5f9;padding-bottom:10px;">Lead Status Distribution</h3>
         <div id="statusGrid" class="dash-status-grid"><div style="display:flex;align-items:center;color:#9ca3af;font-size:13px;padding:12px 0;"><span style="animation:spin 1s linear infinite;display:inline-block;border:3px solid #e5e7eb;border-top-color:#6366f1;border-radius:50%;width:22px;height:22px;margin-right:10px;"></span>Loading…</div></div>
       </div>
     </div>
@@ -134,10 +137,17 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
   // ── Request deduplication: if a stats fetch is already in flight, reuse its promise ────
   if (!_statsPromise) {
     _PERF.mark('stats-api')
+    _dashboardPerfTrace = (typeof _perfStartRequest === 'function')
+      ? _perfStartRequest('dashboard_stats', '/leads/dashboard/stats?range=this_week', 'GET')
+      : null
+    if (typeof _perfMarkSent === 'function') _perfMarkSent(_dashboardPerfTrace)
     _statsPromise = fetch(
       API_BASE + '/leads/dashboard/stats?range=this_week',
       { headers: _apiAuthHeaders() }   // no AbortSignal — promise is shared across renders
-    ).then(function(r) { return r.json() })
+    ).then(function(r) {
+      if (typeof _perfReadResponse === 'function') _perfReadResponse(_dashboardPerfTrace, r)
+      return r.json()
+    })
      .then(function(data) {
        _PERF.end('stats-api')
        try { sessionStorage.setItem(_statsKey, JSON.stringify(data)) } catch (_e) {}
@@ -145,6 +155,13 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
      })
      .catch(function() {
        _PERF.cancel('stats-api')
+       if (typeof _perfLog === 'function') {
+         _perfLog('dashboard_stats', 'request_error', {
+           traceId: _dashboardPerfTrace && _dashboardPerfTrace.id,
+           path: '/leads/dashboard/stats?range=this_week',
+           method: 'GET',
+         })
+       }
        return null
      })
      .finally(function() { _statsPromise = null })
@@ -168,12 +185,15 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
 
   const SOURCE_COLORS = ['#3b82f6', '#14b8a6', '#f59e0b', '#8b5cf6', '#ef4444', '#64748b', '#10b981']
 
-  function kpiCard(label, value, subtext, accent) {
+  function kpiCard(label, value, subtext, accent, icon) {
     return `
-      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(2,6,23,0.08);">
-        <div style="font-size:11px;color:#64748b;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;">${label}</div>
-        <div style="font-size:30px;font-weight:800;line-height:1.15;color:${accent};margin-top:4px;">${value}</div>
-        <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${subtext}</div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;border-left:4px solid ${accent};box-shadow:0 1px 3px rgba(2,6,23,0.06);">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;">
+          <span style="font-size:11px;color:#64748b;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;">${label}</span>
+          <span style="font-size:20px;opacity:0.6;line-height:1;">${icon || ''}</span>
+        </div>
+        <div style="font-size:30px;font-weight:800;line-height:1;color:#0f172a;">${value}</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:5px;">${subtext}</div>
       </div>
     `
   }
@@ -181,24 +201,17 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
   function renderStatusGrid(counts, totalLeads) {
     const grid = document.getElementById('statusGrid')
     if (!grid || !grid.isConnected) return  // DOM removed or disconnected
-    const totalStages = STATUS_ORDER
-      .filter(s => !['assigned', 'unassigned'].includes(s))
-      .reduce((sum, s) => sum + (counts[s] || 0), 0)
-
-    var _statusHtml = STATUS_ORDER.map(status => {
+    const PIPELINE_STATUSES = STATUS_ORDER.filter(s => s !== 'assigned' && s !== 'unassigned')
+    const totalStages = PIPELINE_STATUSES.reduce((sum, s) => sum + (counts[s] || 0), 0)
+    var _statusHtml = PIPELINE_STATUSES.map(status => {
       const cfg = STATUS_COLORS[status] || { bg: '#f1f5f9', color: '#334155', label: status }
       const count = counts[status] || 0
-      const isAssignment = status === 'assigned' || status === 'unassigned'
-      const pct = isAssignment
-        ? (totalLeads > 0 ? (count / totalLeads * 100).toFixed(0) + '%' : '0%')
-        : (totalStages > 0 ? (count / totalStages * 100).toFixed(0) + '%' : '0%')
-      return `
-        <div style="background:${cfg.bg};border:1px solid #e2e8f0;border-radius:10px;padding:11px;text-align:center;">
-          <div style="font-size:11px;font-weight:700;color:${cfg.color};text-transform:uppercase;letter-spacing:0.04em;">${cfg.label}</div>
-          <div style="font-size:24px;font-weight:800;color:${cfg.color};line-height:1.2;margin-top:4px;">${count}</div>
-          <div style="font-size:10px;color:#64748b;">${pct}</div>
-        </div>
-      `
+      const pct = totalStages > 0 ? (count / totalStages * 100).toFixed(0) + '%' : '0%'
+      return `<div style="background:${cfg.bg};border:1px solid #e2e8f0;border-radius:10px;padding:11px;text-align:center;">
+        <div style="font-size:10px;font-weight:700;color:${cfg.color};text-transform:uppercase;letter-spacing:0.04em;">${cfg.label}</div>
+        <div style="font-size:24px;font-weight:800;color:#0f172a;line-height:1.2;margin-top:4px;">${count}</div>
+        <div style="font-size:10px;color:#64748b;">${pct}</div>
+      </div>`
     }).join('')
     safeMutate(grid, _statusHtml)
   }
@@ -316,10 +329,10 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
       const pct = Math.round((s.count / total) * 100)
       const color = SOURCE_COLORS[i % SOURCE_COLORS.length]
       return `
-        <div style="min-height:${rowH}px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 0;">
-          <span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;"></span>
-          <span style="flex:1;color:#334155;font-size:${fz};font-weight:500;min-width:60px;overflow:hidden;text-overflow:ellipsis;">${escape(s.source)}</span>
-          <span style="color:#0f172a;font-size:${fz};font-weight:700;white-space:nowrap;flex-shrink:0;padding-left:8px;">${pct}% (${s.count.toLocaleString()})</span>
+        <div style="min-height:${rowH}px;display:flex;align-items:center;gap:6px;padding:2px 0;">
+          <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>
+          <span style="flex:1;color:#334155;font-size:${fz};font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escape(s.source)}</span>
+          <span style="color:#0f172a;font-size:${fz};font-weight:700;white-space:nowrap;flex-shrink:0;margin-left:4px;">${pct}% (${s.count.toLocaleString()})</span>
         </div>`
     }).join('')
 
@@ -395,16 +408,30 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
     if (projectVal) params.set('project_id', projectVal)
 
     let data = (_preData && !projectVal) ? _preData : null
+    var requestTrace = _preData ? _dashboardPerfTrace : null
     if (!data) {
       const url = `${API_BASE}/leads/dashboard/stats${params.toString() ? `?${params.toString()}` : ''}`
       try {
+        requestTrace = (typeof _perfStartRequest === 'function')
+          ? _perfStartRequest('dashboard_stats', `/leads/dashboard/stats${params.toString() ? `?${params.toString()}` : ''}`, 'GET')
+          : null
+        if (typeof _perfMarkSent === 'function') _perfMarkSent(requestTrace)
         const res = await fetch(url, { headers: _apiAuthHeaders(), signal: rCtrl.signal })
+        if (typeof _perfReadResponse === 'function') _perfReadResponse(requestTrace, res)
         data = await res.json()
         if (!projectVal && (rangeVal === 'this_week' || !rangeVal)) {
           try { sessionStorage.setItem(_statsKey, JSON.stringify(data)) } catch (_e) {}
         }
       } catch (err) {
         _PERF.cancel('refreshDashboardViews')
+        if (typeof _perfLog === 'function' && (!err || err.name !== 'AbortError')) {
+          _perfLog('dashboard_stats', 'request_error', {
+            traceId: requestTrace && requestTrace.id,
+            path: `/leads/dashboard/stats${params.toString() ? `?${params.toString()}` : ''}`,
+            method: 'GET',
+            message: (err && err.message) || 'Request failed',
+          })
+        }
         if (err && err.name === 'AbortError') return  // superseded by newer filter change
         return
       }
@@ -416,16 +443,30 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
       return
     }
 
-    _PERF.lap('refreshDashboardViews', 'data-ready src=' + (_preData && !projectVal ? 'pre/cache' : 'network'))
+    return _renderDashboardPayload(
+      data,
+      requestTrace,
+      _preData && !projectVal ? 'pre/cache' : 'network'
+    )
+  }
+
+  function _renderDashboardPayload(data, requestTrace, sourceLabel) {
+    if (!_guard()) {
+      _PERF.cancel('refreshDashboardViews')
+      return false
+    }
+
+    _PERF.lap('refreshDashboardViews', 'data-ready src=' + sourceLabel)
     const stats = data.stats || {}
     const totalLeads = stats.total_leads || stats.my_leads || 0
 
     var _ct = performance.now()
     safeMutate('kpiSection', `
-      ${kpiCard('Total Leads', totalLeads, 'within selected filters', '#1d4ed8')}
-      ${kpiCard('Site Visit Planned', stats.status_counts?.site_visit_planned || 0, 'leads with visits scheduled', '#7c3aed')}
-      ${kpiCard('Site Visit Done', stats.status_counts?.site_visit_done || 0, 'completed site visits', '#059669')}
-      ${kpiCard('Warm Rate', `${(stats.warm_rate || 0).toFixed(1)}%`, 'interested leads share', '#c2410c')}
+      ${kpiCard('Total Leads', totalLeads, 'within selected filters', '#1d4ed8', '👥')}
+      ${kpiCard('Unassigned', stats.status_counts?.unassigned || 0, 'leads pending assignment', '#d97706', '📌')}
+      ${kpiCard('Site Visit Planned', stats.status_counts?.site_visit_planned || 0, 'leads with visits scheduled', '#7c3aed', '📅')}
+      ${kpiCard('Site Visit Done', stats.status_counts?.site_visit_done || 0, 'completed site visits', '#059669', '✅')}
+      ${kpiCard('Warm Rate', `${(stats.warm_rate || 0).toFixed(1)}%`, 'interested leads share', '#c2410c', '🔥')}
     `)
     _PERF.lap('refreshDashboardViews', 'kpiSection: ' + (performance.now() - _ct).toFixed(1) + 'ms')
 
@@ -448,7 +489,12 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
     _ct = performance.now()
     renderStatusGrid(stats.status_counts || {}, totalLeads)
     _PERF.lap('refreshDashboardViews', 'statusGrid: ' + (performance.now() - _ct).toFixed(1) + 'ms')
+
     _PERF.end('refreshDashboardViews')
+    if (typeof _perfMarkRenderComplete === 'function' && requestTrace) {
+      _perfMarkRenderComplete('dashboard_stats', requestTrace)
+    }
+    return true
   }
 
   rangeSel.addEventListener('change', function() {
@@ -467,21 +513,73 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
 
   _PERF.lap('renderDashboard', 'events-wired')
   _PERF.end('renderDashboard')
+  _dashboardRenderInFlight = false
+
+  async function _applyDashboardData(data) {
+    if (!_guard() || !data) return
+    var nextSig = ''
+    try { nextSig = JSON.stringify(data) } catch (_e) {}
+    if (nextSig && nextSig === _lastDashboardDataSig) return
+    _PERF.count('refreshDashboardViews')
+    _PERF.mark('refreshDashboardViews')
+    var rendered = _renderDashboardPayload(data, _dashboardPerfTrace, 'pre/cache')
+    if (rendered && nextSig) _lastDashboardDataSig = nextSig
+  }
 
   // ── Initial hydration: shell is visible; fill with data ──────────────────
   if (_cachedStats) {
     // Cache hit: paint immediately with stale data, revalidate silently in background
-    refreshDashboardViews(_cachedStats)
+    _applyDashboardData(_cachedStats)
     _initStatsProm.then(function(data) {
-      if (!_guard()) return   // navigated away while the network request was in flight
-      if (data) refreshDashboardViews(data)
+      return _applyDashboardData(data)
     })
   } else {
-    // Cold load: no cache — must await fresh data before painting
-    var _freshData = await _initStatsProm
-    if (!_guard()) { _dashboardRenderInFlight = false; return }  // navigated away while waiting
-    if (_freshData) refreshDashboardViews(_freshData)
+    // Cold load: keep the shell interactive and hydrate when the request resolves.
+    _initStatsProm.then(function(data) {
+      return _applyDashboardData(data)
+    })
   }
-  _dashboardRenderInFlight = false
 }
 
+// ---------------------------------------------------------------------------
+// In-app notification poller — runs once per session
+// Polls /api/leads/notifications every 30 s and shows toast messages.
+// ---------------------------------------------------------------------------
+;(function _startNotificationPoller() {
+  if (window._notificationPollerStarted) return
+  window._notificationPollerStarted = true
+
+  // Inject toast container once
+  const _toastContainer = document.createElement('div')
+  _toastContainer.id = '_notif_toasts'
+  _toastContainer.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:99999;display:flex;flex-direction:column;gap:8px;pointer-events:none;'
+  document.body.appendChild(_toastContainer)
+
+  function _showToast(msg) {
+    const el = document.createElement('div')
+    el.style.cssText = 'background:#1e293b;color:#f1f5f9;padding:12px 16px;border-radius:10px;font-size:13px;max-width:320px;box-shadow:0 4px 20px rgba(0,0,0,0.25);pointer-events:auto;cursor:pointer;opacity:0;transition:opacity 0.3s;'
+    el.textContent = msg
+    el.onclick = () => el.remove()
+    _toastContainer.appendChild(el)
+    requestAnimationFrame(() => { el.style.opacity = '1' })
+    setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 400) }, 8000)
+  }
+
+  function _poll() {
+    // Only poll when user is authenticated
+    if (!window._authToken && typeof getToken === 'function' && !getToken()) return
+    const headers = typeof _apiAuthHeaders === 'function' ? _apiAuthHeaders() : {}
+    fetch((window.API_BASE || '') + '/leads/notifications', { headers })
+      .then(r => r.ok ? r.json() : { notifications: [] })
+      .then(data => {
+        (data.notifications || []).forEach(n => _showToast(n.message || n.msg || JSON.stringify(n)))
+      })
+      .catch(() => {})  // silent — network errors shouldn't break the UI
+  }
+
+  // First poll after 10 s (let auth settle), then every 30 s
+  setTimeout(function _firstPoll() {
+    _poll()
+    setInterval(_poll, 30000)
+  }, 10000)
+})()

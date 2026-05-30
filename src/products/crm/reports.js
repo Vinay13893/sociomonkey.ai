@@ -23,37 +23,37 @@ async function renderReports(dateFrom = '', dateTo = '') {
   content.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:16px;">
       <div class="card" style="padding:20px 24px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;">
-          <div>
-            <h2 style="margin:0;color:#0f172a;font-size:1.6rem;letter-spacing:-0.5px;font-weight:700;">📊 Reports & Analytics</h2>
+          <div class="sm-page-header" style="margin-bottom:18px;">
+            <div>
+              <h2 class="sm-page-title">📊 Reports & Analytics</h2>
             <div style="margin-top:4px;display:flex;align-items:center;gap:8px;">
               <span style="font-size:12px;color:#64748b;">Period:</span>
               <span style="font-size:12px;font-weight:600;color:${activeFilter ? '#2563eb' : '#64748b'};background:${activeFilter ? '#eff6ff' : '#f1f5f9'};padding:2px 10px;border-radius:20px;border:1px solid ${activeFilter ? '#bfdbfe' : '#e2e8f0'};">${filterLabel}</span>
             </div>
           </div>
-          <button class="button" onclick="downloadLeadReport()" style="font-size:13px;padding:9px 18px;background:#2563eb;border-color:#2563eb;">⬇ Export Excel</button>
+          <button class="sm-btn sm-btn-primary" onclick="downloadLeadReport()">⬇ Export Excel</button>
         </div>
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;">
           <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:0.08em;margin-bottom:12px;text-transform:uppercase;">🗓 Filter by Date Range</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
             <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:130px;">
-              <label style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:0.04em;">FROM</label>
+              <label class="sm-label">FROM</label>
               <input type="date" id="reportDateFrom" class="input" style="font-size:13px;padding:8px 10px;" value="${dateFrom}" />
             </div>
             <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:130px;">
-              <label style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:0.04em;">TO</label>
+              <label class="sm-label">TO</label>
               <input type="date" id="reportDateTo" class="input" style="font-size:13px;padding:8px 10px;" value="${dateTo}" />
             </div>
             <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:130px;">
-              <label style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:0.04em;">QUICK SELECT</label>
+              <label class="sm-label">QUICK SELECT</label>
               <select id="reportMonth" class="select" style="font-size:13px;padding:8px 10px;">
                 <option value="">— Select Month —</option>
                 ${monthOptions}
               </select>
             </div>
             <div style="display:flex;gap:8px;align-items:flex-end;padding-bottom:1px;">
-              <button id="applyReportFilter" class="button" style="font-size:13px;padding:9px 20px;">Apply</button>
-              <button id="clearReportFilter" class="button secondary" style="font-size:13px;padding:9px 14px;">✕ Clear</button>
+              <button id="applyReportFilter" class="sm-btn sm-btn-primary">Apply</button>
+              <button id="clearReportFilter" class="sm-btn sm-btn-secondary">✕ Clear</button>
             </div>
           </div>
         </div>
@@ -200,10 +200,10 @@ async function renderReports(dateFrom = '', dateTo = '') {
         ${nameCell}
         <td style="font-size:11px;color:#64748b;">${escape(s.email || '')}</td>
         <td style="text-align:center;font-weight:700;">${s.total_leads}</td>
-        <td style="text-align:center;color:#0891b2;font-weight:600;">${s.interested}</td>
-        <td style="text-align:center;color:#7c3aed;font-weight:600;">${s.site_visit_planned}</td>
-        <td style="text-align:center;color:#6366f1;font-weight:600;">${s.site_visit_done}</td>
-        <td style="text-align:center;color:#10b981;font-weight:700;">${s.booking_done}</td>
+        <td style="text-align:center;font-weight:600;">${s.interested}</td>
+        <td style="text-align:center;font-weight:600;">${s.site_visit_planned}</td>
+        <td style="text-align:center;font-weight:600;">${s.site_visit_done}</td>
+        <td style="text-align:center;font-weight:700;">${s.booking_done}</td>
         <td style="text-align:center;">
           <span style="background:${warmCol}18;color:${warmCol};border-radius:12px;padding:2px 10px;font-size:12px;font-weight:700;">${s.warm_rate}%</span>
         </td>
@@ -226,10 +226,10 @@ async function renderReports(dateFrom = '', dateTo = '') {
           ∑ Team Total
         </td>
         <td style="text-align:center;font-weight:800;font-size:14px;">${teamTotal}</td>
-        <td style="text-align:center;color:#0891b2;font-weight:800;">${teamInterest}</td>
-        <td style="text-align:center;color:#7c3aed;font-weight:800;">${teamSVP}</td>
-        <td style="text-align:center;color:#6366f1;font-weight:800;">${teamSVD}</td>
-        <td style="text-align:center;color:#10b981;font-weight:800;">${teamBooking}</td>
+        <td style="text-align:center;font-weight:800;">${teamInterest}</td>
+        <td style="text-align:center;font-weight:800;">${teamSVP}</td>
+        <td style="text-align:center;font-weight:800;">${teamSVD}</td>
+        <td style="text-align:center;font-weight:800;">${teamBooking}</td>
         <td style="text-align:center;">
           <span style="background:${color}20;color:${color};border-radius:12px;padding:2px 10px;font-size:12px;font-weight:800;">${teamWarm}%</span>
         </td>
@@ -247,15 +247,15 @@ async function renderReports(dateFrom = '', dateTo = '') {
           <div style="display:flex;gap:20px;flex-wrap:wrap;">
             <div style="text-align:center;">
               <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">All Leads</div>
-              <div style="font-size:18px;font-weight:700;color:${color};">${teamTotal}</div>
+              <div style="font-size:18px;font-weight:700;color:#0f172a;">${teamTotal}</div>
             </div>
             <div style="text-align:center;">
               <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Booking Done</div>
-              <div style="font-size:18px;font-weight:700;color:#10b981;">${teamBooking}</div>
+              <div style="font-size:18px;font-weight:700;color:#0f172a;">${teamBooking}</div>
             </div>
             <div style="text-align:center;">
               <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Team Warm Rate</div>
-              <div style="font-size:18px;font-weight:700;color:#f59e0b;">${teamWarm}%</div>
+              <div style="font-size:18px;font-weight:700;color:#0f172a;">${teamWarm}%</div>
             </div>
           </div>
         </div>
@@ -312,36 +312,36 @@ async function renderReports(dateFrom = '', dateTo = '') {
     <div class="rpt-kpi-grid">
       <div class="analytics-kpi">
         <div class="analytics-kpi-label">All Leads</div>
-        <div class="analytics-kpi-value" style="color:#2563eb;">${total}</div>
+        <div class="analytics-kpi-value">${total}</div>
       </div>
       <div class="analytics-kpi">
         <div class="analytics-kpi-label">Interested</div>
-        <div class="analytics-kpi-value" style="color:#0891b2;">${interested}</div>
+        <div class="analytics-kpi-value">${interested}</div>
       </div>
       <div class="analytics-kpi">
         <div class="analytics-kpi-label">Site Visit Planned</div>
-        <div class="analytics-kpi-value" style="color:#7c3aed;">${siteVisitPlan}</div>
+        <div class="analytics-kpi-value">${siteVisitPlan}</div>
       </div>
       <div class="analytics-kpi">
         <div class="analytics-kpi-label">Site Visit Done</div>
-        <div class="analytics-kpi-value" style="color:#6366f1;">${siteVisitDone}</div>
+        <div class="analytics-kpi-value">${siteVisitDone}</div>
       </div>
       <div class="analytics-kpi">
         <div class="analytics-kpi-label">Booking Done</div>
-        <div class="analytics-kpi-value" style="color:#10b981;">${booked}</div>
+        <div class="analytics-kpi-value">${booked}</div>
       </div>
       <div class="analytics-kpi">
         <div class="analytics-kpi-label">Junk</div>
-        <div class="analytics-kpi-value" style="color:#94a3b8;">${junk}</div>
+        <div class="analytics-kpi-value">${junk}</div>
       </div>
       <div class="analytics-kpi">
         <div class="analytics-kpi-label">Hot Rate</div>
-        <div class="analytics-kpi-value" style="color:#ef4444;">${hotRate}%</div>
+        <div class="analytics-kpi-value">${hotRate}%</div>
         <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Negotiation / Total</div>
       </div>
       <div class="analytics-kpi">
         <div class="analytics-kpi-label">Warm Rate</div>
-        <div class="analytics-kpi-value" style="color:#f59e0b;">${warmRate}%</div>
+        <div class="analytics-kpi-value">${warmRate}%</div>
         <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Interested / Total</div>
       </div>
     </div>

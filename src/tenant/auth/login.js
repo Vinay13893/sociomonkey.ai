@@ -25,27 +25,57 @@ function renderLogin(context) {
   var tenantBrandName = (typeof tenantConfig !== 'undefined' && tenantConfig && (tenantConfig.brand_name || tenantConfig.name))
                        ? (tenantConfig.brand_name || tenantConfig.name) : 'Enterprise Lead Management'
   var loginBg = (typeof tenantConfig !== 'undefined' && tenantConfig && tenantConfig.login_bg_color)
-                       ? tenantConfig.login_bg_color : '#f1f5f9'
+                       ? tenantConfig.login_bg_color : '#ffffff'
 
-  // Build header HTML
+  // Monkey icon badge for the red strip
+  var monkeyIconHtml =
+    '<div style="background:white;border-radius:50%;width:76px;height:76px;display:flex;align-items:center;justify-content:center;">' +
+    '<img src="Assets/top-banner-logo.png" style="height:62px;width:62px;object-fit:contain;" />' +
+    '</div>'
+
+  // Build header HTML — platform: SOCIO MONKEY logo image; tenant: logo + brand name
   var headerHtml = isPlatform
-    ? '<div style="text-align:center;margin-bottom:20px;"><div style="display:inline-flex;align-items:center;gap:10px;margin-bottom:8px;"><span style="font-size:32px;">&#x1F412;</span><span style="font-size:22px;font-weight:700;color:#1e293b;">sociomonkey.ai</span></div><p style="color:#64748b;font-size:13px;margin:0;">Platform Administration</p></div>'
-    : '<img src="' + tenantLogoSrc + '" alt="' + tenantBrandName + '" style="width:160px;height:auto;border-radius:10px;display:block;margin:0 auto 16px;" /><h3 style="text-align:center;color:#64748b;">' + tenantBrandName + '</h3>'
+    ? '<div style="text-align:center;margin-bottom:24px;">' +
+      '<img src="Assets/credentials-card-logo.png" alt="Sociomonkey" ' +
+      'style="height:112px;width:auto;max-width:100%;display:block;margin:0 auto;" /></div>'
+    : '<img src="' + tenantLogoSrc + '" alt="' + tenantBrandName + '" style="width:160px;height:auto;border-radius:10px;display:block;margin:0 auto 16px;" /><h3 style="text-align:center;font-size:18px;font-weight:700;color:#111111;">' + tenantBrandName + '</h3>'
 
   // Hide sidebar during login
-  var sidebar = document.querySelector('.sidebar')
+  var sidebar = document.querySelector('.sm-sidebar')
   if (sidebar) sidebar.style.display = 'none'
   var mainContent = document.querySelector('.main-content')
   if (mainContent) mainContent.style.marginLeft = '0'
+  // Kill scroll and force white background during login
+  var bgColor = isPlatform ? '#ffffff' : loginBg
+  document.body.style.margin = '0'
+  document.body.style.padding = '0'
+  document.documentElement.style.margin = '0'
+  document.documentElement.style.padding = '0'
+  document.body.style.background = bgColor
+  document.body.style.overflow = 'hidden'
+  document.documentElement.style.overflow = 'hidden'
+  if (mainContent) {
+    mainContent.style.background = bgColor
+    mainContent.style.overflow = 'hidden'
+    mainContent.style.height = '100vh'
+  }
+  if (root) {
+    root.style.padding = '0'
+    root.style.height = '100vh'
+    root.style.overflow = 'hidden'
+  }
 
   var otpDisplay      = isPlatform ? 'none'  : 'block'
   var passwordDisplay = isPlatform ? 'block' : 'none'
 
   root.innerHTML =
-    '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;' +
-    'background:' + (isPlatform ? '#f1f5f9' : loginBg) + ';">' +
-      '<div class="card" style="max-width:420px;width:100%;">' +
-        headerHtml +
+    '<div style="display:flex;flex-direction:column;width:100%;height:100vh;overflow:hidden;background:' + bgColor + ';">' +
+      (isPlatform
+        ? '<div style="background:#de2e2e;height:90px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + monkeyIconHtml + '</div>'
+        : '') +
+      '<div style="flex:1;display:flex;align-items:center;justify-content:center;padding:24px;overflow-y:auto;">' +
+        '<div class="card" style="max-width:400px;width:100%;margin:0;">' +
+          headerHtml +
         // OTP section — PRIMARY for tenant, HIDDEN for platform
         '<div id="otpSection" style="display:' + otpDisplay + ';margin-top:24px;">' +
           '<div id="otpStep1">' +
@@ -110,8 +140,14 @@ function renderLogin(context) {
         '</div>' +
         '<div id="loginError" style="color:#dc2626;text-align:center;' +
           'margin-top:12px;font-size:13px;min-height:18px;"></div>' +
+        (isPlatform ? '' :
+          '<div style="text-align:center;margin-top:20px;padding-top:14px;border-top:1px solid #f1f5f9;">' +
+            '<span style="font-size:11px;color:#94a3b8;letter-spacing:0.04em;display:block;margin-bottom:6px;">Powered by</span>' +
+            '<img src=\"Assets/credentials-card-logo.png\" alt=\"SocioMonkey\" style=\"height:55px;width:auto;opacity:0.85;\" />' +
+          '</div>') +
       '</div>' +
-    '</div>'
+    '</div>' +
+  '</div>'
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function showError(msg) { var el = document.getElementById('loginError'); if (el) el.textContent = msg }

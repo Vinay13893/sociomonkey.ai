@@ -72,8 +72,49 @@ async function loadTenantConfig(slug) {
  * @param {boolean} background - if true, errors are silently ignored
  */
 async function _fetchTenantConfig(slug, background) {
+  var trace = null
   try {
+    if (typeof performance !== 'undefined') {
+      trace = {
+        traceId: 'tenant-config-' + Date.now(),
+        browserRequestStartPerf: performance.now(),
+        browserRequestStartAtMs: Date.now(),
+      }
+      console.log('[PERF]', {
+        route: 'tenant_config',
+        stage: 'browser_request_start',
+        traceId: trace.traceId,
+        slug: slug,
+        browserRequestStartAtMs: trace.browserRequestStartAtMs,
+      })
+      trace.apiRequestSentPerf = performance.now()
+      trace.apiRequestSentAtMs = Date.now()
+      console.log('[PERF]', {
+        route: 'tenant_config',
+        stage: 'api_request_sent',
+        traceId: trace.traceId,
+        apiRequestSentAtMs: trace.apiRequestSentAtMs,
+      })
+    }
     var res = await fetch(API_BASE + '/public/tenants/' + encodeURIComponent(slug) + '/config')
+    if (trace && typeof performance !== 'undefined') {
+      var totalMs = Math.round((performance.now() - trace.browserRequestStartPerf) * 100) / 100
+      var backendMs = Number(res.headers.get('X-Perf-Backend-Duration-Ms') || 0)
+      var dbMs = Number(res.headers.get('X-Perf-Db-Duration-Ms') || 0)
+      console.log('[PERF]', {
+        route: 'tenant_config',
+        stage: 'browser_response_received',
+        traceId: trace.traceId,
+        browserResponseReceivedAtMs: Date.now(),
+        serverRequestReceivedAtMs: Number(res.headers.get('X-Perf-Request-Received-At-Ms') || 0),
+        serverResponseSentAtMs: Number(res.headers.get('X-Perf-Response-Sent-At-Ms') || 0),
+        totalRequestDurationMs: totalMs,
+        backendProcessingDurationMs: Math.round(backendMs * 100) / 100,
+        databaseDurationMs: Math.round(dbMs * 100) / 100,
+        networkDurationMs: Math.round(Math.max(0, totalMs - backendMs) * 100) / 100,
+        dbQueryCount: Number(res.headers.get('X-Perf-Db-Query-Count') || 0),
+      })
+    }
     if (res.ok) {
       var data = await res.json()
       tenantConfig = data
@@ -85,6 +126,14 @@ async function _fetchTenantConfig(slug, background) {
       clearTenantContext()
     }
   } catch (e) {
+    if (trace) {
+      console.log('[PERF]', {
+        route: 'tenant_config',
+        stage: 'request_error',
+        traceId: trace.traceId,
+        message: (e && e.message) || 'Request failed',
+      })
+    }
     // Network error — continue with defaults; don't break the app
   }
 }
@@ -111,11 +160,15 @@ function clearTenantContext() {
 function applyTenantBranding(config) {
   if (!config) return
 
-  var primary    = config.primary_color    || '#0284c7'
-  var secondary  = config.secondary_color  || '#0ea5e9'
-  var accent     = config.accent_color     || '#10b981'
-  var sidebarBg  = config.sidebar_bg_color || '#1e293b'
+  // Only these 5 properties are tenant-controlled.
+  // Primary buttons and global UI chrome are Sociomonkey-owned (var(--sm-ink)).
+  var accent     = config.accent_color     || '#de2e2e'
+  var sidebarBg  = config.sidebar_bg_color || '#c22828'
   var loginBg    = config.login_bg_color   || '#f1f5f9'
+
+  // Derive darker shade and soft background for the accent
+  var accentDark = _darkenHex(accent, 0.15)
+  var accentSoft = _rgbaFromHex(accent, 0.10)
 
   // Ensure the style tag exists
   var el = document.getElementById('_tenantBrandingStyles')
@@ -125,29 +178,16 @@ function applyTenantBranding(config) {
     document.head.appendChild(el)
   }
 
+  // Set only the 5 allowed tenant CSS variables.
+  // All button styles and nav active states resolve via these variables in styles.css.
   el.textContent = [
     ':root {',
-    '  --tenant-primary:   ' + primary   + ';',
-    '  --tenant-secondary: ' + secondary + ';',
-    '  --tenant-accent:    ' + accent    + ';',
-    '  --tenant-sidebar:   ' + sidebarBg + ';',
-    '  --tenant-login-bg:  ' + loginBg   + ';',
+    '  --tenant-accent:      ' + accent      + ';',
+    '  --tenant-accent-dark: ' + accentDark  + ';',
+    '  --tenant-accent-soft: ' + accentSoft  + ';',
+    '  --tenant-sidebar-bg:  ' + sidebarBg   + ';',
+    '  --tenant-login-bg:    ' + loginBg     + ';',
     '}',
-    // Sidebar background
-    '.sidebar { background: var(--tenant-sidebar) !important; }',
-    // Primary action buttons
-    'button.button { background: var(--tenant-primary) !important; }',
-    // Active nav item
-    '.nav-item.active {',
-    '  background: var(--tenant-primary) !important;',
-    '  color: #fff !important;',
-    '}',
-    // Hover state (semi-transparent primary)
-    '.nav-item:not(.active):hover {',
-    '  background: ' + _rgbaFromHex(primary, 0.15) + ' !important;',
-    '}',
-    // Login page background
-    '.login-bg-override { background: var(--tenant-login-bg) !important; }',
   ].join('\n')
 
   // Update favicon
@@ -166,14 +206,21 @@ function applyTenantBranding(config) {
 }
 
 function _applyLogoAndTitle(config) {
-  // Update sidebar logo src
-  var logoEl = document.querySelector('.sidebar-logo')
+  // Update sidebar logo src (unified .sm-sidebar-logo class)
+  var logoEl = document.querySelector('.sm-sidebar-logo')
   if (logoEl) {
     if (config.logo_url) {
       logoEl.src = config.logo_url
       logoEl.alt = config.brand_name || config.name || 'Logo'
       logoEl.style.display = ''
     }
+  }
+
+  // Update sidebar company name
+  var companyEl = document.getElementById('sidebarCompanyName')
+  if (companyEl) {
+    var companyName = config.brand_name || config.name || ''
+    companyEl.textContent = companyName
   }
 
   // Update mobile topbar brand text
@@ -202,6 +249,15 @@ function _rgbaFromHex(hex, alpha) {
   var g = parseInt(hex.slice(3, 5), 16)
   var b = parseInt(hex.slice(5, 7), 16)
   return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')'
+}
+
+/** Darken a hex color by a ratio (0–1). Returns a hex string. */
+function _darkenHex(hex, ratio) {
+  if (!hex || hex.length < 7) return hex
+  var r = Math.max(0, Math.round(parseInt(hex.slice(1, 3), 16) * (1 - ratio)))
+  var g = Math.max(0, Math.round(parseInt(hex.slice(3, 5), 16) * (1 - ratio)))
+  var b = Math.max(0, Math.round(parseInt(hex.slice(5, 7), 16) * (1 - ratio)))
+  return '#' + r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0')
 }
 
 // ── Feature Flags ──────────────────────────────────────────────────────────

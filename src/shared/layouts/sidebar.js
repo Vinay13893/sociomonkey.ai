@@ -37,17 +37,13 @@ function _buildSidebar() {
   if (switcher) {
     if (user.role === 'platform_owner' && availableProducts.length > 0) {
       switcher.innerHTML =
-        '<div style="padding:8px 12px 4px;font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:.08em;text-transform:uppercase;">Products</div>' +
+        '<div style="padding:6px 12px 2px;font-size:10px;font-weight:700;color:rgba(255,255,255,.5);letter-spacing:.08em;text-transform:uppercase;">Products</div>' +
         availableProducts.map(function(p) {
-          return '<button onclick="switchProduct(\'' + p.slug + '\')" style="' +
-            'display:block;width:100%;text-align:left;padding:6px 14px;border:none;' +
-            'background:' + (currentProduct === p.slug ? 'rgba(255,255,255,.15)' : 'transparent') + ';' +
-            'color:' + (currentProduct === p.slug ? '#fff' : '#cbd5e1') + ';' +
-            'font-size:13px;cursor:pointer;border-radius:6px;margin:1px 4px;">' +
+          return '<button onclick="switchProduct(\'' + p.slug + '\')" class="sm-sidebar-nav-item' + (currentProduct === p.slug ? ' active' : '') + '">' +
             (p.icon || '&#x1F4E6;') + ' ' + p.name +
           '</button>'
         }).join('') +
-        '<div style="border-top:1px solid rgba(255,255,255,.1);margin:6px 0;"></div>'
+        '<div class="sm-sidebar-divider"></div>'
     } else {
       // Tenant users: no product switcher
       switcher.innerHTML = ''
@@ -76,10 +72,12 @@ function _buildSidebar() {
   var sidebarNav = document.getElementById('sidebarNav')
   if (sidebarNav) {
     sidebarNav.innerHTML = navItems.map(function(item) {
-      return '<button class="nav-item' + (activeTab === item.key ? ' active' : '') + '" data-tab="' + item.key + '">' +
+      return '<button class="sm-sidebar-nav-item' + (activeTab === item.key ? ' active' : '') + '" data-tab="' + item.key + '">' +
         item.label +
       '</button>'
-    }).join('')
+    }).join('') +
+    '<div class="sm-sidebar-divider"></div>' +
+    '<button class="sm-sidebar-nav-item" id="logoutBtn"><i class="fas fa-sign-out-alt" style="margin-right:8px;"></i>Logout</button>'
     // Clone to drop any previous delegated listener, then re-attach once
     var freshNav = sidebarNav.cloneNode(false)
     freshNav.innerHTML = sidebarNav.innerHTML
@@ -146,28 +144,32 @@ function getNavItems() {
 
   // LMS / CRM product nav
   var items = [
-    { key: 'dashboard', label: '📊 Dashboard' },
-    { key: 'leads',     label: '👥 Leads' },
-    { key: 'projects',  label: '🏢 Projects' },
+    { key: 'dashboard',    label: '📊 Dashboard' },
+    { key: 'action_board', label: '🎯 Action Board' },
+    { key: 'leads',        label: '👥 Leads' },
   ]
 
   if (isTenantFeatureEnabled('pipeline')) {
-    items.splice(2, 0, { key: 'pipeline', label: '📈 Pipeline' })
+    items.push({ key: 'pipeline', label: '📈 Pipeline' })
+  }
+  if (user.role === 'sales_manager' || user.role === 'superadmin') {
+    items.push({ key: 'recycle_queue', label: '♻️ Recycle Queue' })
   }
   if ((user.role === 'sales_manager' || user.role === 'superadmin') && isTenantFeatureEnabled('team_management')) {
     items.push({ key: 'team', label: '👨‍💼 Team' })
   }
+  items.push({ key: 'projects', label: '🏢 Projects' })
   if ((user.role === 'sales_manager' || user.role === 'superadmin') && isTenantFeatureEnabled('bulk_import')) {
-    items.push({ key: 'excel', label: '📤 Import Excel' })
-  }
-  if ((user.role === 'superadmin' || user.role === 'sales_manager') && isTenantFeatureEnabled('reports')) {
-    items.push({ key: 'reports', label: '📊 Reports' })
+    items.push({ key: 'excel', label: '📤 Import Leads' })
   }
   if (user.role === 'superadmin' && isTenantFeatureEnabled('export')) {
     items.push({ key: 'export', label: '📥 Export Leads' })
   }
   if (user.role === 'superadmin' && isTenantFeatureEnabled('activity_logs')) {
     items.push({ key: 'activitylogs', label: '📋 Activity Logs' })
+  }
+  if ((user.role === 'superadmin' || user.role === 'sales_manager') && isTenantFeatureEnabled('reports')) {
+    items.push({ key: 'reports', label: '📊 Reports' })
   }
 
   items.push({ key: 'profile', label: '⚙️ My Profile' })
