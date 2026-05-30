@@ -2,7 +2,7 @@
 // PLATFORM CONSTANTS - API base, status colors, pipeline stages
 // ============================================================================
 
-const API_BASE = window.API_BASE || 'https://sociomonkey-backend-production.up.railway.app/api'
+const API_BASE = window.API_BASE || 'https://backend-nu-nine-20.vercel.app/api'
 
 const STATUS_COLORS = {
   new:                 { bg: '#dbeafe', color: '#1d4ed8', label: 'New' },

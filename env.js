@@ -7,9 +7,18 @@
 
 	var defaultApiBase = isLocal
 		? 'http://127.0.0.1:5002/api'
-		: 'https://sociomonkey-backend-production.up.railway.app/api'
+		: 'https://backend-nu-nine-20.vercel.app/api'
 
-	var apiBase = runtime.API_BASE || defaultApiBase
+	var configuredApiBase = (typeof runtime.API_BASE === 'string' && runtime.API_BASE.trim())
+		? runtime.API_BASE.trim()
+		: ''
+
+	var apiBase = configuredApiBase || defaultApiBase
+
+	// Production safety guard: never allow silent fallback/override to Railway.
+	if (!isLocal && /railway\.app/i.test(apiBase)) {
+		apiBase = defaultApiBase
+	}
 
 	window.SOCIOMONKEY_ENV = {
 		ENV: runtime.ENV || (isLocal ? 'development' : 'production'),

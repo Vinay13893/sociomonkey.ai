@@ -115,7 +115,7 @@ function _sidebarRefreshIfChanged(previousSignature) {
 
 async function init() {
   _PERF.mark('init')
-  // Pre-warm the Railway backend immediately — eliminates cold-start wait.
+  // Pre-warm the active backend immediately — eliminates cold-start wait.
   // Fires before any user interaction; by the time they authenticate and navigate,
   // the backend is already awake and responsive.
   try { fetch(API_BASE + '/health', { method: 'HEAD' }).catch(function() {}) } catch (_e) {}
