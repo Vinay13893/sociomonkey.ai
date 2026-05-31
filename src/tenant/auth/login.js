@@ -83,8 +83,9 @@ function renderLogin(context) {
     root.style.overflow = 'hidden'
   }
 
-  var otpDisplay      = (isPlatform || isDemoTenant) ? 'none'  : 'block'
-  var passwordDisplay = (isPlatform || isDemoTenant) ? 'block' : 'none'
+  // Default auth mode across platform and tenant apps: password first.
+  var otpDisplay      = 'none'
+  var passwordDisplay = 'block'
 
   publicRoot.innerHTML =
     '<div style="display:flex;flex-direction:column;width:100%;height:100vh;overflow:hidden;background:' + bgColor + ';">' +
@@ -94,7 +95,7 @@ function renderLogin(context) {
       '<div style="flex:1;display:flex;align-items:center;justify-content:center;padding:24px;overflow-y:auto;">' +
         '<div class="card" style="max-width:400px;width:100%;margin:0;">' +
           headerHtml +
-        // OTP section — PRIMARY for tenant, HIDDEN for platform
+        // OTP section — secondary sign-in option
         '<div id="otpSection" style="display:' + otpDisplay + ';margin-top:24px;">' +
           '<div id="otpStep1">' +
             '<p style="color:#334155;font-size:14px;text-align:center;margin-bottom:16px;">' +
@@ -126,13 +127,11 @@ function renderLogin(context) {
                 'display:none;">Resend OTP</a>' +
             '</div>' +
           '</div>' +
-          ((isPlatform || isDemoTenant)
-            ? ''
-            : ('<div style="text-align:center;margin-top:18px;">' +
-               '<a href="#" id="switchToPassword" style="font-size:12px;color:#94a3b8;">' +
-               'Sign in with password</a></div>')) +
+          '<div style="text-align:center;margin-top:18px;">' +
+            '<a href="#" id="switchToPassword" style="font-size:12px;color:#94a3b8;">' +
+            'Sign in with password</a></div>' +
         '</div>' +
-        // Password section — PRIMARY for platform, HIDDEN for tenant
+        // Password section — default sign-in mode for all contexts
         '<div id="passwordSection" style="display:' + passwordDisplay + ';margin-top:24px;">' +
           '<form id="loginForm">' +
             '<input class="input" id="email" type="email" placeholder="Email" ' +
@@ -154,13 +153,9 @@ function renderLogin(context) {
             '<button class="button" style="width:100%;margin-top:16px;font-size:15px;">' +
               'Login</button>' +
           '</form>' +
-           (isPlatform
-            ? ('<div style="text-align:center;margin-top:12px;">' +
-               '<a href="#" id="switchToOtp" style="font-size:13px;color:#0284c7;">' +
-               'Login with OTP instead &rarr;</a></div>')
-            : (isDemoTenant ? '' : ('<div style="text-align:center;margin-top:10px;">' +
-               '<a href="#" id="backToOtp" style="font-size:12px;color:#0284c7;">' +
-              '&larr; Back to OTP login</a></div>'))) +
+            '<div style="text-align:center;margin-top:12px;">' +
+             '<a href="#" id="switchToOtp" style="font-size:13px;color:#0284c7;">' +
+             'Login with OTP instead &rarr;</a></div>' +
         '</div>' +
         '<div id="loginError" style="color:#dc2626;text-align:center;' +
           'margin-top:12px;font-size:13px;min-height:18px;"></div>' +
@@ -199,24 +194,22 @@ function renderLogin(context) {
   })
 
   // ── Toggle OTP ↔ Password ──────────────────────────────────────────────────
-  if (isPlatform) {
-    document.getElementById('switchToOtp').addEventListener('click', function(e) {
+  var switchToOtpEl = document.getElementById('switchToOtp')
+  if (switchToOtpEl) {
+    switchToOtpEl.addEventListener('click', function(e) {
       e.preventDefault()
       document.getElementById('passwordSection').style.display = 'none'
       document.getElementById('otpSection').style.display = 'block'
       clearError()
     })
-  } else if (!isDemoTenant) {
-    document.getElementById('switchToPassword').addEventListener('click', function(e) {
+  }
+
+  var switchToPasswordEl = document.getElementById('switchToPassword')
+  if (switchToPasswordEl) {
+    switchToPasswordEl.addEventListener('click', function(e) {
       e.preventDefault()
       document.getElementById('otpSection').style.display = 'none'
       document.getElementById('passwordSection').style.display = 'block'
-      clearError()
-    })
-    document.getElementById('backToOtp').addEventListener('click', function(e) {
-      e.preventDefault()
-      document.getElementById('passwordSection').style.display = 'none'
-      document.getElementById('otpSection').style.display = 'block'
       clearError()
     })
   }
