@@ -381,9 +381,11 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
       if (page > 1 || page === 1) params.set(key + '_page', String(page))
     })
     const qs = params.toString() ? '?' + params.toString() : ''
-    const res = await fetch(`${API_BASE}/leads/action-board${qs}`, { headers: _apiAuthHeaders() })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    data = await res.json()
+    data = await _apiRequest(`/leads/action-board${qs}`, {
+      headers: _apiAuthHeaders(),
+      retries: 2,
+      timeoutMs: 20000,
+    })
 
     // Callback rows may not always include project/latest note fields depending on backend version.
     // Enrich missing fields from lead details so Action Board columns remain complete.
@@ -402,9 +404,11 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
     if (needsEnrichment.length) {
       const leadPairs = await Promise.all(needsEnrichment.map(async function (lid) {
         try {
-          const lr = await fetch(`${API_BASE}/leads/${lid}`, { headers: _apiAuthHeaders() })
-          if (!lr.ok) return null
-          const lj = await lr.json()
+          const lj = await _apiRequest(`/leads/${lid}`, {
+            headers: _apiAuthHeaders(),
+            retries: 1,
+            timeoutMs: 15000,
+          })
           return lj && lj.lead ? [lid, lj.lead] : null
         } catch (_) {
           return null
@@ -434,7 +438,7 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
     document.getElementById('abWorkspace').innerHTML = `
       <div style="text-align:center;padding:60px 20px;">
         <div style="font-size:36px;margin-bottom:12px;">⚠️</div>
-        <p style="color:#64748b;">Failed to load action board. <button class="button" onclick="renderActionBoard(_abDateFrom, _abDateTo)" style="font-size:13px;">Retry</button></p>
+        <p style="color:#64748b;">Failed to load action board${err && err.message ? ': ' + String(err.message) : ''}. <button class="button" onclick="renderActionBoard(_abDateFrom, _abDateTo)" style="font-size:13px;">Retry</button></p>
       </div>`
     return
   }
