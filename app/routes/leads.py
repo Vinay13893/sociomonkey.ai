@@ -930,7 +930,7 @@ def action_board():
     else:
         lead_scope = visible
 
-    visible_ids = [r[0] for r in visible.with_entities(Lead.id).all()]
+    visible_ids_query = visible.with_entities(Lead.id)
 
     # ── Callback queries (scoped by role) ────────────────────────────────────
     cb_base = CallbackReminder.query.filter(
@@ -950,10 +950,15 @@ def action_board():
         )
 
     # Keep callbacks in the same visibility boundary as lead lists.
-    if visible_ids:
-        cb_base = cb_base.filter(CallbackReminder.lead_id.in_(visible_ids))
-    else:
-        cb_base = cb_base.filter(db.text('1=0'))
+    # Use a subquery instead of materializing lead IDs in Python to avoid
+    # large IN lists and expensive memory usage on tenants with many leads.
+    cb_base = cb_base.filter(CallbackReminder.lead_id.in_(visible_ids_query))
+
+    # Prevent N+1 query explosions while serializing callback rows.
+    cb_base = cb_base.options(
+        joinedload(CallbackReminder.lead).joinedload(Lead.project),
+        joinedload(CallbackReminder.lead).selectinload(Lead.notes),
+    )
 
     callback_window_start = range_start if range_requested else today_start
     callback_window_end   = range_end if range_requested else today_end

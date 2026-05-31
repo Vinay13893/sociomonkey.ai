@@ -207,9 +207,11 @@ def send_otp():
     # ── Send email ────────────────────────────────────────────────────────────
     smtp_host = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
     smtp_port = int(os.environ.get('SMTP_PORT', '587'))
-    smtp_user = os.environ.get('SMTP_USER', '')
-    smtp_pass = os.environ.get('SMTP_PASS', '')
-    smtp_from = os.environ.get('SMTP_FROM', smtp_user)
+    smtp_user = (os.environ.get('SMTP_USER', '') or '').replace('\u00a0', ' ').strip()
+    raw_smtp_pass = (os.environ.get('SMTP_PASS', '') or '').replace('\u00a0', ' ').strip()
+    # Gmail app passwords are often copied with separators; normalize to raw token.
+    smtp_pass = raw_smtp_pass.replace(' ', '')
+    smtp_from = (os.environ.get('SMTP_FROM', smtp_user) or '').replace('\u00a0', ' ').strip()
     brevo_key  = os.environ.get('BREVO_API_KEY', '')
     brevo_from = os.environ.get('BREVO_FROM', '')
     resend_key = os.environ.get('RESEND_API_KEY', '')
@@ -305,6 +307,7 @@ def send_otp():
         else:
             # ── SMTP fallback (may be blocked on Railway) ─────────────────────
             import smtplib, socket
+            from email.header import Header
             from email.mime.multipart import MIMEMultipart
             from email.mime.text import MIMEText
 
@@ -312,10 +315,11 @@ def send_otp():
                 raise RuntimeError('No email provider configured (set BREVO_API_KEY, RESEND_API_KEY, or SMTP_USER/SMTP_PASS)')
 
             msg            = MIMEMultipart('alternative')
-            msg['Subject'] = 'Your Ganga Realty LMS Login OTP'
-            msg['From']    = f'Ganga Realty LMS <{smtp_from}>'
+            msg['Subject'] = str(Header('Your Ganga Realty LMS Login OTP', 'utf-8'))
+            msg['From']    = str(Header('Ganga Realty LMS', 'utf-8')) + f' <{smtp_from}>'
             msg['To']      = email
-            msg.attach(MIMEText(html_body, 'html'))
+            msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
+            msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
             try:
                 smtp_ip = socket.getaddrinfo(smtp_host, smtp_port, socket.AF_INET)[0][4][0]
