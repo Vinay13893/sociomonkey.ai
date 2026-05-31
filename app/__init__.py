@@ -4,7 +4,7 @@ import os
 
 from flask import Flask, g, has_request_context, jsonify, request
 from flask_cors import CORS
-from sqlalchemy import event
+from sqlalchemy import event, inspect, text
 
 from app.models.base import db
 from app.config import config_map, get_config_name
@@ -245,6 +245,10 @@ def create_app(config_name: str = None) -> Flask:
         except Exception as e:
             app.logger.warning('Product migration skipped: %s', e)
         try:
+            _run_leads_schema_hotfix(app)
+        except Exception as e:
+            app.logger.warning('Leads schema hotfix skipped: %s', e)
+        try:
             _ensure_demo_lms_tenant(app)
         except Exception as e:
             app.logger.warning('Demo tenant bootstrap skipped: %s', e)
@@ -385,6 +389,23 @@ def _run_tenant_migration(app: 'Flask'):
                     conn.commit()
                 except Exception:
                     conn.rollback()
+
+
+def _run_leads_schema_hotfix(app: 'Flask'):
+    """Emergency schema sync for production: ensure leads.alternate_phone exists."""
+    with app.app_context():
+        insp = inspect(db.engine)
+        tables = set(insp.get_table_names())
+        if 'leads' not in tables:
+            return
+
+        lead_columns = {col.get('name') for col in insp.get_columns('leads')}
+        if 'alternate_phone' in lead_columns:
+            return
+
+        with db.engine.begin() as conn:
+            conn.execute(text('ALTER TABLE leads ADD COLUMN alternate_phone VARCHAR(20)'))
+        app.logger.warning('Applied leads schema hotfix: added missing alternate_phone column')
 
 
 def _ensure_platform_owner(app: 'Flask'):
