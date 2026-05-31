@@ -1,6 +1,6 @@
 // ============================================================================
-// PLATFORM HOME — Dashboard for the SocioMonkey Platform layer
-// v2: Matches reference screenshot — stat cards, app tiles, charts, panels
+// PLATFORM HOME ï¿½ Dashboard for the SocioMonkey Platform layer
+// v2: Matches reference screenshot ï¿½ stat cards, app tiles, charts, panels
 // ============================================================================
 
 function renderPlatformHome() {
@@ -46,7 +46,7 @@ function renderPlatformHome() {
       '<div class="plat-app-name">' + p.name + '</div>' +
       '<div class="plat-app-fullname">' + p.fullName + '</div>' +
       '<button class="plat-app-open-btn" style="color:' + p.color + ';">' +
-        'Open App <i class="fa-solid fa-arrow-right" style="font-size:11px;"></i>' +
+        'Open Hub <i class="fa-solid fa-arrow-right" style="font-size:11px;"></i>' +
       '</button>' +
     '</div>'
   }).join('')
@@ -58,7 +58,7 @@ function renderPlatformHome() {
   // -- System Alerts ---------------------------------------------------------
   var alerts = [
     { icon: 'fa-solid fa-triangle-exclamation', bg: '#fff7ed', color: '#f59e0b', title: 'High Server Load',          desc: 'API server CPU above 85% for 15 min',       time: '5m ago'  },
-    { icon: 'fa-solid fa-circle-info',          bg: '#eff6ff', color: '#3b82f6', title: 'Scheduled Maintenance',     desc: 'Planned downtime: May 19, 02:00–04:00 UTC',  time: '1h ago'  },
+    { icon: 'fa-solid fa-circle-info',          bg: '#eff6ff', color: '#3b82f6', title: 'Scheduled Maintenance',     desc: 'Planned downtime: May 19, 02:00ï¿½04:00 UTC',  time: '1h ago'  },
     { icon: 'fa-solid fa-circle-check',         bg: '#f0fdf4', color: '#22c55e', title: 'Backup Completed',          desc: 'Daily database backup finished successfully', time: '3h ago'  },
     { icon: 'fa-solid fa-shield-halved',        bg: '#fdf4ff', color: '#a855f7', title: 'Security Scan Passed',      desc: 'No vulnerabilities found in latest scan',   time: '6h ago'  },
   ]
@@ -80,7 +80,7 @@ function renderPlatformHome() {
   var activities = [
     { icon: 'fa-solid fa-user-plus',    bg: '#f0fdf4', color: '#22c55e', title: 'New Organization Added',   desc: 'TechCorp Pvt Ltd registered on the platform', time: '12m ago' },
     { icon: 'fa-solid fa-bolt',         bg: '#fff7ed', color: '#f97316', title: 'Automation Triggered',     desc: 'Onboarding workflow started for Ganga Realty', time: '1h ago'  },
-    { icon: 'fa-solid fa-credit-card',  bg: '#eff6ff', color: '#3b82f6', title: 'Subscription Renewed',     desc: 'Ganga Realty renewed CRM + LMS plan',          time: '3h ago'  },
+    { icon: 'fa-solid fa-credit-card',  bg: '#eff6ff', color: '#3b82f6', title: 'Subscription Renewed',     desc: 'Ganga Realty renewed its LMS subscription',    time: '3h ago'  },
     { icon: 'fa-solid fa-circle-check', bg: '#f5f3ff', color: '#8b5cf6', title: 'Deployment Successful',    desc: 'Platform v2.4.1 deployed to production',       time: '5h ago'  },
   ]
 
@@ -99,11 +99,10 @@ function renderPlatformHome() {
 
   // -- Product stat cards (bottom) -------------------------------------------
   var prodStats = [
-    { code: 'lms',         metric: 'Courses',           value: '2,345',  change: '+15.6' },
-    { code: 'crm',         metric: 'Leads',             value: '18,932', change: '+11.8' },
-    { code: 'procurement', metric: 'POs Created',       value: '7,892',  change: '+13.4' },
-    { code: 'wms',         metric: 'Items Managed',     value: '12,456', change: '+10.3' },
-    { code: 'amazon',      metric: 'Insights Generated',value: '4,321',  change: '+16.7' },
+    { code: 'lms',         metric: 'Client Organisations', value: '148',    change: '+15.6' },
+    { code: 'procurement', metric: 'Purchase Orders',       value: '7,892',  change: '+13.4' },
+    { code: 'wms',         metric: 'Items Managed',         value: '12,456', change: '+10.3' },
+    { code: 'amazon',      metric: 'Insights Generated',    value: '4,321',  change: '+16.7' },
   ]
 
   var prodStatsHtml = prodStats.map(function(ps) {

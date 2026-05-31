@@ -3,6 +3,9 @@
 // ============================================================================
 
 function render() {
+  var publicLoginRoot = document.getElementById('publicLoginRoot')
+  if (publicLoginRoot) publicLoginRoot.style.display = 'none'
+
   // Clear any previously visible shell immediately so login routes do not flash the sidebar.
   const sidebar = document.querySelector('.sm-sidebar')
   if (sidebar) sidebar.style.display = 'none'
@@ -44,6 +47,41 @@ function initMobileNav() {
     sidebar.classList.remove('open')
     overlay.classList.remove('active')
   })
+
+  initTabletSidebarToggle()
+}
+
+function initTabletSidebarToggle() {
+  var layout = document.getElementById('tenantLayout')
+  if (!layout) return
+  var existing = document.getElementById('tabletSidebarToggle')
+  if (!existing) {
+    var btn = document.createElement('button')
+    btn.id = 'tabletSidebarToggle'
+    btn.type = 'button'
+    btn.className = 'tablet-sidebar-toggle'
+    btn.setAttribute('aria-label', 'Toggle sidebar')
+    btn.textContent = '◀'
+    document.body.appendChild(btn)
+    btn.addEventListener('click', function () {
+      var collapsed = layout.classList.toggle('sidebar-collapsed')
+      btn.textContent = collapsed ? '▶' : '◀'
+    })
+  }
+
+  var toggleBtn = document.getElementById('tabletSidebarToggle')
+  function syncToggleVisibility() {
+    if (!toggleBtn) return
+    var w = window.innerWidth || 0
+    var isTablet = w >= 769 && w <= 1180
+    toggleBtn.style.display = isTablet ? 'inline-flex' : 'none'
+    if (!isTablet) {
+      layout.classList.remove('sidebar-collapsed')
+      toggleBtn.textContent = '◀'
+    }
+  }
+  syncToggleVisibility()
+  window.addEventListener('resize', syncToggleVisibility)
 }
 
 

@@ -23,8 +23,8 @@ async function renderExportLeads() {
                 <option value="site_visit_done">Site Visit Done</option>
                 <option value="negotiation">Negotiation</option>
                 <option value="booking_done">Booking Done</option>
+                <option value="not_interested">Not Interested</option>
                 <option value="lost">Lost</option>
-                <option value="junk">Junk</option>
               </select>
             </div>
             

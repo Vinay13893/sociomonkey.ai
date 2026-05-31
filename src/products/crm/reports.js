@@ -8,13 +8,71 @@ async function renderReports(dateFrom = '', dateTo = '') {
   const content = document.getElementById('content')
   if (!content) return
 
+  function _fmtLocalInputDate(d) {
+    var y = d.getFullYear()
+    var m = String(d.getMonth() + 1).padStart(2, '0')
+    var day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+
+  function _parseYmd(v) {
+    if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null
+    var parts = v.split('-').map(Number)
+    return new Date(parts[0], parts[1] - 1, parts[2])
+  }
+
+  function _selectedYear() {
+    var from = _parseYmd(document.getElementById('reportDateFrom')?.value || dateFrom)
+    var to = _parseYmd(document.getElementById('reportDateTo')?.value || dateTo)
+    if (from) return from.getFullYear()
+    if (to) return to.getFullYear()
+    return new Date().getFullYear()
+  }
+
   // Generate month options
   const monthOptions = Array.from({length:12}, (_,i) =>
     `<option value="${i}">${new Date(2000,i,1).toLocaleString('default',{month:'long'})}</option>`
   ).join('')
 
+  function _formatRangeFromPreset(key) {
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    if (key === 'today') {
+      return { from: _fmtLocalInputDate(today), to: _fmtLocalInputDate(today) }
+    }
+    if (key === 'yesterday') {
+      const y = new Date(today)
+      y.setDate(y.getDate() - 1)
+      return { from: _fmtLocalInputDate(y), to: _fmtLocalInputDate(y) }
+    }
+    if (key === 'last_week') {
+      const thisWeekStart = new Date(today)
+      thisWeekStart.setDate(thisWeekStart.getDate() - thisWeekStart.getDay() + 1)
+      const start = new Date(thisWeekStart)
+      start.setDate(start.getDate() - 7)
+      const end = new Date(thisWeekStart)
+      end.setDate(end.getDate() - 1)
+      return { from: _fmtLocalInputDate(start), to: _fmtLocalInputDate(end) }
+    }
+    if (key === 'last_30_days') {
+      const start = new Date(today)
+      start.setDate(start.getDate() - 29)
+      return { from: _fmtLocalInputDate(start), to: _fmtLocalInputDate(today) }
+    }
+    if (key === 'this_month') {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      return { from: _fmtLocalInputDate(start), to: _fmtLocalInputDate(today) }
+    }
+    if (key === 'last_month') {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const end = new Date(now.getFullYear(), now.getMonth(), 0)
+      return { from: _fmtLocalInputDate(start), to: _fmtLocalInputDate(end) }
+    }
+    return { from: '', to: '' }
+  }
+
   const activeFilter = dateFrom || dateTo
-  const fmtD = d => new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})
+  const fmtD = d => new Date(d).toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric'})
   const filterLabel = !activeFilter      ? 'All Time'
     : dateFrom && dateTo ? `${fmtD(dateFrom)} → ${fmtD(dateTo)}`
     : dateFrom           ? `From ${fmtD(dateFrom)}`
@@ -45,10 +103,22 @@ async function renderReports(dateFrom = '', dateTo = '') {
               <input type="date" id="reportDateTo" class="input" style="font-size:13px;padding:8px 10px;" value="${dateTo}" />
             </div>
             <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:130px;">
-              <label class="sm-label">QUICK SELECT</label>
+              <label class="sm-label">MONTH QUICK SELECT</label>
               <select id="reportMonth" class="select" style="font-size:13px;padding:8px 10px;">
                 <option value="">— Select Month —</option>
                 ${monthOptions}
+              </select>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:160px;">
+              <label class="sm-label">TEAM RANGE</label>
+              <select id="reportTeamRange" class="select" style="font-size:13px;padding:8px 10px;">
+                <option value="">Custom</option>
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="last_week">Last Week</option>
+                <option value="last_30_days">Last 30 Days</option>
+                <option value="this_month">This Month</option>
+                <option value="last_month">Last Month</option>
               </select>
             </div>
             <div style="display:flex;gap:8px;align-items:flex-end;padding-bottom:1px;">
@@ -65,11 +135,39 @@ async function renderReports(dateFrom = '', dateTo = '') {
   document.getElementById('reportMonth').addEventListener('change', e => {
     const m = e.target.value
     if (m !== '') {
-      const yr = new Date().getFullYear()
-      document.getElementById('reportDateFrom').value = new Date(yr, parseInt(m), 1).toISOString().split('T')[0]
-      document.getElementById('reportDateTo').value   = new Date(yr, parseInt(m)+1, 0).toISOString().split('T')[0]
+      const monthIdx = parseInt(m, 10)
+      const yr = _selectedYear()
+      const start = new Date(yr, monthIdx, 1)
+      const end = new Date(yr, monthIdx + 1, 0)
+      document.getElementById('reportDateFrom').value = _fmtLocalInputDate(start)
+      document.getElementById('reportDateTo').value   = _fmtLocalInputDate(end)
+      document.getElementById('reportTeamRange').value = ''
     }
   })
+
+  document.getElementById('reportTeamRange').addEventListener('change', e => {
+    const key = (e.target.value || '').trim()
+    if (!key) return
+    const range = _formatRangeFromPreset(key)
+    document.getElementById('reportDateFrom').value = range.from
+    document.getElementById('reportDateTo').value = range.to
+    document.getElementById('reportMonth').value = ''
+  })
+
+  ;(function syncMonthPickerFromRange() {
+    const monthEl = document.getElementById('reportMonth')
+    const from = _parseYmd(dateFrom)
+    const to = _parseYmd(dateTo)
+    if (!monthEl || !from || !to) return
+    const sameYear = from.getFullYear() === to.getFullYear()
+    const sameMonth = from.getMonth() === to.getMonth()
+    const isStartOfMonth = from.getDate() === 1
+    const lastDay = new Date(to.getFullYear(), to.getMonth() + 1, 0).getDate()
+    const isEndOfMonth = to.getDate() === lastDay
+    if (sameYear && sameMonth && isStartOfMonth && isEndOfMonth) {
+      monthEl.value = String(from.getMonth())
+    }
+  })()
   document.getElementById('applyReportFilter').addEventListener('click', () => {
     const from = document.getElementById('reportDateFrom').value
     const to   = document.getElementById('reportDateTo').value
@@ -83,12 +181,16 @@ async function renderReports(dateFrom = '', dateTo = '') {
   if (dateFrom) params.set('date_from', dateFrom)
   if (dateTo)   params.set('date_to',   dateTo)
   const qs = params.toString() ? '?' + params.toString() : ''
-  const [leadsRes, teamRes] = await Promise.all([
+  const teamRange = document.getElementById('reportTeamRange')?.value || ''
+  if (teamRange) params.set('range', teamRange)
+  const [leadsRes, teamRes, compareRes] = await Promise.all([
     fetch(`${API_BASE}/reports/leads${qs}`, { headers }),
     fetch(`${API_BASE}/reports/team${qs}`,  { headers }),
+    fetch(`${API_BASE}/reports/comparison`,  { headers }),
   ])
   const leadsData = await leadsRes.json()
   const teamData  = await teamRes.json()
+  const compareData = await compareRes.json().catch(() => ({}))
 
   const total       = leadsData.total_leads || 0
   const convRate    = leadsData.conversion_rate || 0
@@ -98,6 +200,7 @@ async function renderReports(dateFrom = '', dateTo = '') {
   const byDate      = leadsData.leads_by_date || {}
   const teamGroups  = teamData.team_groups || []
   const unassignedMembers = teamData.unassigned_members || []
+  const comparison = compareData.comparison || {}
 
   // ---- helpers ----
   const maxOf  = obj => Math.max(1, ...Object.values(obj))
@@ -110,8 +213,52 @@ async function renderReports(dateFrom = '', dateTo = '') {
             </div>`
   }
 
+  function renderComparisonTable(block) {
+    if (!block || !block.current || !block.previous) {
+      return '<div style="color:#94a3b8;padding:12px 0;font-size:13px;">No comparison data</div>'
+    }
+    const labels = {
+      leads_added: 'Leads Added',
+      calls_done: 'Calls Done',
+      follow_ups: 'Follow Ups',
+      site_visits: 'Site Visits',
+      closures: 'Closures',
+      conversion_pct: 'Conversion %',
+    }
+    const keys = ['leads_added', 'calls_done', 'follow_ups', 'site_visits', 'closures', 'conversion_pct']
+    const rows = keys.map(k => {
+      const curr = Number(block.current[k] || 0)
+      const prev = Number(block.previous[k] || 0)
+      const delta = curr - prev
+      const deltaText = `${delta > 0 ? '+' : ''}${k === 'conversion_pct' ? delta.toFixed(2) : delta}`
+      const color = delta > 0 ? '#059669' : delta < 0 ? '#dc2626' : '#64748b'
+      return `
+        <tr>
+          <td style="font-weight:600;">${labels[k]}</td>
+          <td style="text-align:center;">${k === 'conversion_pct' ? curr.toFixed(2) + '%' : curr}</td>
+          <td style="text-align:center;">${k === 'conversion_pct' ? prev.toFixed(2) + '%' : prev}</td>
+          <td style="text-align:center;font-weight:700;color:${color};">${deltaText}${k === 'conversion_pct' ? '%' : ''}</td>
+        </tr>`
+    }).join('')
+
+    return `
+      <div class="table-scroll">
+        <table class="table" style="margin:0;min-width:520px;">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th style="text-align:center;">${escape(block.label_current || 'Current')}</th>
+              <th style="text-align:center;">${escape(block.label_previous || 'Previous')}</th>
+              <th style="text-align:center;">Delta</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`
+  }
+
   // ---- STATUS breakdown ----
-  const statusOrder = ['new','attempted','connected','interested','site_visit_planned','site_visit_done','negotiation','booking_done','lost','junk']
+  const statusOrder = ['new','attempted','connected','interested','site_visit_planned','site_visit_done','negotiation','booking_done','lost']
   const statusMax = maxOf(byStatus)
   const statusRows = statusOrder
     .filter(s => byStatus[s] !== undefined)
@@ -180,17 +327,20 @@ async function renderReports(dateFrom = '', dateTo = '') {
   const MANAGER_PALETTE = ['#6366f1','#0ea5e9','#10b981','#f59e0b','#ec4899','#8b5cf6','#14b8a6']
 
   const TABLE_HEADERS = `<tr>
-    <th>Name</th><th>Email</th>
+    <th>Name</th>
     <th style="text-align:center;">All Leads</th>
     <th style="text-align:center;">Interested</th>
     <th style="text-align:center;">Site Visit Planned</th>
     <th style="text-align:center;">Site Visit Done</th>
+    <th style="text-align:center;">Negotiation</th>
     <th style="text-align:center;">Booking Done</th>
-    <th style="text-align:center;">Warm Rate</th>
+    <th style="text-align:center;">Warm Leads</th>
+    <th style="text-align:center;">Hot Leads</th>
   </tr>`
 
   function personRow(s, isManager, color) {
     const warmCol = s.warm_rate >= 50 ? '#10b981' : s.warm_rate >= 20 ? '#f59e0b' : '#ef4444'
+    const hotCol = s.hot_rate >= 50 ? '#ef4444' : s.hot_rate >= 20 ? '#f59e0b' : '#0284c7'
     const nameCell = isManager
       ? `<td style="font-weight:700;color:${color || '#0f172a'};">⭐ ${escape(s.name)} <span style="font-size:10px;font-weight:600;background:${color}18;color:${color};border-radius:8px;padding:1px 7px;margin-left:6px;">Manager</span></td>`
       : `<td style="font-weight:500;padding-left:24px;">↳ ${escape(s.name)}</td>`
@@ -198,14 +348,17 @@ async function renderReports(dateFrom = '', dateTo = '') {
     return `
       <tr ${rowStyle}>
         ${nameCell}
-        <td style="font-size:11px;color:#64748b;">${escape(s.email || '')}</td>
         <td style="text-align:center;font-weight:700;">${s.total_leads}</td>
         <td style="text-align:center;font-weight:600;">${s.interested}</td>
         <td style="text-align:center;font-weight:600;">${s.site_visit_planned}</td>
         <td style="text-align:center;font-weight:600;">${s.site_visit_done}</td>
+        <td style="text-align:center;font-weight:600;">${s.negotiation || 0}</td>
         <td style="text-align:center;font-weight:700;">${s.booking_done}</td>
         <td style="text-align:center;">
-          <span style="background:${warmCol}18;color:${warmCol};border-radius:12px;padding:2px 10px;font-size:12px;font-weight:700;">${s.warm_rate}%</span>
+          <span style="background:${warmCol}18;color:${warmCol};border-radius:12px;padding:2px 10px;font-size:12px;font-weight:700;">${s.warm_leads || 0}</span>
+        </td>
+        <td style="text-align:center;">
+          <span style="background:${hotCol}18;color:${hotCol};border-radius:12px;padding:2px 10px;font-size:12px;font-weight:700;">${s.hot_leads || 0}</span>
         </td>
       </tr>`
   }
@@ -213,25 +366,33 @@ async function renderReports(dateFrom = '', dateTo = '') {
   function managerGroupHTML(group, colorIdx) {
     const mgr = group.manager
     const color = MANAGER_PALETTE[colorIdx % MANAGER_PALETTE.length]
-    const allRows      = [mgr, ...group.members]
-    const teamTotal    = allRows.reduce((s, p) => s + p.total_leads, 0)
-    const teamBooking  = allRows.reduce((s, p) => s + p.booking_done, 0)
-    const teamInterest = allRows.reduce((s, p) => s + p.interested, 0)
-    const teamSVP      = allRows.reduce((s, p) => s + p.site_visit_planned, 0)
-    const teamSVD      = allRows.reduce((s, p) => s + p.site_visit_done, 0)
-    const teamWarm     = teamTotal > 0 ? ((teamInterest / teamTotal) * 100).toFixed(1) : '0.0'
+    const people = [mgr].concat(group.members || [])
+    const teamTotal = people.reduce((sum, p) => sum + Number(p.total_leads || 0), 0)
+    const teamBooking = people.reduce((sum, p) => sum + Number(p.booking_done || 0), 0)
+    const teamInterest = people.reduce((sum, p) => sum + Number(p.interested || 0), 0)
+    const teamSVP = people.reduce((sum, p) => sum + Number(p.site_visit_planned || 0), 0)
+    const teamSVD = people.reduce((sum, p) => sum + Number(p.site_visit_done || 0), 0)
+    const teamNegotiation = people.reduce((sum, p) => sum + Number(p.negotiation || 0), 0)
+    const teamWarmLeads = people.reduce((sum, p) => sum + Number(p.warm_leads || 0), 0)
+    const teamHotLeads = people.reduce((sum, p) => sum + Number(p.hot_leads || 0), 0)
+    const teamWarm = teamTotal > 0 ? (((teamInterest + teamSVP) / teamTotal) * 100).toFixed(1) : '0.0'
+    const teamHot = teamTotal > 0 ? (((teamSVD + teamNegotiation) / teamTotal) * 100).toFixed(1) : '0.0'
     const totalsRow    = `
       <tr style="background:${color}10;border-top:2px solid ${color}30;font-weight:700;">
-        <td colspan="2" style="font-weight:700;color:${color};font-size:12px;text-transform:uppercase;letter-spacing:0.05em;">
+        <td style="font-weight:700;color:${color};font-size:12px;text-transform:uppercase;letter-spacing:0.05em;">
           ∑ Team Total
         </td>
         <td style="text-align:center;font-weight:800;font-size:14px;">${teamTotal}</td>
         <td style="text-align:center;font-weight:800;">${teamInterest}</td>
         <td style="text-align:center;font-weight:800;">${teamSVP}</td>
         <td style="text-align:center;font-weight:800;">${teamSVD}</td>
+        <td style="text-align:center;font-weight:800;">${teamNegotiation}</td>
         <td style="text-align:center;font-weight:800;">${teamBooking}</td>
         <td style="text-align:center;">
-          <span style="background:${color}20;color:${color};border-radius:12px;padding:2px 10px;font-size:12px;font-weight:800;">${teamWarm}%</span>
+          <span style="background:${color}20;color:${color};border-radius:12px;padding:2px 10px;font-size:12px;font-weight:800;">${teamWarmLeads}</span>
+        </td>
+        <td style="text-align:center;">
+          <span style="background:${color}20;color:${color};border-radius:12px;padding:2px 10px;font-size:12px;font-weight:800;">${teamHotLeads}</span>
         </td>
       </tr>`
     return `
@@ -242,7 +403,7 @@ async function renderReports(dateFrom = '', dateTo = '') {
           </div>
           <div style="flex:1;min-width:0;">
             <div style="font-size:14px;font-weight:700;color:#0f172a;">${escape(mgr.name)}</div>
-            <div style="font-size:12px;color:#64748b;">${escape(mgr.email)} &nbsp;·&nbsp; ${group.members.length} team member${group.members.length !== 1 ? 's' : ''}</div>
+            <div style="font-size:12px;color:#64748b;">${group.members.length} team member${group.members.length !== 1 ? 's' : ''}</div>
           </div>
           <div style="display:flex;gap:20px;flex-wrap:wrap;">
             <div style="text-align:center;">
@@ -257,10 +418,14 @@ async function renderReports(dateFrom = '', dateTo = '') {
               <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Team Warm Rate</div>
               <div style="font-size:18px;font-weight:700;color:#0f172a;">${teamWarm}%</div>
             </div>
+            <div style="text-align:center;">
+              <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Team Hot Rate</div>
+              <div style="font-size:18px;font-weight:700;color:#0f172a;">${teamHot}%</div>
+            </div>
           </div>
         </div>
         <div class="table-scroll">
-          <table class="table" style="margin:0;min-width:580px;">
+          <table class="table rpt-team-table" style="margin:0;min-width:580px;">
             <thead>${TABLE_HEADERS}</thead>
             <tbody>
               ${personRow(mgr, true, color)}
@@ -286,7 +451,7 @@ async function renderReports(dateFrom = '', dateTo = '') {
         </div>
       </div>
       <div class="table-scroll">
-        <table class="table" style="margin:0;min-width:580px;">
+        <table class="table rpt-team-table" style="margin:0;min-width:580px;">
           <thead>${TABLE_HEADERS}</thead>
           <tbody>${unassignedMembers.map(m => personRow(m, false, '#94a3b8')).join('')}</tbody>
         </table>
@@ -298,11 +463,12 @@ async function renderReports(dateFrom = '', dateTo = '') {
   const interested    = byStatus['interested']         || 0
   const siteVisitPlan = byStatus['site_visit_planned'] || 0
   const siteVisitDone = byStatus['site_visit_done']    || 0
-  const junk          = byStatus['junk']               || 0
   const negotiation   = byStatus['negotiation']        || 0
 
-  const hotRate  = total > 0 ? ((negotiation  / total) * 100).toFixed(1) : '0.0'
-  const warmRate = total > 0 ? ((interested   / total) * 100).toFixed(1) : '0.0'
+  const hotLeads = siteVisitDone + negotiation
+  const warmLeads = interested + siteVisitPlan
+  const hotRate  = total > 0 ? ((hotLeads / total) * 100).toFixed(1) : '0.0'
+  const warmRate = total > 0 ? ((warmLeads / total) * 100).toFixed(1) : '0.0'
 
   if (myId !== _reportsRenderId) return
   var reportContainer = document.getElementById('reportContainer')
@@ -331,18 +497,18 @@ async function renderReports(dateFrom = '', dateTo = '') {
         <div class="analytics-kpi-value">${booked}</div>
       </div>
       <div class="analytics-kpi">
-        <div class="analytics-kpi-label">Junk</div>
-        <div class="analytics-kpi-value">${junk}</div>
+        <div class="analytics-kpi-label">Negotiation</div>
+        <div class="analytics-kpi-value">${negotiation}</div>
       </div>
       <div class="analytics-kpi">
         <div class="analytics-kpi-label">Hot Rate</div>
         <div class="analytics-kpi-value">${hotRate}%</div>
-        <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Negotiation / Total</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:2px;">(Site Visit Done + Negotiation) / Total</div>
       </div>
       <div class="analytics-kpi">
         <div class="analytics-kpi-label">Warm Rate</div>
         <div class="analytics-kpi-value">${warmRate}%</div>
-        <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Interested / Total</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:2px;">(Interested + Site Visit Planned) / Total</div>
       </div>
     </div>
 
@@ -382,22 +548,39 @@ async function renderReports(dateFrom = '', dateTo = '') {
         ${unassignedHTML}
       </div>
     </div>
+
+    <!-- WoW / MoM comparison -->
+    <div class="rpt-two-col">
+      <div class="card" style="margin:0;">
+        <h3 class="analytics-section-title">Week-on-Week Comparison</h3>
+        ${renderComparisonTable(comparison.week)}
+      </div>
+      <div class="card" style="margin:0;">
+        <h3 class="analytics-section-title">Month-on-Month Comparison</h3>
+        ${renderComparisonTable(comparison.month)}
+      </div>
+    </div>
   `
 }
 
 async function downloadLeadReport() {
+  const params = new URLSearchParams()
+  const from = document.getElementById('reportDateFrom')?.value || ''
+  const to = document.getElementById('reportDateTo')?.value || ''
+  const range = document.getElementById('reportTeamRange')?.value || ''
+  if (from) params.set('date_from', from)
+  if (to) params.set('date_to', to)
+  if (range) params.set('range', range)
+  const qs = params.toString() ? '?' + params.toString() : ''
   const a = document.createElement('a')
-  a.href = `${API_BASE}/reports/leads/download`
-  a.setAttribute('download', '')
-  // Add auth via query param not ideal; use fetch + blob instead
-  const res = await fetch(`${API_BASE}/reports/leads/download`, {
+  const res = await fetch(`${API_BASE}/reports/management/download${qs}`, {
     headers: _apiAuthHeaders()
   })
   if (!res.ok) { showToast('Export failed', 'error'); return }
   const blob = await res.blob()
   const url  = URL.createObjectURL(blob)
   a.href = url
-  a.download = 'leads_report.xlsx'
+  a.download = 'management_report.xlsx'
   a.click()
   URL.revokeObjectURL(url)
 }

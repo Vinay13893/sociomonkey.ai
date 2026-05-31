@@ -34,7 +34,7 @@
   --tenant-accent:      var(--sm-brand);
   --tenant-accent-dark: var(--sm-brand-dark);
   --tenant-accent-soft: var(--sm-brand-soft);
-  --tenant-sidebar-bg:  #c22828; /* Sociomonkey brand red — tenant can override */
+  --tenant-sidebar-bg:  #1f2a37; /* enterprise slate — tenant can override */
   --tenant-login-bg:    #ffffff; /* login page background                    */
 
   /* ── Typography ─────────────────────────────────────────────────────────── */

@@ -19,7 +19,7 @@ function renderPlatformSettings() {
         ${[
           ['Platform Name',    'SocioMonkey Platform',        'text'],
           ['Domain',           'sociomonkey.ai',              'text'],
-          ['Contact Email',    'admin@sociomonkey.ai',        'email'],
+          ['Contact Email',    'aseem@sociomonkey.com',       'email'],
           ['Support Email',    'support@sociomonkey.ai',      'email'],
           ['Timezone',         'Asia/Kolkata (IST)',          'text'],
           ['Date Format',      'DD/MM/YYYY',                  'text'],

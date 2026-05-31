@@ -30,6 +30,28 @@ async function renderProjects() {
     container.innerHTML = '<div class="message">No projects found</div>'
     return
   }
+  const isCompact = (window.innerWidth || 0) <= 1180
+
+  if (isCompact) {
+    container.innerHTML = `
+      <div class="projects-grid">
+        ${projects.map(p => `
+          <article class="project-card">
+            <div class="project-card-title">${escape(p.name)}</div>
+            <div class="project-card-meta"><strong>Manager:</strong> ${escape(p.created_by_name || '-')}</div>
+            <div class="project-card-meta"><strong>Type:</strong> ${escape(p.project_type || '-')}</div>
+            <div class="project-card-meta"><strong>Lead Count:</strong> ${Number(p.lead_count || 0)}</div>
+            <div class="project-card-meta"><strong>Status:</strong> <span class="tag" style="background:#e0f2fe;color:#075985;">Active</span></div>
+            <div class="project-card-actions">
+              <button class="button secondary" data-open-id="${p.id}" style="font-size:12px;padding:8px 12px;">Open</button>
+              <button class="button secondary" data-assets-id="${p.id}" data-assets-name="${escape(p.name)}" style="font-size:12px;padding:8px 12px;">Assets</button>
+              ${user && user.role === 'superadmin' ? `<button class="button secondary" data-id="${p.id}" style="font-size:12px;padding:8px 12px;">Edit</button><button class="button" data-del-id="${p.id}" data-del-name="${escape(p.name)}" style="font-size:12px;padding:8px 12px;background:#ef4444;border-color:#ef4444;">Delete</button>` : ''}
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    `
+  } else {
   
   container.innerHTML = `
     <div style="overflow-x:auto;">
@@ -42,6 +64,7 @@ async function renderProjects() {
             <th>Type</th>
             <th>Budget Range</th>
             <th>Created By</th>
+            <th>Assets</th>
             ${user && user.role === 'superadmin' ? '<th>Actions</th>' : ''}
           </tr>
         </thead>
@@ -54,6 +77,9 @@ async function renderProjects() {
               <td>${escape(p.project_type || '-')}</td>
               <td>${p.budget_min ? fmtBudget(p.budget_min) + ' – ' + fmtBudget(p.budget_max) : '-'}</td>
               <td>${escape(p.created_by_name || '-')}</td>
+              <td>
+                <button class="button secondary" data-assets-id="${p.id}" data-assets-name="${escape(p.name)}" style="font-size:12px;padding:6px 10px;">Assets</button>
+              </td>
               ${user && user.role === 'superadmin' ? '<td><button class="button secondary" data-id="' + p.id + '" style="font-size:12px;padding:6px 10px;">Edit</button><button class="button" data-del-id="' + p.id + '" data-del-name="' + escape(p.name) + '" style="font-size:12px;padding:6px 10px;background:#ef4444;border-color:#ef4444;margin-left:4px;">Delete</button></td>' : ''}
             </tr>
           `).join('')}
@@ -61,11 +87,26 @@ async function renderProjects() {
       </table>
     </div>
   `
+  }
+
+  container.querySelectorAll('button[data-open-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      var p = projects.find(x => x.id === Number(btn.dataset.openId))
+      if (!p) return
+      showToast('Open project details coming in next update.', 'info')
+    })
+  })
 
   container.querySelectorAll('button[data-id]').forEach(btn => {
     btn.addEventListener('click', () => {
       const p = projects.find(x => x.id === Number(btn.dataset.id))
       if (p) openProjectForm(p)
+    })
+  })
+
+  container.querySelectorAll('button[data-assets-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      openProjectAssetsModal(Number(btn.dataset.assetsId), btn.dataset.assetsName || 'Project')
     })
   })
 
@@ -140,5 +181,135 @@ async function openProjectForm(project = null) {
   })
   
   document.getElementById('cancelProject').addEventListener('click', renderProjects)
+}
+
+async function openProjectAssetsModal(projectId, projectName) {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.id = 'projectAssetsModal'
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:920px;width:96%;max-height:88vh;overflow:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h3 class="sm-section-heading" style="margin:0;">Project Assets · ${escape(projectName || '')}</h3>
+        <button class="button secondary" onclick="document.getElementById('projectAssetsModal')?.remove()" style="padding:6px 10px;font-size:12px;">Close</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+        <input type="file" id="projectAssetFile" class="input" style="max-width:420px;" accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.xlsx,.xls,.doc,.docx,.zip" />
+        <button class="button" onclick="uploadProjectAsset(${projectId})" style="font-size:13px;">Upload Asset</button>
+      </div>
+      <div style="font-size:12px;color:#64748b;margin-bottom:10px;">Supported: PDF, Images, Excel, Word, ZIP</div>
+      <div id="projectAssetsList" style="min-height:120px;"></div>
+    </div>
+  `
+  document.body.appendChild(overlay)
+  await loadProjectAssets(projectId)
+}
+
+async function loadProjectAssets(projectId) {
+  const listEl = document.getElementById('projectAssetsList')
+  if (!listEl) return
+  listEl.innerHTML = '<div class="message">Loading assets…</div>'
+  try {
+    const data = await _apiRequest(`/projects/${projectId}/assets`, {
+      headers: _apiAuthHeaders(),
+      retries: 0,
+    })
+    const assets = data.assets || []
+    if (!assets.length) {
+      listEl.innerHTML = '<div class="message">No assets uploaded yet.</div>'
+      return
+    }
+    listEl.innerHTML = `
+      <div style="overflow-x:auto;">
+        <table class="table" style="margin-top:0;">
+          <thead>
+            <tr>
+              <th>File Name</th>
+              <th>Uploaded By</th>
+              <th>Upload Date</th>
+              <th>View</th>
+              <th>Download</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${assets.map(a => `
+              <tr>
+                <td>${escape(a.file_name || '-')}</td>
+                <td>${escape(a.uploaded_by_name || '-')}</td>
+                <td>${a.uploaded_at ? new Date(a.uploaded_at).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-'}</td>
+                <td><button class="button secondary" onclick="viewProjectAsset(${projectId}, ${a.id})" style="font-size:12px;padding:4px 8px;">View</button></td>
+                <td><button class="button" onclick="downloadProjectAsset(${projectId}, ${a.id})" style="font-size:12px;padding:4px 8px;">Download</button></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `
+  } catch (err) {
+    listEl.innerHTML = `<div class="message error">${escape((err.payload && err.payload.error) || err.message || 'Failed to load assets.')}</div>`
+  }
+}
+
+async function uploadProjectAsset(projectId) {
+  const fileInput = document.getElementById('projectAssetFile')
+  const file = fileInput && fileInput.files ? fileInput.files[0] : null
+  if (!file) {
+    showToast('Select a file first.', 'warning')
+    return
+  }
+
+  const formData = new FormData()
+  formData.append('file', file)
+  try {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/assets`, {
+      method: 'POST',
+      headers: _apiAuthHeaders(),
+      body: formData,
+    })
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}))
+      throw new Error(payload.error || `Upload failed (${res.status})`)
+    }
+    showToast('Asset uploaded.', 'success')
+    if (fileInput) fileInput.value = ''
+    await loadProjectAssets(projectId)
+  } catch (err) {
+    showToast(err.message || 'Upload failed.', 'error')
+  }
+}
+
+async function viewProjectAsset(projectId, assetId) {
+  try {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/assets/${assetId}/view`, {
+      headers: _apiAuthHeaders(),
+    })
+    if (!res.ok) throw new Error(`Unable to open file (${res.status})`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch (err) {
+    showToast(err.message || 'Unable to open file.', 'error')
+  }
+}
+
+async function downloadProjectAsset(projectId, assetId) {
+  try {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/assets/${assetId}/download`, {
+      headers: _apiAuthHeaders(),
+    })
+    if (!res.ok) throw new Error(`Unable to download file (${res.status})`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'asset'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 30000)
+  } catch (err) {
+    showToast(err.message || 'Unable to download file.', 'error')
+  }
 }
 

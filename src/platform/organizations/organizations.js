@@ -6,7 +6,7 @@
 // Features:
 //   - Card grid with status/plan badges, product pills, user + lead stats
 //   - Search + status filter tabs
-//   - Actions: Configure, Manage Users, Impersonate, Suspend/Activate, Open App
+//   - Actions: Configure, Manage Users, Impersonate, Suspend/Activate, Open Hub
 //   - "+ New Organization" -> openOrgWizard() from org-wizard.js
 // ============================================================================
 
@@ -237,26 +237,31 @@ function _platOrgCardHtml(t) {
     '</div>' +
 
     '<div style="margin-top:10px;text-align:center;">' +
-      '<button onclick="platOpenOrgApp(' + t.id + ',\'' + _platEscAttr(t.slug) + '\')" style="border:none;background:none;color:#3b82f6;font-size:12px;cursor:pointer;font-weight:600;">Open App &#x2192;</button>' +
+      '<button onclick="platOpenOrgHub(' + t.id + ',\'' + _platEscAttr(t.slug) + '\')" style="border:none;background:none;color:#3b82f6;font-size:12px;cursor:pointer;font-weight:600;">Open Hub &#x2192;</button>' +
     '</div>' +
   '</div>'
 }
 
 // -- Actions ------------------------------------------------------------------
 
-async function platOpenOrgApp(tenantId, slug) {
+async function platOpenOrgHub(tenantId, slug) {
   try {
-    var res = await fetch(API_BASE + '/platform/tenants/' + tenantId + '/impersonate', {
-      method: 'POST',
+    var res = await fetch(API_BASE + '/platform/tenants/' + tenantId + '/products', {
       headers: { Authorization: 'Bearer ' + token },
     })
     var data = await res.json()
-    if (!res.ok) { showToast(data.error || 'Could not open app.', 'error'); return }
-    var appUrl = '/' + slug + '/lms?imp=' + encodeURIComponent(data.token) +
-                 '&user=' + encodeURIComponent(JSON.stringify(data.user))
-    window.open(appUrl, '_blank')
+    if (!res.ok) { showToast(data.error || 'Could not open hub.', 'error'); return }
+    var subscriptions = data.subscriptions || []
+    var first = subscriptions.length ? subscriptions[0] : null
+    var productCode = (first && first.product && first.product.slug) ? first.product.slug : 'lms'
+    if (typeof platNavigate === 'function') {
+      platNavigate('product-hub', { productCode: productCode })
+    } else {
+      history.pushState({}, '', '/products/' + productCode)
+      if (typeof dispatch === 'function') dispatch()
+    }
   } catch (e) {
-    showToast('Network error. Could not open app.', 'warning')
+    showToast('Network error. Could not open hub.', 'warning')
   }
 }
 
@@ -327,7 +332,7 @@ async function platImpersonateOrg(tenantId, tenantName, slug) {
     sessionStorage.setItem('_platform_token', token)
     sessionStorage.setItem('_platform_user', JSON.stringify(currentUser))
 
-    var loginUrl = '/' + slug + '/lms?imp=' + encodeURIComponent(data.token) +
+    var loginUrl = authBuildTenantAppPath(slug, 'lms') + '?imp=' + encodeURIComponent(data.token) +
                    '&user=' + encodeURIComponent(JSON.stringify(data.user))
     window.open(loginUrl, '_blank')
 

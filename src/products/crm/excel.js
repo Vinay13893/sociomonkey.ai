@@ -42,7 +42,7 @@ async function renderExcelUpload() {
             </li>
             <li style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
               <strong>status</strong>
-              <div style="font-size:12px;color:#94a3b8;">new, attempted, connected, interested, site_visit_planned, site_visit_done, negotiation, booking_done, lost, junk</div>
+              <div style="font-size:12px;color:#94a3b8;">new, attempted, connected, interested, site_visit_planned, site_visit_done, negotiation, booking_done, not_interested, lost</div>
             </li>
             <li style="padding:8px 0;border-bottom:1px solid #e2e8f0;">
               <strong>assigned_to_email</strong>

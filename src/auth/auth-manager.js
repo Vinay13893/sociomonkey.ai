@@ -9,6 +9,66 @@
 // Roles that belong to the platform layer (not tenant apps)
 var AUTH_PLATFORM_ROLES = new Set(['platform_owner', 'platform_admin', 'product_admin'])
 
+// Route-level slug aliases (URL canonicalization) while preserving existing
+// tenant slugs in backend data/auth flows.
+var AUTH_TENANT_ROUTE_ALIASES = Object.freeze({
+  ganga: 'ganga-realty',
+})
+
+var AUTH_TENANT_DATA_SLUG_OVERRIDES = Object.freeze({
+  'ganga-realty': 'ganga',
+})
+
+var AUTH_TENANT_TAB_ALIASES = Object.freeze({
+  action_board: 'action-board',
+  recycle_queue: 'recycle-queue',
+  activitylogs: 'activity-logs',
+})
+
+var AUTH_TENANT_TAB_ROUTE_ALIASES = Object.freeze({
+  'action-board': 'action_board',
+  'recycle-queue': 'recycle_queue',
+  'activity-logs': 'activitylogs',
+})
+
+function authCanonicalTenantSlug(slug) {
+  var raw = String(slug || '').trim().toLowerCase()
+  if (!raw) return ''
+  return AUTH_TENANT_ROUTE_ALIASES[raw] || raw
+}
+
+function authTenantDataSlug(slug) {
+  var canonical = authCanonicalTenantSlug(slug)
+  if (!canonical) return ''
+  return AUTH_TENANT_DATA_SLUG_OVERRIDES[canonical] || canonical
+}
+
+function authBuildTenantAppPath(slug, product) {
+  var tenant = authCanonicalTenantSlug(slug)
+  var prod = String(product || 'lms').trim().toLowerCase() || 'lms'
+  if (!tenant) return '/login'
+  return '/apps/' + prod + '/' + tenant
+}
+
+function authBuildTenantLoginPath(slug, product) {
+  var appPath = authBuildTenantAppPath(slug, product)
+  if (appPath === '/login') return appPath
+  return appPath + '/login'
+}
+
+function authCanonicalTenantTab(tab) {
+  var raw = String(tab || '').trim().toLowerCase()
+  if (!raw || raw === 'dashboard') return 'dashboard'
+  return AUTH_TENANT_TAB_ROUTE_ALIASES[raw] || raw
+}
+
+function authBuildTenantTabPath(slug, product, tab) {
+  var appPath = authBuildTenantAppPath(slug, product)
+  var page = authCanonicalTenantTab(tab)
+  if (!page) page = 'dashboard'
+  return appPath + '/' + page
+}
+
 // ── JWT Utilities ─────────────────────────────────────────────────────────────
 
 function authParseJwt(tok) {
@@ -74,7 +134,7 @@ function authCanAccess(route) {
     if (authIsTenantUser()) {
       // If the user's tenant_slug is not yet set (legacy data), allow by tenant_id match
       if (!user.tenant_slug) return true
-      return user.tenant_slug === route.slug
+      return authCanonicalTenantSlug(user.tenant_slug) === authCanonicalTenantSlug(route.slug)
     }
   }
 
@@ -83,12 +143,12 @@ function authCanAccess(route) {
 
 /**
  * Returns the appropriate login path for an unauthenticated access attempt.
- * Tenant routes redirect to /:slug/:product/login
+ * Tenant routes redirect to /apps/:product/:slug/login
  * Everything else redirects to /login
  */
 function authGetLoginPath(route) {
   if (route && route.layer === 'tenant' && route.slug) {
-    return '/' + route.slug + '/login'
+    return authBuildTenantLoginPath(route.slug, route.product || 'lms')
   }
   return '/login'
 }

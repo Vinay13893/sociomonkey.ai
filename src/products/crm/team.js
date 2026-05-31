@@ -26,21 +26,19 @@ async function renderTeamManagement() {
   const container = document.getElementById('teamContainer')
   if (!container) return
 
-  const TABLE_HEADERS_BASE = `<thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead>`
-  const TABLE_HEADERS_TEAM = `<thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Sales Manager</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead>`
+  const TABLE_HEADERS = `<thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead>`
 
   function userRow(u, showManager) {
     const managerName = showManager
       ? (users.find(m => m.id === u.manager_id)?.name || '<span style="color:#94a3b8;">Unassigned</span>')
       : null
     return `<tr>
-      <td><strong>${escape(u.name)}</strong></td>
-      <td>${escape(u.email)}</td>
-      <td>${escape(u.phone || '-')}</td>
-      ${showManager ? `<td><span style="font-size:12px;font-weight:500;color:#0369a1;">${managerName}</span></td>` : ''}
-      <td>${u.is_active ? '<span class="tag" style="background:#dcfce7;color:#166534;">Active</span>' : '<span class="tag" style="background:#fee2e2;color:#991b1b;">Inactive</span>'}</td>
-      <td>${u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}</td>
-      <td>
+      <td data-label="Name"><strong>${escape(u.name)}</strong>${showManager ? `<div class="team-name-sub">Mgr: ${managerName}</div>` : ''}</td>
+      <td data-label="Email">${escape(u.email)}</td>
+      <td data-label="Phone">${escape(u.phone || '-')}</td>
+      <td data-label="Status">${u.is_active ? '<span class="tag" style="background:#dcfce7;color:#166534;">Active</span>' : '<span class="tag" style="background:#fee2e2;color:#991b1b;">Inactive</span>'}</td>
+      <td data-label="Last Login">${u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}</td>
+      <td class="team-actions-cell" data-label="Actions">
         <button class="button secondary edit-user-btn" data-id="${u.id}" style="font-size:12px;padding:6px 10px;">Edit</button>
         <button class="button del-user-btn" data-id="${u.id}" data-name="${escape(u.name)}" style="font-size:12px;padding:6px 10px;background:#ef4444;border-color:#ef4444;margin-left:4px;">Delete</button>
       </td>
@@ -49,7 +47,6 @@ async function renderTeamManagement() {
 
   function sectionHTML(title, color, textColor, bgColor, members, showManager) {
     if (members.length === 0) return ''
-    const headers = showManager ? TABLE_HEADERS_TEAM : TABLE_HEADERS_BASE
     return `
       <div style="margin-bottom:28px;">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
@@ -58,8 +55,8 @@ async function renderTeamManagement() {
           <div style="flex:1;height:1px;background:${color};opacity:0.3;"></div>
         </div>
         <div style="overflow-x:auto;">
-          <table class="table">
-            ${headers}
+          <table class="table team-table">
+            ${TABLE_HEADERS}
             <tbody>${members.map(u => userRow(u, showManager)).join('')}</tbody>
           </table>
         </div>

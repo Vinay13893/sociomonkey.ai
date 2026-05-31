@@ -6,6 +6,14 @@
 var _recycleRenderId = 0
 var _recycleRenderInFlight = false
 var _recycleSelected = new Set()
+var _rqSearchQuery = ''
+var _rqPage = 1
+var _rqPageSize = 25
+var _rqStrategyHelpText = {
+  intelligent: 'Best default. Avoids recently assigned users and rotates safely to reduce repeat follow-ups.',
+  round_robin: 'Strict turn-by-turn distribution. Best when you want even assignment count regardless of workload.',
+  least_loaded: 'Sends leads to users with fewer active leads first. Best when team workload is uneven.',
+}
 
 async function renderRecycleQueue() {
   if (_recycleRenderInFlight) return
@@ -33,28 +41,19 @@ async function renderRecycleQueue() {
       </div>
 
       <!-- Filters -->
-      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
-        <div>
+      <div class="rq-filter-shell">
+        <div class="rq-filter-row">
+        <div class="rq-filter-field">
           <label class="sm-label" style="display:block;margin-bottom:5px;">STALE WINDOW</label>
-          <select id="rqStaleMode" class="select" style="font-size:13px;">
+          <select id="rqStaleMode" class="dash-filter-ctl">
             <option value="today">Today</option>
             <option value="yesterday" selected>Yesterday</option>
             <option value="custom">Custom Timeline</option>
           </select>
         </div>
-        <div id="rqCustomTimeline" style="display:none;gap:8px;align-items:flex-end;">
-          <div>
-            <label class="sm-label" style="display:block;margin-bottom:5px;">FROM</label>
-            <input id="rqDateFrom" type="date" class="select" style="font-size:13px;" />
-          </div>
-          <div>
-            <label class="sm-label" style="display:block;margin-bottom:5px;">TO</label>
-            <input id="rqDateTo" type="date" class="select" style="font-size:13px;" />
-          </div>
-        </div>
-        <div>
+        <div class="rq-filter-field">
           <label class="sm-label" style="display:block;margin-bottom:5px;">STATUS</label>
-          <select id="rqStatus" class="select" style="font-size:13px;">
+          <select id="rqStatus" class="dash-filter-ctl">
             <option value="">All Recyclable</option>
             <option value="no_answer">No Answer</option>
             <option value="follow_up">Follow Up</option>
@@ -63,23 +62,49 @@ async function renderRecycleQueue() {
             <option value="lost">Lost</option>
           </select>
         </div>
-        <button onclick="_rqLoad()" class="button" style="font-size:13px;padding:9px 18px;">🔍 Load Queue</button>
+        <div class="rq-filter-field rq-filter-search">
+          <label class="sm-label" style="display:block;">SEARCH</label>
+          <input id="rqSearch" class="dash-filter-ctl" type="text" placeholder="Name, mobile, project, assigned user" value="${escape(_rqSearchQuery)}" />
+        </div>
+        <button onclick="_rqLoad()" class="button rq-filter-btn">Load Queue</button>
+        <button onclick="_rqApplySearch()" class="button secondary rq-filter-btn">Search</button>
+        </div>
+        <div id="rqCustomTimeline" class="rq-custom-row" style="display:none;">
+          <div class="rq-filter-field">
+            <label class="sm-label" style="display:block;margin-bottom:5px;">FROM</label>
+            <input id="rqDateFrom" type="date" class="dash-filter-ctl" />
+          </div>
+          <div class="rq-filter-field">
+            <label class="sm-label" style="display:block;margin-bottom:5px;">TO</label>
+            <input id="rqDateTo" type="date" class="dash-filter-ctl" />
+          </div>
+        </div>
       </div>
 
       <!-- Bulk action bar -->
-      <div id="rqBulkBar" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px 16px;margin-bottom:14px;align-items:center;gap:12px;flex-wrap:wrap;">
-        <span id="rqSelCount" style="font-size:13px;font-weight:700;color:#0369a1;">0 selected</span>
-        <div>
-          <label class="sm-label" style="margin-right:6px;">STRATEGY</label>
-          <select id="rqStrategy" class="select" style="font-size:12px;">
-            <option value="intelligent" selected>Intelligent (Cooldown)</option>
-            <option value="round_robin">Round Robin</option>
-            <option value="least_loaded">Least Loaded</option>
-          </select>
+      <div id="rqBulkBar" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px 16px;margin-bottom:14px;">
+        <div class="rq-bulk-main-row">
+          <span id="rqSelCount" class="rq-bulk-count">0 selected</span>
+          <div class="rq-bulk-strategy">
+            <label class="sm-label" style="margin-right:6px;white-space:nowrap;">STRATEGY</label>
+            <select id="rqStrategy" class="select" style="font-size:12px;">
+              <option value="intelligent" selected>Intelligent (Cooldown)</option>
+              <option value="round_robin">Round Robin</option>
+              <option value="least_loaded">Least Loaded</option>
+            </select>
+          </div>
+          <div class="rq-bulk-reason-wrap">
+            <input id="rqReason" type="text" class="select" placeholder="Reason (optional)" style="font-size:12px;" />
+          </div>
+          <div class="rq-bulk-actions">
+            <button onclick="_rqReshuffle()" class="button" style="font-size:13px;background:#0369a1;">♻️ Reshuffle Selected</button>
+            <button onclick="_rqClearSelection()" style="background:none;border:1px solid #bae6fd;border-radius:6px;padding:6px 12px;color:#0369a1;cursor:pointer;font-size:12px;">✕ Clear</button>
+          </div>
         </div>
-        <input id="rqReason" type="text" class="select" placeholder="Reason (optional)" style="flex:1;min-width:160px;font-size:12px;" />
-        <button onclick="_rqReshuffle()" class="button" style="font-size:13px;background:#0369a1;">♻️ Reshuffle Selected</button>
-        <button onclick="_rqClearSelection()" style="background:none;border:1px solid #bae6fd;border-radius:6px;padding:6px 12px;color:#0369a1;cursor:pointer;font-size:12px;">✕ Clear</button>
+        <div class="rq-bulk-help-row">
+          <span class="rq-bulk-help-label">How this strategy works:</span>
+          <span id="rqStrategyHelp" class="rq-bulk-help-text"></span>
+        </div>
       </div>
 
       <!-- Lead list -->
@@ -101,13 +126,26 @@ async function renderRecycleQueue() {
   const dateToInput = document.getElementById('rqDateTo')
   if (staleModeSel && customWrap) {
     staleModeSel.addEventListener('change', function () {
-      customWrap.style.display = staleModeSel.value === 'custom' ? 'flex' : 'none'
+      customWrap.style.display = staleModeSel.value === 'custom' ? 'grid' : 'none'
       _rqLoad()
     })
   }
   if (dateFromInput) dateFromInput.addEventListener('change', _rqLoad)
   if (dateToInput) dateToInput.addEventListener('change', _rqLoad)
   document.getElementById('rqStatus').addEventListener('change', _rqLoad)
+  const strategySel = document.getElementById('rqStrategy')
+  if (strategySel) {
+    strategySel.addEventListener('change', _rqUpdateStrategyHelp)
+  }
+  _rqUpdateStrategyHelp()
+  const searchInput = document.getElementById('rqSearch')
+  if (searchInput) {
+    searchInput.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter') return
+      e.preventDefault()
+      _rqApplySearch()
+    })
+  }
 
   // Auto-load
   _rqLoad()
@@ -120,6 +158,7 @@ async function _rqLoad() {
   const dateFrom   = document.getElementById('rqDateFrom')?.value || ''
   const dateTo     = document.getElementById('rqDateTo')?.value || ''
   const statusVal  = document.getElementById('rqStatus')?.value     || ''
+  const searchVal  = (document.getElementById('rqSearch')?.value || _rqSearchQuery || '').trim()
   const listEl     = document.getElementById('rqLeadList')
   if (!listEl) return
 
@@ -136,6 +175,9 @@ async function _rqLoad() {
       if (dateTo) params.set('date_to', dateTo)
     }
     if (statusVal) params.set('status', statusVal)
+    if (searchVal) params.set('q', searchVal)
+    params.set('page', String(_rqPage))
+    params.set('page_size', String(_rqPageSize))
 
     const url = `${API_BASE}/leads/recycle-queue?${params.toString()}`
     const res = await fetch(url, { headers: _apiAuthHeaders() })
@@ -147,6 +189,9 @@ async function _rqLoad() {
   }
 
   const leads = data.leads || []
+  const total = data.total || 0
+  const page = data.page || _rqPage
+  const totalPages = data.total_pages || 1
   if (!leads.length) {
     listEl.innerHTML = `<div style="text-align:center;padding:60px 20px;color:#9ca3af;"><div style="font-size:36px;margin-bottom:8px;">✅</div><p>No stale leads found for the selected criteria.</p></div>`
     return
@@ -154,18 +199,48 @@ async function _rqLoad() {
 
   listEl.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;padding:0 4px;margin-bottom:8px;">
-      <span style="font-size:13px;font-weight:600;color:#475569;">${leads.length} lead${leads.length !== 1 ? 's' : ''} found (of ${data.total || leads.length} total stale)</span>
+      <span style="font-size:13px;font-weight:600;color:#475569;">Showing ${leads.length} of ${total} stale lead${total !== 1 ? 's' : ''}</span>
       <button onclick="_rqSelectAll()" style="font-size:12px;color:#6366f1;background:none;border:1px solid #c7d2fe;border-radius:6px;padding:4px 10px;cursor:pointer;">Select All</button>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:0 4px 8px;">
+      <span style="font-size:12px;color:#64748b;">Page ${page} of ${totalPages}</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:12px;color:#64748b;">Page size</span>
+        <select onchange="_rqSetPageSize(this.value)" style="border:1px solid #cbd5e1;border-radius:6px;padding:3px 7px;font-size:12px;">
+          ${[10,25,50,100].map(function(n){ return `<option value="${n}" ${_rqPageSize===n?'selected':''}>${n}</option>` }).join('')}
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <button onclick="_rqSetPage(${page - 1})" ${page <= 1 ? 'disabled' : ''} style="font-size:12px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:${page <= 1 ? '#cbd5e1' : '#334155'};cursor:${page <= 1 ? 'default' : 'pointer'};">Prev</button>
+        <button onclick="_rqSetPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''} style="font-size:12px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:${page >= totalPages ? '#cbd5e1' : '#334155'};cursor:${page >= totalPages ? 'default' : 'pointer'};">Next</button>
+      </div>
     </div>
     ${leads.map(l => _rqLeadRow(l)).join('')}
   `
+}
+
+function _rqApplySearch() {
+  _rqSearchQuery = (document.getElementById('rqSearch')?.value || '').trim()
+  _rqPage = 1
+  _rqLoad()
+}
+
+function _rqSetPage(page) {
+  _rqPage = Math.max(1, parseInt(page, 10) || 1)
+  _rqLoad()
+}
+
+function _rqSetPageSize(size) {
+  _rqPageSize = Math.max(1, parseInt(size, 10) || 25)
+  _rqPage = 1
+  _rqLoad()
 }
 
 // ── Lead row ──────────────────────────────────────────────────────────────
 
 function _rqLeadRow(l) {
   const sc = (typeof STATUS_COLORS !== 'undefined' ? STATUS_COLORS : {})[l.status] || { bg: '#f1f5f9', color: '#475569', label: l.status }
-  const staleDate = l.updated_at ? new Date(l.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+  const staleDate = l.updated_at ? new Date(l.updated_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }) : '—'
   const prevCount = (l.previous_assignee_ids || []).length
 
   return `
@@ -228,8 +303,15 @@ function _rqUpdateBulkBar() {
   const cntEl   = document.getElementById('rqSelCount')
   if (!bar) return
   const n = _recycleSelected.size
-  bar.style.display = n > 0 ? 'flex' : 'none'
+  bar.style.display = n > 0 ? 'block' : 'none'
   if (cntEl) cntEl.textContent = `${n} lead${n !== 1 ? 's' : ''} selected`
+}
+
+function _rqUpdateStrategyHelp() {
+  const strategy = document.getElementById('rqStrategy')?.value || 'intelligent'
+  const helpEl = document.getElementById('rqStrategyHelp')
+  if (!helpEl) return
+  helpEl.textContent = _rqStrategyHelpText[strategy] || _rqStrategyHelpText.intelligent
 }
 
 // ── Reshuffle ─────────────────────────────────────────────────────────────

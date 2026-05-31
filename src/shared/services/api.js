@@ -4,6 +4,9 @@
 function _apiAuthHeaders() {
   if (!token) return {}
   const headers = { Authorization: `Bearer ${token}` }
+  if (currentProduct) {
+    headers['X-Product-Slug'] = currentProduct
+  }
   // When platform owner is viewing a tenant, tell the backend which tenant's data to return
   if (typeof platformTenantSlug === 'string' && platformTenantSlug) {
     headers['X-Tenant-Slug'] = platformTenantSlug
@@ -226,9 +229,9 @@ async function login(email, password, remember, tenantSlug) {
   } else if (!loginRedirectPath || loginRedirectPath.endsWith('/login')) {
     if (authIsPlatformUser()) {
       history.replaceState({}, '', '/')
-    } else if (user && user.tenant_slug) {
+    } else if (tenantSlug && user && user.tenant_slug) {
       const preferredProduct = availableProducts.find(p => p.slug === 'lms') ? 'lms' : 'crm'
-      history.replaceState({}, '', '/' + user.tenant_slug + '/' + preferredProduct)
+      history.replaceState({}, '', authBuildTenantAppPath(user.tenant_slug, preferredProduct))
     }
   }
   dispatch()

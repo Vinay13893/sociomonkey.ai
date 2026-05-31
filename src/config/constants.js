@@ -47,16 +47,10 @@ const PIPELINE_STAGES = Object.keys(PIPELINE_STAGE_LABELS)
 
 const PRODUCT_CATALOGUE = [
   {
-    code: 'crm',         name: 'CRM',
-    fullName: 'Customer Relationship Management',
-    desc: 'Leads, pipeline, team management & sales analytics',
-    icon: 'fa-solid fa-users',         color: '#22c55e', bg: '#f0fdf4', active: true,
-  },
-  {
-    code: 'lms',         name: 'LMS',
-    fullName: 'Learning Management System',
-    desc: 'Courses, assessments, certifications & learner tracking',
-    icon: 'fa-solid fa-graduation-cap', color: '#8b5cf6', bg: '#f5f3ff', active: true,
+    code: 'lms',         name: 'Lead Management System',
+    fullName: 'Lead Management System',
+    desc: 'Lead capture, pipeline, team collaboration & performance tracking',
+    icon: 'fa-solid fa-building',      color: '#1e3a5f', bg: '#eff6ff', active: true,
   },
   {
     code: 'procurement', name: 'Procurement',
@@ -75,6 +69,12 @@ const PRODUCT_CATALOGUE = [
     fullName: 'Amazon Data Intelligence & Analytics',
     desc: 'Keywords, ranking, ads, competitor analysis & market insights',
     icon: 'fa-brands fa-amazon',       color: '#f97316', bg: '#fff7ed', active: true,
+  },
+  {
+    code: 'crm',         name: 'CRM',
+    fullName: 'Customer Relationship Management',
+    desc: 'Leads, pipeline, team management & sales analytics',
+    icon: 'fa-solid fa-users',         color: '#22c55e', bg: '#f0fdf4', active: false,
   },
   {
     code: 'erp',         name: 'ERP',

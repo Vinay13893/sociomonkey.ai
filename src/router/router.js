@@ -26,6 +26,19 @@ function showContent() {
   }
 }
 
+function _setPublicLoginMode(enabled) {
+  var platRoot = document.getElementById('platformRoot')
+  var tenantLayout = document.getElementById('tenantLayout')
+  var publicRoot = document.getElementById('publicLoginRoot')
+  if (enabled) {
+    if (platRoot) platRoot.style.display = 'none'
+    if (tenantLayout) tenantLayout.style.display = 'none'
+    if (publicRoot) publicRoot.style.display = 'block'
+  } else {
+    if (publicRoot) publicRoot.style.display = 'none'
+  }
+}
+
 // Safely invoke showContent() — catches async render errors and shows retry UI
 function _safeShowContent() {
   var result
@@ -85,29 +98,82 @@ function parseRoute() {
   // Platform login page
   if (path === '/login') return { layer: 'platform-login' }
 
+  // Canonical tenant app login path: /apps/:product/:slug/login
+  const appTenantLoginMatch = path.match(/^\/apps\/([^\/]+)\/([^\/]+)\/login$/)
+  if (appTenantLoginMatch) {
+    return {
+      layer: 'tenant-login',
+      product: appTenantLoginMatch[1],
+      slug: authCanonicalTenantSlug(appTenantLoginMatch[2]),
+      tenant_data_slug: authTenantDataSlug(appTenantLoginMatch[2]),
+    }
+  }
+
+  // Canonical tenant app path: /apps/:product/:slug or /apps/:product/:slug/:tab
+  const appTenantMatch = path.match(/^\/apps\/([^\/]+)\/([^\/]+)(?:\/([^\/]+))?$/)
+  if (appTenantMatch) {
+    const canonicalSlug = authCanonicalTenantSlug(appTenantMatch[2])
+    const canonicalTab = authCanonicalTenantTab(appTenantMatch[3] || 'dashboard')
+    const canonicalPath = authBuildTenantTabPath(canonicalSlug, appTenantMatch[1], canonicalTab)
+    if (canonicalPath !== path) {
+      history.replaceState({}, '', canonicalPath)
+    }
+    return {
+      layer: 'tenant',
+      product: appTenantMatch[1],
+      slug: canonicalSlug,
+      tenant_data_slug: authTenantDataSlug(appTenantMatch[2]),
+      tab: canonicalTab,
+    }
+  }
+
   // Tenant login page: /:slug/login (stable) or /:slug/:product/login (legacy)
   const tenantLoginSimpleMatch = path.match(/^\/([^\/]+)\/login$/)
   if (tenantLoginSimpleMatch) {
-    return { layer: 'tenant-login', slug: tenantLoginSimpleMatch[1], product: 'lms' }
+    const legacySlug = tenantLoginSimpleMatch[1]
+    history.replaceState({}, '', authBuildTenantLoginPath(legacySlug, 'lms'))
+    return {
+      layer: 'tenant-login',
+      slug: authCanonicalTenantSlug(legacySlug),
+      product: 'lms',
+      tenant_data_slug: authTenantDataSlug(legacySlug),
+    }
   }
 
   // Legacy tenant login page: /:slug/:product/login
   const tenantLoginMatch = path.match(/^\/([^\/]+)\/([^\/]+)\/login$/)
   if (tenantLoginMatch) {
-    return { layer: 'tenant-login', slug: tenantLoginMatch[1], product: tenantLoginMatch[2] }
+    const legacySlug = tenantLoginMatch[1]
+    const product = tenantLoginMatch[2]
+    history.replaceState({}, '', authBuildTenantLoginPath(legacySlug, product))
+    return {
+      layer: 'tenant-login',
+      slug: authCanonicalTenantSlug(legacySlug),
+      product: product,
+      tenant_data_slug: authTenantDataSlug(legacySlug),
+    }
   }
 
   // Tenant product paths:  /:slug/:product  (e.g. /ganga/crm  or /ganga/lms)
-  const m = path.match(/^\/([^\/]+)\/([^\/]+)/)
-  if (m && m[1] !== 'products') {
+  const m = path.match(/^\/([^\/]+)\/([^\/]+)(?:\/([^\/]+))?$/)
+  if (m && m[1] !== 'products' && m[1] !== 'apps') {
     const slug = m[1]
     let product = m[2]
-    // Backward compat: /ganga/crm silently redirects to /ganga/lms
+    const tab = authCanonicalTenantTab(m[3] || 'dashboard')
+    // Backward compat: legacy routes map into canonical /apps/:product/:tenant
     if (product === 'crm') {
-      history.replaceState({}, '', '/' + slug + '/lms')
+      history.replaceState({}, '', authBuildTenantTabPath(slug, 'lms', tab))
       product = 'lms'
+    } else {
+      history.replaceState({}, '', authBuildTenantTabPath(slug, product, tab))
     }
-    return { layer: 'tenant', slug: slug, product: product }
+    return {
+      layer: 'tenant',
+      slug: authCanonicalTenantSlug(slug),
+      product: product,
+      tenant_data_slug: authTenantDataSlug(slug),
+      tab: tab,
+    }
   }
 
   // Default: platform dashboard
@@ -122,15 +188,6 @@ function renderAccessDenied(route) {
   if (platRoot)     platRoot.style.display     = 'none'
   if (tenantLayout) tenantLayout.style.display = ''
 
-  // For tenant users hitting platform routes, redirect them to their own tenant app
-  if (user && authIsTenantUser() && (route.layer === 'platform' || route.layer === 'product-hub')) {
-    if (user.tenant_slug) {
-      history.replaceState({}, '', '/' + user.tenant_slug + '/lms')
-      dispatch()
-      return
-    }
-  }
-
   const sidebar = document.querySelector('.sidebar')
   if (sidebar) sidebar.style.display = 'none'
   const mainContent = document.querySelector('.main-content')
@@ -144,9 +201,9 @@ function renderAccessDenied(route) {
         '<p style="color:#64748b;font-size:14px;margin-bottom:24px;">You don\'t have permission to access this page.</p>' +
         '<div style="display:flex;flex-direction:column;gap:10px;">' +
           (user && user.tenant_slug
-            ? '<button onclick="history.pushState({},\'\',' + "'/'+(user.tenant_slug)+'/lms');dispatch()" + '" class="button" style="font-size:14px;">Go to My App</button>'
+            ? '<button onclick="history.pushState({},\'\',authBuildTenantAppPath(user.tenant_slug,\'lms\'));dispatch()" class="button" style="font-size:14px;">Go to My App</button>'
             : '') +
-'<button onclick="var _sl=(user&&user.tenant_slug)?user.tenant_slug:null;authClearSession();clearTenantContext();history.replaceState({},' + "''" + ',_sl?\'/\'+_sl+\'/login\':\'/login\');dispatch()" class="button" style="font-size:14px;background:#64748b;color:#fff;">Sign Out</button>'
+'<button onclick="authClearSession();clearTenantContext();history.replaceState({},' + "''" + ',\'/login\');if(typeof _setPublicLoginMode===\'function\'){_setPublicLoginMode(true)};if(typeof renderLogin===\'function\'){renderLogin({ type: \'platform\' })};dispatch()" class="button" style="font-size:14px;background:#64748b;color:#fff;">Sign Out</button>'
         '</div>' +
       '</div>' +
     '</div>'
@@ -188,8 +245,7 @@ async function _dispatchInner() {
       history.replaceState({}, '', '/')
       return _dispatchInner()
     }
-    if (platRoot)     platRoot.style.display     = 'none'
-    if (tenantLayout) tenantLayout.style.display = ''
+    _setPublicLoginMode(true)
     clearTenantContext()
     renderLogin({ type: 'platform' })
     return
@@ -198,17 +254,28 @@ async function _dispatchInner() {
     // Already authenticated → go to tenant LMS
     if (token && user) {
       const slug = (user && user.tenant_slug) || route.slug
-      history.replaceState({}, '', '/' + slug + '/lms')
+      history.replaceState({}, '', authBuildTenantAppPath(slug, route.product || 'lms'))
       return _dispatchInner()
     }
-    if (platRoot)     platRoot.style.display     = 'none'
-    if (tenantLayout) tenantLayout.style.display = ''
+    _setPublicLoginMode(true)
     renderLogin({ type: 'tenant', slug: route.slug, product: route.product })
-    loadTenantConfig(route.slug).then(function () {
-      if (!token && window.location.pathname === '/' + route.slug + '/login') {
+    loadTenantConfig(route.tenant_data_slug || authTenantDataSlug(route.slug)).then(function () {
+      if (!token && window.location.pathname === authBuildTenantLoginPath(route.slug, route.product || 'lms')) {
         renderLogin({ type: 'tenant', slug: route.slug, product: route.product })
       }
     }).catch(function () {})
+    return
+  }
+
+  // Never auto-enter tenant apps from platform/root routes.
+  // Tenant sessions must use explicit tenant URLs or explicit tenant launch flow.
+  if (token && user && authIsTenantUser() && (route.layer === 'platform' || route.layer === 'product-hub')) {
+    authClearSession()
+    clearTenantContext()
+    loginRedirectPath = ''
+    history.replaceState({}, '', '/login')
+    _setPublicLoginMode(true)
+    renderLogin({ type: 'platform' })
     return
   }
 
@@ -217,13 +284,12 @@ async function _dispatchInner() {
     loginRedirectPath = window.location.pathname
     const loginPath = authGetLoginPath(route)
     history.replaceState({}, '', loginPath)
-    if (platRoot)     platRoot.style.display     = 'none'
-    if (tenantLayout) tenantLayout.style.display = ''
+    _setPublicLoginMode(true)
     const loginRoute = parseRoute()
     if (loginRoute.layer === 'tenant-login') {
       renderLogin({ type: 'tenant', slug: loginRoute.slug, product: loginRoute.product })
-      loadTenantConfig(loginRoute.slug).then(function () {
-        if (!token && window.location.pathname === '/' + loginRoute.slug + '/login') {
+      loadTenantConfig(loginRoute.tenant_data_slug || authTenantDataSlug(loginRoute.slug)).then(function () {
+        if (!token && window.location.pathname === authBuildTenantLoginPath(loginRoute.slug, loginRoute.product || 'lms')) {
           renderLogin({ type: 'tenant', slug: loginRoute.slug, product: loginRoute.product })
         }
       }).catch(function () {})
@@ -233,6 +299,8 @@ async function _dispatchInner() {
     }
     return
   }
+
+  _setPublicLoginMode(false)
 
   // ── Access control check ────────────────────────────────────────────────────
   if (!authCanAccess(route)) {
@@ -251,16 +319,16 @@ async function _dispatchInner() {
 
   // ── Tenant routes (including platform owner drilling in via product hub) ────
   if (route.layer === 'tenant') {
-    platformTenantSlug = route.slug
+    platformTenantSlug = route.tenant_data_slug || authTenantDataSlug(route.slug)
     // Sync currentProduct from URL so nav items and content match the route
     if (route.product) {
       currentProduct = route.product
       localStorage.setItem('current_product', route.product)
     }
-    activeTab = 'dashboard'
+    activeTab = route.tab || 'dashboard'
     // Don't block render — cached paths (in-memory/sessionStorage) apply branding
     // synchronously; cold-path network fetch applies branding when it resolves.
-    loadTenantConfig(route.slug)
+    loadTenantConfig(platformTenantSlug)
   }
   if (platRoot)     platRoot.style.display     = 'none'
   if (tenantLayout) tenantLayout.style.display = ''
@@ -276,7 +344,7 @@ function launchTenantApp(productCode, slug) {
   // Navigate to the canonical tenant URL and run the full dispatch() pipeline.
   // This guarantees loadTenantConfig(), tenant cache reset, and auth checks all
   // run identically to a direct URL navigation or page refresh.
-  history.pushState({}, '', '/' + slug + '/' + productCode)
+  history.pushState({}, '', authBuildTenantAppPath(slug, productCode))
   dispatch()
 }
 

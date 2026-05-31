@@ -167,11 +167,17 @@ function platNavigate(view, context) {
 
 function platLogout() {
   authClearSession()
+  clearTenantContext()
   history.replaceState({}, '', '/login')
-  document.getElementById('platformRoot').style.display = 'none'
-  var tl = document.getElementById('tenantLayout')
-  if (tl) tl.style.display = ''
+  if (typeof _setPublicLoginMode === 'function') {
+    _setPublicLoginMode(true)
+  } else {
+    document.getElementById('platformRoot').style.display = 'none'
+    var tl = document.getElementById('tenantLayout')
+    if (tl) tl.style.display = 'none'
+  }
   if (typeof renderLogin === 'function') renderLogin({ type: 'platform' })
+  if (typeof dispatch === 'function') dispatch()
 }
 
 function platOpenStatus() {

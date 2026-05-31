@@ -1,28 +1,137 @@
+var _leadsSearchQuery = ''
+var _leadsAdvancedOpen = false
+
+function _leadsResolveTimeRange(rangeKey) {
+  var now = new Date()
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  var start = null
+  var end = null
+  var key = String(rangeKey || '').trim()
+
+  if (key === 'today') {
+    start = new Date(today)
+    end = new Date(today)
+  } else if (key === 'yesterday') {
+    start = new Date(today)
+    start.setDate(start.getDate() - 1)
+    end = new Date(start)
+  } else if (key === 'last_7_days') {
+    start = new Date(today)
+    start.setDate(start.getDate() - 6)
+    end = new Date(today)
+  } else if (key === 'last_30_days') {
+    start = new Date(today)
+    start.setDate(start.getDate() - 29)
+    end = new Date(today)
+  } else if (key === 'this_month') {
+    start = new Date(now.getFullYear(), now.getMonth(), 1)
+    end = new Date(today)
+  } else if (key === 'last_month') {
+    start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    end = new Date(now.getFullYear(), now.getMonth(), 0)
+  } else if (key === 'year_to_date') {
+    start = new Date(now.getFullYear(), 0, 1)
+    end = new Date(today)
+  }
+
+  return { start, end }
+}
+
+function _leadsFmtDateInput(d) {
+  return d.toISOString().split('T')[0]
+}
+
+function _leadsFmtRangeText(fromYmd, toYmd) {
+  if (!fromYmd && !toYmd) return ''
+  function fmt(v) {
+    var dt = new Date(v + 'T00:00:00')
+    if (Number.isNaN(dt.getTime())) return v
+    return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+  }
+  if (fromYmd && toYmd) return fmt(fromYmd) + ' → ' + fmt(toYmd)
+  if (fromYmd) return 'From ' + fmt(fromYmd)
+  return 'Until ' + fmt(toYmd)
+}
+
+function _leadsUpdateRangeDisplay() {
+  var display = document.getElementById('filterTimeRangeDisplay')
+  if (!display) return
+  var from = document.getElementById('filterDateFrom')?.value || ''
+  var to = document.getElementById('filterDateTo')?.value || ''
+  var text = _leadsFmtRangeText(from, to)
+  display.textContent = text
+  display.style.display = text ? 'block' : 'none'
+}
+
+function _leadsSetAdvancedFiltersVisibility(open) {
+  _leadsAdvancedOpen = !!open
+  var panel = document.getElementById('leadsAdvancedFilters')
+  var toggle = document.getElementById('toggleLeadsAdvancedBtn')
+  if (panel) panel.style.display = _leadsAdvancedOpen ? 'grid' : 'none'
+  if (toggle) toggle.innerHTML = _leadsAdvancedOpen ? 'Advanced Filters ▲' : 'Advanced Filters ▼'
+  try { sessionStorage.setItem('leads_advanced_open', _leadsAdvancedOpen ? '1' : '0') } catch (_) {}
+}
+
 async function renderLeads() {
   var myId = (window._leadsRenderId = (window._leadsRenderId || 0) + 1)
   const content = document.getElementById('content')
   if (!content) return
+  try {
+    _leadsAdvancedOpen = sessionStorage.getItem('leads_advanced_open') === '1'
+  } catch (_) {
+    _leadsAdvancedOpen = false
+  }
   content.innerHTML = `
-    <div class="card">
-      <div class="sm-page-header" style="margin-bottom:20px;">
-        <h2 class="sm-page-title">Leads</h2>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          ${user.role !== 'team_member' ? `<button class="sm-btn sm-btn-secondary" id="importLeadsBtn">📤 Import Excel</button>` : ''}
-          ${user.role === 'superadmin' ? `<button class="sm-btn sm-btn-secondary" id="exportLeadsBtn">📥 Export Excel</button>` : ''}
-          <button class="sm-btn sm-btn-secondary" id="bulkUpdateLeadsBtn">✏️ Update Existing</button>
-          <button class="sm-btn sm-btn-primary" id="newLeadBtn">+ New Lead</button>
+    <div class="card leads-workbench">
+      <div class="sm-page-header leads-header-row">
+        <div>
+          <h2 class="sm-page-title">Leads <span id="leadsHeaderCount" class="leads-header-count">(0)</span></h2>
+        </div>
+        <div class="leads-page-actions">
+          <button class="sm-btn sm-btn-primary leads-action-btn leads-action-btn-primary" id="newLeadBtn"><span class="leads-action-icon">＋</span><span>New Lead</span></button>
+          <button class="sm-btn sm-btn-secondary leads-action-btn" id="bulkUpdateLeadsBtn"><span class="leads-action-icon">✎</span><span>Update Existing</span></button>
+          ${user.role !== 'team_member' ? `<button class="sm-btn sm-btn-secondary leads-action-btn" id="importLeadsBtn"><span class="leads-action-icon">⤴</span><span>Import</span></button>` : ''}
+          ${user.role === 'superadmin' ? `<button class="sm-btn sm-btn-secondary leads-action-btn" id="exportLeadsBtn"><span class="leads-action-icon">⤓</span><span>Export</span></button>` : ''}
         </div>
       </div>
-      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:18px;">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
-          <span style="font-size:13px;font-weight:600;color:#475569;letter-spacing:0.04em;">🔍 FILTERS</span>
-          <span id="leadsActiveDateBadge" style="display:none;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;"></span>
-          <button onclick="clearLeadsFilters()" id="clearFiltersBtn" style="margin-left:auto;font-size:11px;padding:3px 10px;border:1px solid #cbd5e1;border-radius:20px;background:#fff;color:#64748b;cursor:pointer;font-weight:500;">✕ Clear all</button>
+
+      <div class="leads-command-shell">
+        <div class="leads-search-row">
+          <div class="dash-filter-group leads-search-main leads-priority-primary">
+            <label class="dash-filter-label">Search</label>
+            <div class="leads-search-inline">
+              <input id="leadsSearchInput" class="dash-filter-ctl" type="text" placeholder="Search by name, phone, email, project" value="${escape(_leadsSearchQuery)}" />
+              <button id="leadsSearchBtn" class="dash-refresh-btn">Search</button>
+              <button id="leadsSearchResetBtn" class="sm-btn sm-btn-secondary leads-reset-btn">Reset</button>
+            </div>
+            <div class="leads-filter-aux-row">
+              <div id="leadsQuickFilters" class="leads-quick-strip">
+                <button class="sm-btn sm-btn-secondary leads-quick-chip" data-quick-status="">All</button>
+                <button class="sm-btn sm-btn-secondary leads-quick-chip" data-quick-status="new">New</button>
+                <button class="sm-btn sm-btn-secondary leads-quick-chip" data-quick-status="no_answer">No Answer</button>
+                <button class="sm-btn sm-btn-secondary leads-quick-chip" data-quick-status="follow_up">Follow Up</button>
+                <button class="sm-btn sm-btn-secondary leads-quick-chip" data-quick-status="callback_scheduled">Callback</button>
+                <button class="sm-btn sm-btn-secondary leads-quick-chip" data-quick-status="interested">Interested</button>
+                <button class="sm-btn sm-btn-secondary leads-quick-chip" data-quick-status="negotiation">Negotiation</button>
+              </div>
+              <div class="dash-filter-group" style="min-width:170px;">
+                <label class="dash-filter-label">Quick Sort</label>
+                <select id="quickSortOrder" class="dash-filter-ctl">
+                  <option value="new_old">New → Old</option>
+                  <option value="old_new">Old → New</option>
+                </select>
+              </div>
+              <div class="leads-advanced-toggle-row leads-priority-secondary">
+                <button type="button" id="toggleLeadsAdvancedBtn" class="sm-btn sm-btn-secondary leads-advanced-toggle-btn">Advanced Filters ▼</button>
+              </div>
+            </div>
+          </div>
         </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:150px;flex:1;">
-            <label class="sm-label">STATUS</label>
-            <select id="filterStatus" class="select" style="font-size:13px;">
+
+        <div id="leadsAdvancedFilters" class="leads-advanced-filters" style="display:${_leadsAdvancedOpen ? 'grid' : 'none'};">
+          <div class="dash-filter-group">
+            <label class="dash-filter-label">Status</label>
+            <select id="filterStatus" class="dash-filter-ctl">
               <option value="">All Statuses</option>
               <option value="new">New</option>
               <option value="no_answer">No Answer</option>
@@ -32,21 +141,31 @@ async function renderLeads() {
               <option value="site_visit_planned">Site Visit Planned</option>
               <option value="site_visit_done">Site Visit Done</option>
               <option value="negotiation">Negotiation</option>
-              <option value="booking_done">Booking Done</option>
+              <option value="booking_done">Closed</option>
               <option value="not_interested">Not Interested</option>
               <option value="lost">Lost</option>
               <option value="junk">Junk</option>
             </select>
           </div>
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:150px;flex:1;">
-            <label class="sm-label">PROJECT</label>
-            <select id="filterProject" class="select" style="font-size:13px;">
-              <option value="">All Projects</option>
+          <div class="dash-filter-group">
+            <label class="dash-filter-label">Project</label>
+            <select id="filterProject" class="dash-filter-ctl"><option value="">All Projects</option></select>
+          </div>
+          <div class="dash-filter-group">
+            <label class="dash-filter-label">Manager</label>
+            <select id="filterTeamMember" class="dash-filter-ctl">
+              <option value="">All Members</option>
+              <option value="unassigned">Unassigned</option>
             </select>
           </div>
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:150px;flex:1;">
-            <label class="sm-label">SOURCE</label>
-            <select id="filterSource" class="select" style="font-size:13px;">
+          ${user.role === 'superadmin' ? `
+          <div class="dash-filter-group">
+            <label class="dash-filter-label">Sales Manager</label>
+            <select id="filterSalesManager" class="dash-filter-ctl"><option value="">All Managers</option></select>
+          </div>` : ''}
+          <div class="dash-filter-group">
+            <label class="dash-filter-label">Source</label>
+            <select id="filterSource" class="dash-filter-ctl">
               <option value="">All Sources</option>
               <option value="Website">Website</option>
               <option value="Referral">Referral</option>
@@ -62,52 +181,47 @@ async function renderLeads() {
               <option value="TP">TP</option>
             </select>
           </div>
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:150px;flex:1;">
-            <label class="sm-label">TEAM MEMBER</label>
-            <select id="filterTeamMember" class="select" style="font-size:13px;">
-              <option value="">All Members</option>
-              <option value="unassigned">Unassigned</option>
+          <div class="dash-filter-group"><label class="dash-filter-label">Lead Created From</label><input type="date" id="filterDateFrom" class="dash-filter-ctl" /></div>
+          <div class="dash-filter-group"><label class="dash-filter-label">Lead Created To</label><input type="date" id="filterDateTo" class="dash-filter-ctl" /></div>
+          <div class="dash-filter-group"><label class="dash-filter-label">Status Updated From</label><input type="date" id="filterUpdatedFrom" class="dash-filter-ctl" /></div>
+          <div class="dash-filter-group"><label class="dash-filter-label">Status Updated To</label><input type="date" id="filterUpdatedTo" class="dash-filter-ctl" /></div>
+          <div class="dash-filter-group">
+            <label class="dash-filter-label">Time Range</label>
+            <select id="filterTimeRange" class="dash-filter-ctl">
+              <option value="">All Time</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="last_7_days">Last 7 Days</option>
+              <option value="last_30_days">Last 30 Days</option>
+              <option value="this_month">This Month</option>
+              <option value="last_month">Last Month</option>
+              <option value="year_to_date">Year to Date</option>
+              <option value="custom">Custom</option>
             </select>
-          </div>
-          ${user.role === 'superadmin' ? `
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:150px;flex:1;">
-            <label class="sm-label">SALES MANAGER</label>
-            <select id="filterSalesManager" class="select" style="font-size:13px;">
-              <option value="">All Managers</option>
-            </select>
-          </div>` : ''}
-        </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;border-top:1px solid #e2e8f0;padding-top:10px;margin-top:2px;">
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:130px;flex:1;">
-            <label class="sm-label">📅 LEAD CREATED FROM</label>
-            <input type="date" id="filterDateFrom" class="input" style="font-size:13px;padding:7px 10px;" />
-          </div>
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:130px;flex:1;">
-            <label class="sm-label">LEAD CREATED TO</label>
-            <input type="date" id="filterDateTo" class="input" style="font-size:13px;padding:7px 10px;" />
-          </div>
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:130px;flex:1;">
-            <label class="sm-label">🔄 STATUS UPDATED FROM</label>
-            <input type="date" id="filterUpdatedFrom" class="input" style="font-size:13px;padding:7px 10px;" />
-          </div>
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:130px;flex:1;">
-            <label class="sm-label">STATUS UPDATED TO</label>
-            <input type="date" id="filterUpdatedTo" class="input" style="font-size:13px;padding:7px 10px;" />
-          </div>
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:120px;flex:1;">
-            <label class="sm-label">QUICK MONTH</label>
-            <select id="filterMonth" class="select" style="font-size:13px;">
-              <option value="">All Months</option>
-              ${Array.from({length:12},(_,i)=>`<option value="${i}">${new Date(2000,i,1).toLocaleString('default',{month:'long'})}</option>`).join('')}
-            </select>
+            <div id="filterTimeRangeDisplay" style="display:none;font-size:11px;color:#475569;margin-top:5px;font-weight:600;"></div>
           </div>
         </div>
       </div>
+
       <div id="leadsContainer"><div style="display:flex;align-items:center;justify-content:center;padding:60px 20px;color:#9ca3af;font-size:14px;"><span style="animation:spin 1s linear infinite;display:inline-block;border:3px solid #e5e7eb;border-top-color:#6366f1;border-radius:50%;width:28px;height:28px;margin-right:12px;"></span>Loading leads…</div></div>
     </div>
   `
 
   document.getElementById('newLeadBtn').addEventListener('click', openLeadForm)
+  document.getElementById('leadsSearchBtn').addEventListener('click', function() {
+    const el = document.getElementById('leadsSearchInput')
+    _leadsSearchQuery = (el && el.value ? el.value : '').trim()
+    filterAndRenderLeads()
+  })
+  document.getElementById('leadsSearchResetBtn').addEventListener('click', function() {
+    clearLeadsFilters()
+  })
+  document.getElementById('leadsSearchInput').addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    _leadsSearchQuery = (e.target.value || '').trim()
+    filterAndRenderLeads()
+  })
   document.getElementById('filterStatus').addEventListener('change', filterAndRenderLeads)
   document.getElementById('filterProject').addEventListener('change', filterAndRenderLeads)
   document.getElementById('filterSource').addEventListener('change', filterAndRenderLeads)
@@ -116,21 +230,28 @@ async function renderLeads() {
   document.getElementById('filterDateTo').addEventListener('change', filterAndRenderLeads)
   document.getElementById('filterUpdatedFrom').addEventListener('change', filterAndRenderLeads)
   document.getElementById('filterUpdatedTo').addEventListener('change', filterAndRenderLeads)
-  document.getElementById('filterMonth').addEventListener('change', e => {
-    const month = e.target.value
-    if (month !== '') {
-      const now = new Date()
-      const year = now.getFullYear()
-      const from = new Date(year, parseInt(month), 1)
-      const to = new Date(year, parseInt(month) + 1, 0)
-      document.getElementById('filterDateFrom').value = from.toISOString().split('T')[0]
-      document.getElementById('filterDateTo').value = to.toISOString().split('T')[0]
-    } else {
+  document.getElementById('quickSortOrder').addEventListener('change', filterAndRenderLeads)
+  document.getElementById('filterTimeRange').addEventListener('change', e => {
+    var key = e.target.value
+    if (key === 'custom') {
+      _leadsUpdateRangeDisplay()
+      return
+    }
+    if (!key) {
       document.getElementById('filterDateFrom').value = ''
       document.getElementById('filterDateTo').value = ''
+      _leadsUpdateRangeDisplay()
+      filterAndRenderLeads()
+      return
     }
+    var resolved = _leadsResolveTimeRange(key)
+    document.getElementById('filterDateFrom').value = resolved.start ? _leadsFmtDateInput(resolved.start) : ''
+    document.getElementById('filterDateTo').value = resolved.end ? _leadsFmtDateInput(resolved.end) : ''
+    _leadsUpdateRangeDisplay()
     filterAndRenderLeads()
   })
+  document.getElementById('filterDateFrom').addEventListener('change', _leadsUpdateRangeDisplay)
+  document.getElementById('filterDateTo').addEventListener('change', _leadsUpdateRangeDisplay)
   if (user.role === 'superadmin') {
     const smFilter = document.getElementById('filterSalesManager')
     if (smFilter) smFilter.addEventListener('change', () => {
@@ -138,6 +259,19 @@ async function renderLeads() {
       filterAndRenderLeads()
     })
   }
+  var advToggle = document.getElementById('toggleLeadsAdvancedBtn')
+  if (advToggle) advToggle.addEventListener('click', function () {
+    _leadsSetAdvancedFiltersVisibility(!_leadsAdvancedOpen)
+  })
+  document.querySelectorAll('.leads-quick-chip').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      var statusVal = chip.getAttribute('data-quick-status') || ''
+      var statusSel = document.getElementById('filterStatus')
+      if (statusSel) statusSel.value = statusVal
+      filterAndRenderLeads()
+    })
+  })
+  _leadsSetAdvancedFiltersVisibility(_leadsAdvancedOpen)
   if (user.role !== 'team_member') {
     document.getElementById('importLeadsBtn').addEventListener('click', openImportModal)
   }
@@ -147,6 +281,7 @@ async function renderLeads() {
   document.getElementById('bulkUpdateLeadsBtn').addEventListener('click', openBulkUpdateModal)
 
   await Promise.all([loadProjects(), loadUsers(), loadLeads()])
+  _leadsUpdateRangeDisplay()
 
   const projectSelect = document.getElementById('filterProject')
   if (projectSelect) {
@@ -227,17 +362,41 @@ async function saveLeadInlineNote(leadId) {
     await loadLeads(true)
     await filterAndRenderLeads(false)
     showToast('Note updated.', 'success')
+    if (await confirmDialog('Update Lead Status?', 'Yes', '#4f46e5')) {
+      const statusSelect = document.getElementById('newStatus')
+      if (statusSelect) {
+        statusSelect.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        statusSelect.focus()
+      }
+    }
   } catch (err) {
     showToast((err.payload && err.payload.error) || err.message || 'Failed to update note.', 'error')
   }
 }
 
 function clearLeadsFilters() {
-  ['filterStatus','filterProject','filterSource','filterTeamMember','filterSalesManager',
-   'filterDateFrom','filterDateTo','filterUpdatedFrom','filterUpdatedTo','filterMonth'].forEach(id => {
+  _leadsSearchQuery = ''
+  const searchInput = document.getElementById('leadsSearchInput')
+  if (searchInput) searchInput.value = ''
+  ;['filterStatus','filterProject','filterSource','filterTeamMember','filterSalesManager',
+   'filterDateFrom','filterDateTo','filterUpdatedFrom','filterUpdatedTo','filterTimeRange','quickSortOrder'].forEach(id => {
     const el = document.getElementById(id)
     if (el) el.value = ''
   })
+  var quickSort = document.getElementById('quickSortOrder')
+  if (quickSort) quickSort.value = 'new_old'
+  _leadsUpdateRangeDisplay()
+
+  // If Sales Manager filter was used, restore full member list so advanced
+  // filters are visually and functionally reset.
+  const teamSelect = document.getElementById('filterTeamMember')
+  if (teamSelect && Array.isArray(users)) {
+    const teamMembers = users.filter(function (u) { return u.role === 'team_member' })
+    teamSelect.innerHTML = '<option value="">All Members</option><option value="unassigned">Unassigned</option>' +
+      teamMembers.map(function (u) { return `<option value="${u.id}">${escape(u.name)}</option>` }).join('')
+  }
+
+  _leadsSyncQuickFilterChips('')
   leadsPage = 1
   filterAndRenderLeads()
 }
@@ -251,6 +410,89 @@ function setLeadsPageSize(size) {
   leadsPageSize = parseInt(size)
   leadsPage = 1
   filterAndRenderLeads(false)
+}
+
+function _leadHealthMeta(status) {
+  var s = String(status || '').toLowerCase()
+  if (s === 'site_visit_done' || s === 'negotiation') return { dot: '🔴', label: 'Hot' }
+  if (s === 'interested' || s === 'site_visit_planned') return { dot: '🟡', label: 'Warm' }
+  return null
+}
+
+function _leadStatusMeta(status) {
+  var s = String(status || '').toLowerCase()
+  var map = {
+    new: { label: 'New', bg: '#eaf2ff', color: '#1d4ed8', border: '#bfdbfe' },
+    interested: { label: 'Interested', bg: '#ecfeff', color: '#0e7490', border: '#a5f3fc' },
+    site_visit_planned: { label: 'Site Visit Planned', bg: '#f5f3ff', color: '#6d28d9', border: '#ddd6fe' },
+    site_visit_done: { label: 'Site Visit Done', bg: '#ecfdf5', color: '#166534', border: '#bbf7d0' },
+    negotiation: { label: 'Negotiation', bg: '#fff7ed', color: '#c2410c', border: '#fed7aa' },
+    follow_up: { label: 'Follow Up', bg: '#eef2ff', color: '#4338ca', border: '#c7d2fe' },
+    callback_scheduled: { label: 'Callback Scheduled', bg: '#fefce8', color: '#a16207', border: '#fde68a' },
+    no_answer: { label: 'No Answer', bg: '#fffbeb', color: '#b45309', border: '#fcd34d' },
+    not_interested: { label: 'Not Interested', bg: '#f8fafc', color: '#475569', border: '#cbd5e1' },
+    booking_done: { label: 'Closed', bg: '#ecfdf3', color: '#14532d', border: '#86efac' },
+    lost: { label: 'Lost', bg: '#f8fafc', color: '#64748b', border: '#cbd5e1' },
+    junk: { label: 'Junk', bg: '#f8fafc', color: '#64748b', border: '#cbd5e1' },
+  }
+  return map[s] || { label: s.replace(/_/g, ' ') || 'Unknown', bg: '#f8fafc', color: '#334155', border: '#cbd5e1' }
+}
+
+function _formatCallbackCell(datetimeValue) {
+  if (!datetimeValue) return 'No Callback'
+  var d = new Date(datetimeValue)
+  if (Number.isNaN(d.getTime())) return 'No Callback'
+  var now = new Date()
+  var startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  var startTomorrow = new Date(startToday)
+  startTomorrow.setDate(startTomorrow.getDate() + 1)
+  var timeText = d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit' })
+  if (d >= startToday && d < startTomorrow) return 'Today ' + timeText
+  var startAfterTomorrow = new Date(startTomorrow)
+  startAfterTomorrow.setDate(startAfterTomorrow.getDate() + 1)
+  if (d >= startTomorrow && d < startAfterTomorrow) return 'Tomorrow ' + timeText
+  return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' })
+}
+
+function _leadAgeOldLabel(createdAt) {
+  var dt = createdAt ? new Date(createdAt) : null
+  if (!dt || Number.isNaN(dt.getTime())) return 'Today'
+  var ageMs = Date.now() - dt.getTime()
+  var days = Math.max(0, Math.floor(ageMs / 86400000))
+  if (days <= 0) return 'Today'
+  return days + ' Day' + (days === 1 ? '' : 's') + ' Old'
+}
+
+function _sourceBadgeLabel(source) {
+  var src = String(source || '').trim()
+  if (!src) return '—'
+  var map = {
+    google: 'Google',
+    website: 'Website',
+    referral: 'Referral',
+    walkin: 'Walk-in',
+    'walk-in': 'Walk-in',
+    emailcampaign: 'Email',
+    'email campaign': 'Email',
+    direct: 'Direct',
+    other: 'Other',
+    g1: 'G1',
+    g2: 'G2',
+    g3: 'G3',
+    tp: 'TP',
+    meta: 'Meta',
+  }
+  var norm = src.toLowerCase().replace(/\s+/g, '')
+  return map[norm] || src
+}
+
+function _leadsSyncQuickFilterChips(statusFilter) {
+  var target = String(statusFilter || '')
+  var chips = document.querySelectorAll('.leads-quick-chip')
+  chips.forEach(function (chip) {
+    var chipStatus = String(chip.getAttribute('data-quick-status') || '')
+    chip.classList.toggle('is-active', chipStatus === target)
+  })
 }
 
 var _filterRenderId = 0
@@ -270,6 +512,7 @@ async function filterAndRenderLeads(resetPage = true) {
   const dateTo             = document.getElementById('filterDateTo')?.value
   const updatedFrom        = document.getElementById('filterUpdatedFrom')?.value
   const updatedTo          = document.getElementById('filterUpdatedTo')?.value
+  const sortOrder          = document.getElementById('quickSortOrder')?.value || 'new_old'
 
   if (statusFilter)   filtered = filtered.filter(l => l.status === statusFilter)
   if (projectFilter)  filtered = filtered.filter(l => l.project_id === parseInt(projectFilter))
@@ -298,6 +541,34 @@ async function filterAndRenderLeads(resetPage = true) {
     const to = new Date(updatedTo); to.setHours(23,59,59,999)
     filtered = filtered.filter(l => new Date(l.updated_at) <= to)
   }
+
+  _leadsSyncQuickFilterChips(statusFilter)
+
+  const projectMap = {}
+  projects.forEach(p => { projectMap[p.id] = p.name })
+
+  function projectMapById(projectId) {
+    return projectMap[projectId] || ''
+  }
+
+  if (_leadsSearchQuery) {
+    const q = _leadsSearchQuery.toLowerCase()
+    filtered = filtered.filter(l => {
+      const projectName = projectMapById(l.project_id)
+      return [
+        l.name || '',
+        l.phone || '',
+        l.email || '',
+        projectName || '',
+      ].some(v => String(v).toLowerCase().includes(q))
+    })
+  }
+
+  filtered = filtered.slice().sort((a, b) => {
+    const aTs = new Date(a.created_at || 0).getTime()
+    const bTs = new Date(b.created_at || 0).getTime()
+    return sortOrder === 'old_new' ? aTs - bTs : bTs - aTs
+  })
 
   const container = document.getElementById('leadsContainer')
   if (!container) return
@@ -338,161 +609,145 @@ async function filterAndRenderLeads(resetPage = true) {
   })()
 
   const paginationBar = `
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:14px 4px 4px;border-top:1px solid #e2e8f0;margin-top:4px;">
-      <div style="font-size:13px;color:#64748b;">
+    <div class="leads-pagination-bar">
+      <div class="leads-pagination-summary">
         Showing <strong>${showFrom}–${showTo}</strong> of <strong>${totalLeads}</strong> leads
       </div>
-      <div style="display:flex;align-items:center;gap:4px;">
+      <div class="leads-pagination-controls">
         <button onclick="goToLeadsPage(${leadsPage-1})" ${leadsPage<=1?'disabled':''}
-          style="padding:4px 10px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:${leadsPage<=1?'#cbd5e1':'#374151'};font-size:13px;cursor:${leadsPage<=1?'default':'pointer'};">← Prev</button>
+          class="leads-page-btn" style="color:${leadsPage<=1?'#cbd5e1':'#374151'};cursor:${leadsPage<=1?'default':'pointer'};">Prev</button>
         ${pageButtons}
         <button onclick="goToLeadsPage(${leadsPage+1})" ${leadsPage>=totalPages?'disabled':''}
-          style="padding:4px 10px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:${leadsPage>=totalPages?'#cbd5e1':'#374151'};font-size:13px;cursor:${leadsPage>=totalPages?'default':'pointer'};">Next →</button>
+          class="leads-page-btn" style="color:${leadsPage>=totalPages?'#cbd5e1':'#374151'};cursor:${leadsPage>=totalPages?'default':'pointer'};">Next</button>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:13px;color:#64748b;">Per page:</span>
-        <select onchange="setLeadsPageSize(this.value)" style="border:1px solid #e2e8f0;border-radius:6px;padding:4px 8px;font-size:13px;color:#374151;background:#fff;cursor:pointer;">
-          ${[25,50,100,200].map(n => `<option value="${n}" ${leadsPageSize===n?'selected':''}>${n}</option>`).join('')}
+      <div class="leads-pagination-size">
+        <span>Rows per page:</span>
+        <select onchange="setLeadsPageSize(this.value)" class="leads-page-size-select">
+          ${[10,12,25,50,100].map(n => `<option value="${n}" ${leadsPageSize===n?'selected':''}>${n}</option>`).join('')}
           <option value="0" ${leadsPageSize===0?'selected':''}>All</option>
         </select>
       </div>
     </div>`
 
-  const projectMap = {}
-  projects.forEach(p => { projectMap[p.id] = p.name })
-
-  const canAssign = user.role === 'superadmin' || user.role === 'sales_manager'
-  const canAssignManager = user.role === 'superadmin'
+  const canAssign = user.role === 'superadmin' || user.role === 'sales_manager' || user.role === 'platform_owner'
+  const canAssignManager = user.role === 'superadmin' || user.role === 'platform_owner'
+  const canDeleteLead = user.role === 'superadmin' || user.role === 'platform_owner'
   const assignableManagers = users.filter(u => {
-    if (user.role === 'superadmin') return u.role === 'sales_manager'
+    if (user.role === 'superadmin' || user.role === 'platform_owner') return u.role === 'sales_manager'
     return false
   })
-  const assignableMembers = user.role === 'superadmin'
+  const assignableMembers = (user.role === 'superadmin' || user.role === 'platform_owner')
     ? users.filter(u => u.role === 'team_member')
     : user.role === 'sales_manager'
       ? [{ id: user.id, name: `${user.name} (me)` }, ...users.filter(u => u.manager_id === user.id)]
       : []
 
   const VALID_STATUSES_LIST = ['new','no_answer','follow_up','callback_scheduled','interested','site_visit_planned','site_visit_done','negotiation','booking_done','not_interested','lost','junk']
+  const STATUS_OPTIONS = [
+    { value: 'new', label: 'New' },
+    { value: 'interested', label: 'Interested' },
+    { value: 'site_visit_planned', label: 'Site Visit Planned' },
+    { value: 'site_visit_done', label: 'Site Visit Done' },
+    { value: 'negotiation', label: 'Negotiation' },
+    { value: 'follow_up', label: 'Follow Up' },
+    { value: 'callback_scheduled', label: 'Callback Scheduled' },
+    { value: 'no_answer', label: 'No Answer' },
+    { value: 'not_interested', label: 'Not Interested' },
+    { value: 'booking_done', label: 'Closed' },
+    { value: 'lost', label: 'Lost' },
+    { value: 'junk', label: 'Junk' },
+  ]
   const allChecked = paginated.length > 0 && paginated.every(l => selectedLeads.has(l.id))
+  const buildStatusControl = function (lead) {
+    var meta = _leadStatusMeta(lead.status)
+    return `<span class="lead-status-chip" style="background:${meta.bg};border-color:${meta.border};"><select class="lead-inline-status" data-lead-id="${lead.id}" style="color:${meta.color};">${STATUS_OPTIONS.map(function (opt) { return `<option value="${opt.value}" ${String(lead.status || '') === opt.value ? 'selected' : ''}>${opt.label}</option>` }).join('')}</select></span>`
+  }
 
   container.innerHTML = `
-    <div id="bulkBar" style="display:${selectedLeads.size > 0 ? 'flex' : 'none'};align-items:stretch;gap:0;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:0;margin-bottom:18px;overflow:hidden;">
-      <!-- Identity section -->
-      <div style="display:flex;flex-direction:column;justify-content:center;gap:6px;padding:12px 16px;background:#e0f2fe;flex-shrink:0;">
-        <span style="font-size:12px;font-weight:700;color:#0369a1;letter-spacing:0.06em;white-space:nowrap;">⚡ BULK ACTIONS</span>
-        <span id="bulkCount" style="font-size:12px;font-weight:600;color:#0284c7;white-space:nowrap;">${selectedLeads.size} lead${selectedLeads.size !== 1 ? 's' : ''} selected</span>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button onclick="clearLeadSelection()" style="font-size:11px;padding:3px 10px;border:1px solid #7dd3fc;border-radius:20px;background:#fff;color:#0369a1;cursor:pointer;font-weight:500;white-space:nowrap;">✕ Clear</button>
-          ${user.role === 'superadmin' ? `<button onclick="bulkDeleteLeads()" style="font-size:11px;padding:3px 10px;border:1px solid #fca5a5;border-radius:20px;background:#fff;color:#ef4444;cursor:pointer;font-weight:500;white-space:nowrap;">🗑 Delete</button>` : ''}
-        </div>
+    <div id="bulkBar" class="bulk-bar" style="display:${selectedLeads.size > 0 ? 'flex' : 'none'};align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span id="bulkCount" class="bulk-count">${selectedLeads.size} lead${selectedLeads.size !== 1 ? 's' : ''} selected</span>
+        <button onclick="clearLeadSelection()" class="sm-btn sm-btn-secondary" style="height:30px;padding:0 10px;font-size:12px;">Clear</button>
+        <button onclick="bulkExportSelectedLeads()" class="sm-btn sm-btn-secondary" style="height:30px;padding:0 10px;font-size:12px;">Export</button>
       </div>
-      <!-- Change Status -->
-      <div style="display:flex;flex-direction:column;justify-content:center;gap:5px;padding:12px 16px;flex:1;min-width:180px;border-left:1px solid #bae6fd;">
-        <label style="font-size:10px;font-weight:700;color:#64748b;letter-spacing:0.07em;text-transform:uppercase;">Change Status</label>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <select id="bulkStatusSelect" class="select" style="flex:1;font-size:12px;padding:6px 8px;">
-            <option value="">— Select status —</option>
-            ${VALID_STATUSES_LIST.map(s => `<option value="${s}">${s.replace(/_/g,' ')}</option>`).join('')}
-          </select>
-          <button class="button" onclick="bulkUpdateStatus()" style="padding:6px 14px;font-size:12px;background:#0369a1;white-space:nowrap;flex-shrink:0;">Update</button>
-        </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <select id="bulkStatusSelect" class="dash-filter-ctl" style="min-width:160px;">
+          <option value="">Change Status</option>
+          ${VALID_STATUSES_LIST.map(s => `<option value="${s}">${s.replace(/_/g,' ')}</option>`).join('')}
+        </select>
+        <button class="sm-btn sm-btn-secondary" onclick="bulkUpdateStatus()" style="height:34px;">Apply</button>
+        ${canAssignManager && assignableManagers.length ? `<select id="bulkAssignManagerSelect" class="dash-filter-ctl" style="min-width:170px;"><option value="">Assign Manager</option><option value="unassign">Unassign</option>${assignableManagers.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')}</select><button class="sm-btn sm-btn-secondary" onclick="bulkAssignLeads('bulkAssignManagerSelect')" style="height:34px;">Assign</button>` : ''}
+        ${canAssign && assignableMembers.length ? `<select id="bulkAssignMemberSelect" class="dash-filter-ctl" style="min-width:170px;"><option value="">Assign Member</option><option value="unassign">Unassign</option>${assignableMembers.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')}</select><button class="sm-btn sm-btn-secondary" onclick="bulkAssignLeads('bulkAssignMemberSelect')" style="height:34px;">Assign</button>` : ''}
+        ${canDeleteLead ? `<button class="sm-btn sm-btn-secondary" onclick="bulkDeleteLeads()" style="height:34px;color:#b91c1c;border-color:#fecaca;">Delete</button>` : ''}
       </div>
-      <!-- Change Source -->
-      <div style="display:flex;flex-direction:column;justify-content:center;gap:5px;padding:12px 16px;flex:1;min-width:180px;border-left:1px solid #bae6fd;">
-        <label style="font-size:10px;font-weight:700;color:#64748b;letter-spacing:0.07em;text-transform:uppercase;">Change Source</label>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <select id="bulkSourceSelect" class="select" style="flex:1;font-size:12px;padding:6px 8px;">
-            <option value="">— Select source —</option>
-            ${['Website','Referral','Walk-in','Meta','Google','Email Campaign','Direct','Other','G1','G2','G3','TP'].map(s => `<option value="${s}">${s}</option>`).join('')}
-          </select>
-          <button class="button" onclick="bulkUpdateSource()" style="padding:6px 14px;font-size:12px;background:#0369a1;white-space:nowrap;flex-shrink:0;">Update</button>
-        </div>
-      </div>
-      ${canAssignManager ? `
-      <!-- Assign Manager -->
-      <div style="display:flex;flex-direction:column;justify-content:center;gap:5px;padding:12px 16px;flex:1;min-width:180px;border-left:1px solid #bae6fd;">
-        <label style="font-size:10px;font-weight:700;color:#64748b;letter-spacing:0.07em;text-transform:uppercase;">Assign Sales Manager</label>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <select id="bulkAssignManagerSelect" class="select" style="flex:1;font-size:12px;padding:6px 8px;">
-            <option value="">— Select manager —</option>
-            <option value="unassign">⊘ Unassign Manager</option>
-            ${assignableManagers.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')}
-          </select>
-          <button class="button" onclick="bulkAssignLeads('bulkAssignManagerSelect')" style="padding:6px 14px;font-size:12px;white-space:nowrap;flex-shrink:0;">Assign</button>
-        </div>
-      </div>
-      ` : ''}
-      ${canAssign && assignableMembers.length ? `
-      <!-- Assign Team Member -->
-      <div style="display:flex;flex-direction:column;justify-content:center;gap:5px;padding:12px 16px;flex:1;min-width:180px;border-left:1px solid #bae6fd;">
-        <label style="font-size:10px;font-weight:700;color:#64748b;letter-spacing:0.07em;text-transform:uppercase;">Assign Team Member</label>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <select id="bulkAssignMemberSelect" class="select" style="flex:1;font-size:12px;padding:6px 8px;">
-            <option value="">— Select member —</option>
-            <option value="unassign">⊘ Unassign Member</option>
-            ${assignableMembers.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')}
-          </select>
-          <button class="button" onclick="bulkAssignLeads('bulkAssignMemberSelect')" style="padding:6px 14px;font-size:12px;white-space:nowrap;flex-shrink:0;">Assign</button>
-        </div>
-      </div>
-      ` : ''}
     </div>
-    <div style="overflow-x:auto;">
-      <table class="table">
+    <div class="leads-table-wrap">
+      <table class="table leads-table">
+        <colgroup>
+          <col style="width:36px;">
+          <col style="width:190px;">
+          <col style="width:110px;">
+          <col style="width:86px;">
+          <col style="width:120px;">
+          <col style="width:150px;">
+          <col style="width:120px;">
+          <col style="width:210px;">
+          <col style="width:170px;">
+        </colgroup>
         <thead>
           <tr>
             <th style="width:36px;"><input type="checkbox" id="selectAllLeads" ${allChecked ? 'checked' : ''} onchange="toggleSelectAllLeads(this.checked)" style="cursor:pointer;width:16px;height:16px;"></th>
-            <th>Name</th>
-            <th>Phone</th>
-            <th>Source</th>
-            <th>Status</th>
-            <th>Project</th>
-            <th>Assigned To</th>
-            <th>Sales Manager</th>
-            <th style="min-width:160px;max-width:220px;">Latest Note</th>
-            <th>Next Callback</th>
-            <th>Created</th>
-            <th>Actions</th>
+            <th class="ta-center">Name</th>
+            <th class="ta-center">Phone</th>
+            <th class="ta-center">Source</th>
+            <th class="ta-center">Project</th>
+            <th class="ta-center">Status</th>
+            <th class="ta-center">Manager</th>
+            <th class="ta-center leads-note-col">Latest Note</th>
+            <th class="ta-center leads-actions-col">Actions</th>
           </tr>
         </thead>
         <tbody>
           ${paginated.map(l => `
             <tr class="${selectedLeads.has(l.id) ? 'lead-row-selected' : ''}">
-              <td><input type="checkbox" class="lead-checkbox" data-id="${l.id}" ${selectedLeads.has(l.id) ? 'checked' : ''} onchange="toggleSelectLead(${l.id}, this.checked)" style="cursor:pointer;width:16px;height:16px;"></td>
-              <td>
+              <td data-label="Select"><input type="checkbox" class="lead-checkbox" data-id="${l.id}" ${selectedLeads.has(l.id) ? 'checked' : ''} onchange="toggleSelectLead(${l.id}, this.checked)" style="cursor:pointer;width:16px;height:16px;"></td>
+              <td class="ta-center" data-label="Name">
                 <button class="lead-name-link" onclick="viewLeadDetails(${l.id})"
                   title="Open lead details"
-                  style="background:none;border:none;padding:0;font-size:inherit;font-weight:700;color:#1e40af;cursor:pointer;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(30,64,175,.35);transition:color .15s;"
+                  style="background:none;border:none;padding:0;font-size:12px;font-weight:700;color:#1e40af;cursor:pointer;text-decoration:none;transition:color .15s;display:block;margin:0 auto;"
                   onmouseover="this.style.color='#1d4ed8';this.style.textDecorationColor='#1d4ed8'"
                   onmouseout="this.style.color='#1e40af';this.style.textDecorationColor='rgba(30,64,175,.35)'"
                   >${escape(l.name)}</button>
+                <span class="leads-name-sub">${_leadAgeOldLabel(l.created_at)}</span>
               </td>
-              <td>${escape(l.phone || '-')}</td>
-              <td>${escape(l.source || '-')}</td>
-              <td><span class="tag" style="background:${getStatusColor(l.status)};color:#fff;">${escape(l.status)}</span></td>
-              <td>${escape(projectMap[l.project_id] || '-')}</td>
-              <td>${escape(l.assigned_to_name || 'Unassigned')}</td>
-              <td>${escape(l.sales_manager_name || '-')}</td>
-              <td style="min-width:160px;max-width:220px;">
-                ${l.latest_note
-                  ? `<span title="${escape(l.latest_note)}"
-                       style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;font-size:12px;color:#475569;cursor:help;margin-bottom:4px;"
-                     >${escape(l.latest_note)}</span>`
-                  : `<span style="font-size:12px;color:#cbd5e1;display:block;margin-bottom:4px;">—</span>`}
-                <button onclick="openLeadInlineNoteEditor(${l.id})" style="font-size:10px;font-weight:700;background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:2px 8px;color:#334155;cursor:pointer;">Update</button>
+              <td class="ta-center" data-label="Phone">
+                <button class="leads-phone-link" onclick='_abStartCallFlow(${l.id}, ${JSON.stringify(l.phone || '')}, ${JSON.stringify(l.name || 'Lead')})' title="Call lead">${escape(l.phone || '—')}</button>
               </td>
-              <td style="white-space:nowrap;">
-                ${l.next_callback
-                  ? `<span style="font-size:12px;color:${new Date(l.next_callback) < new Date() ? '#ef4444' : '#0369a1'};font-weight:600;" title="${escape(l.next_callback)}">
-                       ${new Date(l.next_callback) < new Date() ? '⚠️ ' : '🔔 '}${new Date(l.next_callback).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}
-                     </span>`
-                  : `<span style="font-size:12px;color:#cbd5e1;">—</span>`}
+              <td class="ta-center" data-label="Source"><span class="leads-source-badge">${escape(_sourceBadgeLabel(l.source))}</span></td>
+              <td class="ta-center" data-label="Project">${escape(projectMap[l.project_id] || '-')}</td>
+              <td class="ta-center" data-label="Status">${buildStatusControl(l)}</td>
+              <td class="ta-center" data-label="Manager"><span class="leads-cell-text leads-cell-text-center">${escape(l.sales_manager_name || '—')}</span></td>
+              <td class="ta-center leads-note-col" data-label="Latest Note">
+                <div class="leads-note-cell">
+                  ${l.latest_note
+                    ? `<span title="${escape(l.latest_note)}" class="leads-note-preview">${escape(l.latest_note)}</span>`
+                    : `<span class="leads-note-preview leads-note-empty">—</span>`}
+                  <button onclick="openLeadInlineNoteEditor(${l.id})" class="leads-icon-action" title="Edit latest note">✎</button>
+                </div>
               </td>
-              <td>${new Date(l.created_at).toLocaleDateString()}</td>
-              <td>
-                <button class="button secondary" onclick="viewLeadDetails(${l.id})" style="font-size:12px;padding:6px 10px;">View</button>
-                ${user.role === 'superadmin' ? `<button class="button" onclick="deleteLead(${l.id}, '${escape(l.name)}')" style="font-size:12px;padding:6px 10px;background:#ef4444;margin-left:4px;">Delete</button>` : ''}
+              <td class="ta-center leads-actions-cell" data-label="Actions">
+                <div class="leads-row-actions">
+                  <button class="sm-btn sm-btn-secondary leads-row-action-btn leads-row-icon-btn" onclick='_abStartCallFlow(${l.id}, ${JSON.stringify(l.phone || '')}, ${JSON.stringify(l.name || 'Lead')})' title="Call"><span class="leads-row-action-icon">📞</span></button>
+                  <button class="sm-btn sm-btn-secondary leads-row-action-btn leads-row-icon-btn" onclick="openLeadCallbackScheduler(${l.id})" title="Callback Scheduler"><span class="leads-row-action-icon">📅</span></button>
+                  <button class="sm-btn sm-btn-secondary leads-row-action-btn leads-row-icon-btn" onclick="openLeadInlineNoteEditor(${l.id})" title="Notes"><span class="leads-row-action-icon">📝</span></button>
+                  <button class="sm-btn sm-btn-secondary leads-actions-toggle leads-row-action-btn leads-row-icon-btn leads-more-btn" data-lead-id="${l.id}" title="More"><span class="leads-row-action-icon">⋮</span></button>
+                  <div class="leads-actions-menu" id="leadActionsMenu-${l.id}" style="display:none;position:absolute;z-index:10;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 10px 24px rgba(15,23,42,.12);padding:4px;right:0;top:32px;">
+                    <button class="leads-menu-item" onclick="viewLeadDetails(${l.id})">Open Lead</button>
+                    <button class="leads-menu-item" onclick="viewLeadDetails(${l.id})">View Activity</button>
+                    ${(user.role === 'superadmin' || user.role === 'sales_manager' || user.role === 'platform_owner') ? `<button class="leads-menu-item" onclick="openLeadAssignModal(${l.id})">Reassign Lead</button>` : ''}
+                    ${canDeleteLead ? `<button class="leads-menu-item" style="color:#b91c1c;" onclick="deleteLead(${l.id}, '${escape(l.name)}')">Delete Lead</button>` : ''}
+                  </div>
+                </div>
               </td>
             </tr>
           `).join('')}
@@ -502,20 +757,53 @@ async function filterAndRenderLeads(resetPage = true) {
     ${paginationBar}
   `
 
-  // Update active date badge in filter bar
-  const badge = document.getElementById('leadsActiveDateBadge')
-  if (badge) {
-    const df = document.getElementById('filterDateFrom')?.value
-    const dt = document.getElementById('filterDateTo')?.value
-    const uf = document.getElementById('filterUpdatedFrom')?.value
-    const ut = document.getElementById('filterUpdatedTo')?.value
-    const fmtB = d => new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})
-    const parts = []
-    if (df || dt) parts.push('Created: ' + (df && dt ? `${fmtB(df)} → ${fmtB(dt)}` : df ? `From ${fmtB(df)}` : `Until ${fmtB(dt)}`))
-    if (uf || ut) parts.push('Updated: ' + (uf && ut ? `${fmtB(uf)} → ${fmtB(ut)}` : uf ? `From ${fmtB(uf)}` : `Until ${fmtB(ut)}`))
-    if (parts.length) { badge.textContent = '📅 ' + parts.join(' · '); badge.style.display = 'inline' }
-    else badge.style.display = 'none'
-  }
+  var countEl = document.getElementById('leadsHeaderCount')
+  if (countEl) countEl.textContent = `(${totalLeads})`
+
+  var statusSelects = container.querySelectorAll('.lead-inline-status')
+  statusSelects.forEach(function (sel) {
+    sel.addEventListener('change', async function () {
+      var leadId = Number(sel.getAttribute('data-lead-id') || 0)
+      var nextStatus = String(sel.value || '').trim()
+      if (!leadId || !nextStatus) return
+      sel.disabled = true
+      try {
+        await _apiRequest(`/pipeline/leads/${leadId}/move`, {
+          method: 'POST',
+          headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+          body: JSON.stringify({ to_status: nextStatus }),
+          retries: 0,
+          timeoutMs: 20000,
+        })
+        await loadLeads(true)
+        await filterAndRenderLeads(false)
+        showToast('Lead status updated.', 'success')
+      } catch (err) {
+        showToast((err && err.message) || 'Failed to update status.', 'error')
+        sel.disabled = false
+      }
+    })
+  })
+
+  var actionToggles = container.querySelectorAll('.leads-actions-toggle')
+  actionToggles.forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation()
+      var leadId = btn.getAttribute('data-lead-id')
+      var menu = document.getElementById('leadActionsMenu-' + leadId)
+      if (!menu) return
+      var wasOpen = menu.style.display === 'block'
+      container.querySelectorAll('.leads-actions-menu').forEach(function (m) { m.style.display = 'none' })
+      if (!wasOpen) {
+        menu.style.display = 'block'
+      }
+    })
+  })
+
+  document.addEventListener('click', window.__closeLeadMenusHandler || (window.__closeLeadMenusHandler = function () {
+    var menus = document.querySelectorAll('.leads-actions-menu')
+    menus.forEach(function (m) { m.style.display = 'none' })
+  }))
 
   // Cascade: bulk Assign Sales Manager → filter Assign Team Member
   const bulkMgrSel = document.getElementById('bulkAssignManagerSelect')
@@ -681,6 +969,167 @@ async function bulkDeleteLeads() {
       setTimeout(() => filterAndRenderLeads(), 1800)
     }
   } catch (err) { showToast('Error: ' + err.message, 'error') }
+}
+
+async function bulkExportSelectedLeads() {
+  if (selectedLeads.size === 0) {
+    showToast('No leads selected.', 'warning')
+    return
+  }
+  var ids = Array.from(selectedLeads)
+  var selected = (leads || []).filter(function (l) { return ids.includes(l.id) })
+  if (!selected.length) {
+    showToast('No selected leads available to export.', 'warning')
+    return
+  }
+  var rows = selected.map(function (l) {
+    return {
+      Name: l.name || '',
+      Phone: l.phone || '',
+      Email: l.email || '',
+      Source: l.source || '',
+      Status: l.status || '',
+      Project: l.project_name || '',
+      AssignedTo: l.assigned_to_name || '',
+      SalesManager: l.sales_manager_name || '',
+      Created: l.created_at || '',
+    }
+  })
+  var csvHeader = Object.keys(rows[0]).join(',')
+  var csvBody = rows.map(function (r) {
+    return Object.keys(r).map(function (k) {
+      var v = String(r[k] == null ? '' : r[k]).replace(/"/g, '""')
+      return '"' + v + '"'
+    }).join(',')
+  }).join('\n')
+  var blob = new Blob([csvHeader + '\n' + csvBody], { type: 'text/csv;charset=utf-8;' })
+  var url = window.URL.createObjectURL(blob)
+  var a = document.createElement('a')
+  a.href = url
+  a.download = 'leads_selected_' + Date.now() + '.csv'
+  document.body.appendChild(a)
+  a.click()
+  window.URL.revokeObjectURL(url)
+  document.body.removeChild(a)
+}
+
+async function openLeadAssignModal(leadId) {
+  var id = Number(leadId || 0)
+  if (!id) return
+  var assignable = (user.role === 'superadmin' || user.role === 'platform_owner')
+    ? users.filter(function (u) { return u.role === 'team_member' })
+    : users.filter(function (u) { return u.role === 'team_member' && (u.manager_id === user.id || u.id === user.id) })
+  if (!assignable.length) {
+    showToast('No assignable team members available.', 'warning')
+    return
+  }
+
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:420px;width:95%;">
+      <h3 class="sm-section-heading" style="margin-bottom:10px;">Assign Lead</h3>
+      <select id="singleAssignSelect" class="select" style="width:100%;font-size:13px;">
+        <option value="">Select member</option>
+        ${assignable.map(function (u) { return `<option value="${u.id}">${escape(u.name)}</option>` }).join('')}
+      </select>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button class="button secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+        <button class="button" id="singleAssignSaveBtn">Assign</button>
+      </div>
+    </div>`
+  document.body.appendChild(overlay)
+  overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.remove() })
+  var btn = overlay.querySelector('#singleAssignSaveBtn')
+  if (btn) btn.addEventListener('click', async function () {
+    var sel = overlay.querySelector('#singleAssignSelect')
+    var assignTo = Number(sel && sel.value)
+    if (!assignTo) {
+      showToast('Select a member first.', 'warning')
+      return
+    }
+    try {
+      await _apiRequest(`/leads/${id}/assign`, {
+        method: 'POST',
+        headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+        body: JSON.stringify({ assigned_to: assignTo }),
+        retries: 0,
+      })
+      overlay.remove()
+      await loadLeads(true)
+      await filterAndRenderLeads(false)
+      showToast('Lead assigned.', 'success')
+    } catch (err) {
+      showToast((err.payload && err.payload.error) || err.message || 'Failed to assign lead.', 'error')
+    }
+  })
+}
+
+async function openLeadCallbackScheduler(leadId) {
+  var id = Number(leadId || 0)
+  if (!id) return
+  var callbackPayload = await _apiRequest(`/leads/${id}/callbacks`, {
+    headers: _apiAuthHeaders(),
+    retries: 0,
+  }).catch(function () { return { callbacks: [] } })
+  var pending = (callbackPayload.callbacks || []).find(function (c) { return c.status === 'pending' }) || null
+  var defaultValue = ''
+  if (pending && pending.callback_datetime) {
+    var d = new Date(pending.callback_datetime)
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+    defaultValue = d.toISOString().slice(0, 16)
+  }
+
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:460px;width:95%;">
+      <h3 class="sm-section-heading" style="margin-bottom:10px;">${pending ? 'Reschedule Callback' : 'Schedule Callback'}</h3>
+      <label class="sm-label" style="display:block;margin-bottom:6px;">Date & Time</label>
+      <input id="leadCallbackDateTime" type="datetime-local" class="input" value="${defaultValue}" style="width:100%;" />
+      <label class="sm-label" style="display:block;margin:10px 0 6px;">Note</label>
+      <textarea id="leadCallbackNote" class="textarea" rows="3" style="width:100%;">${escape((pending && pending.notes) || '')}</textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button class="button secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+        <button class="button" id="leadCallbackSaveBtn">${pending ? 'Save Changes' : 'Schedule'}</button>
+      </div>
+    </div>`
+  document.body.appendChild(overlay)
+  overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.remove() })
+
+  var saveBtn = overlay.querySelector('#leadCallbackSaveBtn')
+  if (saveBtn) saveBtn.addEventListener('click', async function () {
+    var dtValue = (overlay.querySelector('#leadCallbackDateTime') || {}).value || ''
+    if (!dtValue) {
+      showToast('Please select callback date and time.', 'warning')
+      return
+    }
+    var note = ((overlay.querySelector('#leadCallbackNote') || {}).value || '').trim()
+    var payload = { callback_datetime: new Date(dtValue).toISOString(), notes: note }
+    try {
+      if (pending) {
+        await _apiRequest(`/leads/callbacks/${pending.id}`, {
+          method: 'PUT',
+          headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+          body: JSON.stringify(payload),
+          retries: 0,
+        })
+      } else {
+        await _apiRequest(`/leads/${id}/callbacks`, {
+          method: 'POST',
+          headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+          body: JSON.stringify(payload),
+          retries: 0,
+        })
+      }
+      overlay.remove()
+      await loadLeads(true)
+      await filterAndRenderLeads(false)
+      showToast('Callback saved.', 'success')
+    } catch (err) {
+      showToast((err.payload && err.payload.error) || err.message || 'Failed to save callback.', 'error')
+    }
+  })
 }
 
 // ── Import modal ─────────────────────────────────────────────────────────────
@@ -1121,27 +1570,47 @@ async function viewLeadDetails(leadId) {
     </div>
   `
 
-  await loadProjects()
-  await loadUsers()
+  const preloadTasks = []
+  if (!Array.isArray(projects) || projects.length === 0) preloadTasks.push(loadProjects())
+  if (!Array.isArray(users) || users.length === 0) preloadTasks.push(loadUsers())
+  if (preloadTasks.length) await Promise.all(preloadTasks)
 
-  const dataResults = await Promise.all([
-    _safeGet(`/leads/${leadId}/notes`, {}),
-    _safeGet(`/leads/${leadId}/status-history`, {}),
-    _safeGet(`/leads/${leadId}/assignment-history`, {}),
-    _safeGet(`/leads/${leadId}/callbacks`, {}),
-    _safeGet(`/leads/${leadId}/activity-timeline`, {}),
-  ])
+  const detailBundle = await _safeGet(`/leads/${leadId}/detail-bundle`, null)
+  let notes = []
+  let statusHistory = []
+  let assignmentHistory = []
+  let callbacks = []
+  let callActivities = []
 
-  const notes = dataResults[0].notes || []
-  const statusHistory = dataResults[1].status_history || []
-  const assignmentHistory = dataResults[2].assignment_history || []
-  const callbacks = dataResults[3].callbacks || []
-  const callActivities = dataResults[4].call_activities || []
+  if (detailBundle && typeof detailBundle === 'object') {
+    if (detailBundle.lead) lead = detailBundle.lead
+    notes = detailBundle.notes || []
+    statusHistory = detailBundle.status_history || []
+    assignmentHistory = detailBundle.assignment_history || []
+    callbacks = detailBundle.callbacks || []
+    callActivities = detailBundle.call_activities || []
+  } else {
+    const dataResults = await Promise.all([
+      _safeGet(`/leads/${leadId}/notes`, {}),
+      _safeGet(`/leads/${leadId}/status-history`, {}),
+      _safeGet(`/leads/${leadId}/assignment-history`, {}),
+      _safeGet(`/leads/${leadId}/callbacks`, {}),
+      _safeGet(`/leads/${leadId}/activity-timeline`, {}),
+    ])
 
-  // Re-read lead in case of stale cache; keep previous lead if refresh fails.
-  const leadPayload = await _safeGet(`/leads/${leadId}`, {})
-  const freshLead = (leadPayload && leadPayload.lead) ? leadPayload.lead : lead
-  const L = freshLead
+    notes = dataResults[0].notes || []
+    statusHistory = dataResults[1].status_history || []
+    assignmentHistory = dataResults[2].assignment_history || []
+    callbacks = dataResults[3].callbacks || []
+    callActivities = dataResults[4].call_activities || []
+  }
+
+  // Re-read lead only when local object is visibly incomplete.
+  var L = lead
+  if (!L.status || !L.updated_at || (!L.project_id && !L.project_name)) {
+    const leadPayload = await _safeGet(`/leads/${leadId}`, {})
+    if (leadPayload && leadPayload.lead) L = leadPayload.lead
+  }
 
   const projectMap = {}
   projects.forEach(p => { projectMap[p.id] = p.name })
@@ -1157,8 +1626,8 @@ async function viewLeadDetails(leadId) {
   }
   const sc = STATUS_COLORS[L.status] || '#64748b'
 
-  const fmtDate  = d => d ? new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'
-  const fmtDT    = d => d ? new Date(d).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'
+  const fmtDate  = d => d ? new Date(d).toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric'}) : '—'
+  const fmtDT    = d => d ? new Date(d).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'
   const statusLabel = s => {
     const labels = {
       new:'New', no_answer:'No Answer', follow_up:'Follow Up',
@@ -1186,7 +1655,14 @@ async function viewLeadDetails(leadId) {
 
   const assignableManagers = users.filter(u => u.role === 'sales_manager')
   const allMembers         = users.filter(u => u.role === 'team_member')
-  const backLabel = originRoute === 'action_board' ? 'Back to Action Board' : 'Back to Leads'
+  const backLabelMap = {
+    action_board: 'Back to Action Board',
+    pipeline: 'Back to Pipeline',
+    recycle_queue: 'Back to Recycle Queue',
+    dashboard: 'Back to Dashboard',
+    leads: 'Back to Leads',
+  }
+  const backLabel = backLabelMap[originRoute] || 'Back to Leads'
 
   content.innerHTML = `
     <div style="max-width:1100px;margin:0 auto;padding:20px 16px 48px;">
@@ -1222,7 +1698,7 @@ async function viewLeadDetails(leadId) {
           </div>
           <div>
             <div style="font-size:22px;font-weight:800;color:#0f172a;">${escape(L.name)}</div>
-            <div style="font-size:13px;color:#64748b;margin-top:2px;">${escape(L.phone || '—')} ${L.email ? '· ' + escape(L.email) : ''}</div>
+            <div style="font-size:13px;color:#64748b;margin-top:2px;">${escape(L.phone || '—')} ${L.alternate_phone ? '· Alt ' + escape(L.alternate_phone) : ''} ${L.email ? '· ' + escape(L.email) : ''}</div>
           </div>
         </div>
         <!-- Meta chips -->
@@ -1263,6 +1739,7 @@ async function viewLeadDetails(leadId) {
             ${[
               ['Full Name',     escape(L.name)],
               ['Phone',         escape(L.phone || '—')],
+              ['Alternate Phone', escape(L.alternate_phone || '—')],
               ['Email',         L.email ? `<a href="mailto:${escape(L.email)}" style="color:#2563eb;">${escape(L.email)}</a>` : '—'],
               ['City / Area',   escape((L.city) || '—')],
               ['Budget',        budgetStr],
@@ -1365,7 +1842,7 @@ async function viewLeadDetails(leadId) {
                       <div style="display:flex;gap:6px;align-items:center;margin-top:5px;">
                         <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:${badgeBg};color:${badgeTxt};">${statusTxt}</span>
                         ${!isDone && !isMissed ? `<button onclick="markCallbackDone(${cb.id},${leadId})" style="font-size:11px;padding:2px 8px;border:1px solid #86efac;border-radius:12px;background:#f0fdf4;color:#065f46;cursor:pointer;">✓ Done</button>` : ''}
-                        <button onclick="deleteCallback(${cb.id},${leadId})" style="font-size:11px;padding:2px 8px;border:1px solid #fca5a5;border-radius:12px;background:#fef2f2;color:#991b1b;cursor:pointer;">Delete</button>
+                        <button onclick="deleteCallback(${cb.id},${leadId})" style="font-size:11px;padding:2px 8px;border:1px solid #fca5a5;border-radius:12px;background:#fef2f2;color:#991b1b;cursor:pointer;">Cancel</button>
                       </div>
                     </div>
                   </div>`
@@ -1429,6 +1906,9 @@ async function viewLeadDetails(leadId) {
       <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(2,6,23,.05);margin-top:20px;">
         <div style="padding:14px 20px;border-bottom:1px solid #f1f5f9;background:#f8fafc;display:flex;justify-content:space-between;align-items:center;">
           <h3 class="sm-card-heading" style="margin-bottom:12px;">🕒 Notes & Activity Timeline</h3>
+        </div>
+        <div style="padding:10px 20px 0;color:#64748b;font-size:13px;line-height:1.5;">
+          ${L.phone ? `<strong style="color:#334155;">Primary:</strong> ${escape(L.phone)}` : ''}${L.alternate_phone ? `${L.phone ? ' · ' : ''}<strong style="color:#334155;">Alternate:</strong> ${escape(L.alternate_phone)}` : ''}
         </div>
         <div style="padding:20px 28px;display:grid;grid-template-columns:1fr 340px;gap:28px;flex-wrap:wrap;" id="timelineGrid">
 
@@ -1530,8 +2010,21 @@ async function viewLeadDetails(leadId) {
   // ── Event handlers ──────────────────────────────────────────────────────
 
   document.getElementById('backToLeads').addEventListener('click', function () {
-    if ((window._LEAD_DETAIL_ORIGIN || '') === 'action_board' && typeof renderActionBoard === 'function') {
+    const origin = (window._LEAD_DETAIL_ORIGIN || 'leads')
+    if (origin === 'action_board' && typeof renderActionBoard === 'function') {
       renderActionBoard(window._abDateFrom || '', window._abDateTo || '', window._abRange || 'today')
+      return
+    }
+    if (origin === 'pipeline' && typeof renderPipeline === 'function') {
+      renderPipeline()
+      return
+    }
+    if (origin === 'recycle_queue' && typeof renderRecycleQueue === 'function') {
+      renderRecycleQueue()
+      return
+    }
+    if (origin === 'dashboard' && typeof renderDashboard === 'function') {
+      renderDashboard()
       return
     }
     renderLeads()
@@ -1539,14 +2032,15 @@ async function viewLeadDetails(leadId) {
 
   document.getElementById('editLeadBtn').addEventListener('click', () => openLeadEditForm(L))
 
-  document.getElementById('scheduleCallbackBtn').addEventListener('click', () => openCallbackModal(leadId))
-  document.getElementById('addCallbackInline').addEventListener('click', () => openCallbackModal(leadId))
+  document.getElementById('scheduleCallbackBtn').addEventListener('click', () => openCallbackModal(leadId, { leadPhone: L.phone || '', leadAlternatePhone: L.alternate_phone || '', leadName: L.name || 'Lead' }))
+  document.getElementById('addCallbackInline').addEventListener('click', () => openCallbackModal(leadId, { leadPhone: L.phone || '', leadAlternatePhone: L.alternate_phone || '', leadName: L.name || 'Lead' }))
 
   // Update status
   const updateStatusForm = document.getElementById('updateStatusForm')
   if (updateStatusForm) {
     updateStatusForm.addEventListener('submit', async e => {
       e.preventDefault()
+      const scrollY = window.scrollY || 0
       const newStatus = document.getElementById('newStatus').value
       try {
         await _apiRequest(`/leads/${leadId}`, {
@@ -1557,6 +2051,14 @@ async function viewLeadDetails(leadId) {
         })
         await loadLeads(true)
         viewLeadDetails(leadId)
+        window.scrollTo(0, scrollY)
+        if (await confirmDialog('Add Note?', 'Yes', '#4f46e5')) {
+          const noteArea = document.getElementById('noteText')
+          if (noteArea) {
+            noteArea.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            noteArea.focus()
+          }
+        }
       } catch (err) { showToast((err.payload && err.payload.error) || err.message, 'error') }
     })
   }
@@ -1566,6 +2068,7 @@ async function viewLeadDetails(leadId) {
   if (updateProjectForm) {
     updateProjectForm.addEventListener('submit', async e => {
       e.preventDefault()
+      const scrollY = window.scrollY || 0
       const projectId = document.getElementById('newProject').value
       try {
         await _apiRequest(`/leads/${leadId}`, {
@@ -1576,6 +2079,7 @@ async function viewLeadDetails(leadId) {
         })
         await loadLeads(true)
         viewLeadDetails(leadId)
+        window.scrollTo(0, scrollY)
       } catch (err) { showToast((err.payload && err.payload.error) || err.message, 'error') }
     })
   }
@@ -1692,6 +2196,7 @@ window.viewLeadDetails = viewLeadDetails
 // ── Lead edit form ─────────────────────────────────────────────────────────
 function openLeadEditForm(lead) {
   const overlay = document.createElement('div')
+  const canEditPrimaryPhone = user && (user.role === 'superadmin' || user.role === 'platform_owner')
   overlay.className = 'modal-overlay'
   overlay.innerHTML = `
     <div class="modal-box" style="max-width:520px;width:100%;">
@@ -1704,12 +2209,17 @@ function openLeadEditForm(lead) {
             <input class="input" id="editName" value="${escape(lead.name)}" required placeholder="Full name" style="font-size:13px;" />
           </div>
           <div>
-            <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Phone</label>
-            <input class="input" id="editPhone" value="${escape(lead.phone||'')}" placeholder="Phone" style="font-size:13px;" />
+            <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Contact Number</label>
+            <input class="input" id="editPhone" value="${escape(lead.phone||'')}" placeholder="Contact Number" style="font-size:13px;${canEditPrimaryPhone ? '' : 'background:#f8fafc;color:#64748b;'}" ${canEditPrimaryPhone ? '' : 'readonly'} />
+            ${canEditPrimaryPhone ? '' : '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Only admins can edit the contact number.</div>'}
           </div>
           <div>
             <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Email</label>
             <input class="input" id="editEmail" type="email" value="${escape(lead.email||'')}" placeholder="Email" style="font-size:13px;" />
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Alternate Number</label>
+            <input class="input" id="editAlternatePhone" value="${escape(lead.alternate_phone||'')}" placeholder="Alternate Number" style="font-size:13px;" />
           </div>
           <div>
             <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Source</label>
@@ -1757,7 +2267,8 @@ function openLeadEditForm(lead) {
         headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
         body: JSON.stringify({
           name:       document.getElementById('editName').value.trim(),
-          phone:      document.getElementById('editPhone').value.trim(),
+            phone:      canEditPrimaryPhone ? document.getElementById('editPhone').value.trim() : (lead.phone || ''),
+            alternate_phone: document.getElementById('editAlternatePhone').value.trim(),
           email:      document.getElementById('editEmail').value.trim(),
           source:     document.getElementById('editSource').value,
           budget_min: Number(bp[0]) || null,
@@ -1785,6 +2296,7 @@ async function openLeadForm() {
       <form id="leadForm">
         <input class="input" id="leadName" placeholder="Full Name" required />
         <input class="input" id="leadPhone" placeholder="Phone Number" />
+        <input class="input" id="leadAlternatePhone" placeholder="Alternate Number" />
         <input class="input" id="leadEmail" placeholder="Email Address" />
         <select class="select" id="leadSource">
           <option value="">Select Source</option>
@@ -1840,6 +2352,7 @@ async function openLeadForm() {
     e.preventDefault()
     const name = document.getElementById('leadName').value
     const phone = document.getElementById('leadPhone').value
+    const alternate_phone = document.getElementById('leadAlternatePhone').value.trim()
     const email = document.getElementById('leadEmail').value
     const source = document.getElementById('leadSource').value
     const leadBudgetParts = (document.getElementById('leadBudget').value || '').split('|')
@@ -1853,7 +2366,7 @@ async function openLeadForm() {
         await _apiRequest('/leads', {
           method: 'POST',
           headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
-          body: JSON.stringify({ name, phone, email, source, budget_min, budget_max, project_id, status, ...(force && { force: true }) }),
+          body: JSON.stringify({ name, phone, alternate_phone, email, source, budget_min, budget_max, project_id, status, ...(force && { force: true }) }),
           retries: 0,
         })
         renderLeads()
@@ -1887,12 +2400,16 @@ async function openLeadForm() {
 function openCallbackModal(leadId, options) {
   const modalOptions = options || {}
   const isRequiredFromCall = !!modalOptions.requireSchedule
+  const leadPhone = modalOptions.leadPhone || ''
+  const leadAlternatePhone = modalOptions.leadAlternatePhone || ''
+  const leadName = modalOptions.leadName || ''
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
   overlay.innerHTML = `
     <div class="modal-box" style="max-width:480px;width:100%;">
       ${isRequiredFromCall ? '' : '<button class="modal-close" id="closeCallbackModal">&times;</button>'}
       <h3 class="sm-section-heading" style="margin:0 0 20px;">📞 Schedule Callback</h3>
+      ${(leadName || leadPhone || leadAlternatePhone) ? `<div style="margin:-8px 0 10px;font-size:13px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;line-height:1.45;">${leadName ? `<strong style="display:block;margin-bottom:2px;">${escape(leadName)}</strong>` : ''}${leadPhone ? `Primary: ${escape(leadPhone)}` : ''}${leadAlternatePhone ? `${leadPhone ? '<br/>' : ''}Alternate: ${escape(leadAlternatePhone)}` : ''}</div>` : ''}
       ${isRequiredFromCall ? `<div style="margin:-8px 0 10px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;">Select a callback date and time to complete the call outcome.</div>` : ''}
       <form id="callbackForm" style="display:flex;flex-direction:column;gap:14px;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -1974,11 +2491,14 @@ function openCallbackModal(leadId, options) {
 }
 
 async function markCallbackDone(callbackId, leadId) {
+  const closureNote = await openCallbackClosureModal('complete')
+  if (!closureNote) return
+
   try {
     await _apiRequest(`/leads/callbacks/${callbackId}/complete`, {
       method: 'POST',
       headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ closure_note: closureNote }),
       retries: 0,
     })
     await loadLeads(true)
@@ -1988,16 +2508,86 @@ async function markCallbackDone(callbackId, leadId) {
 }
 
 async function deleteCallback(callbackId, leadId) {
-  if (!await confirmDialog('Delete this scheduled callback?', 'Delete')) return
+  if (!await confirmDialog('Close this callback as cancelled?', 'Cancel Callback')) return
+  const closureNote = await openCallbackClosureModal('cancel')
+  if (!closureNote) return
+
   try {
     await _apiRequest(`/leads/callbacks/${callbackId}`, {
       method: 'DELETE',
-      headers: _apiAuthHeaders(),
+      headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+      body: JSON.stringify({ closure_note: closureNote }),
       retries: 0,
     })
     await loadLeads(true)
     viewLeadDetails(leadId)
-    showToast('Callback deleted.', 'success')
+    showToast('Callback cancelled.', 'success')
   } catch (err) { showToast((err.payload && err.payload.error) || err.message, 'error') }
+}
+
+function openCallbackClosureModal(mode) {
+  const isCancel = mode === 'cancel'
+  const title = isCancel ? 'Cancel Callback' : 'Complete Callback'
+  const hint = isCancel
+    ? 'Add a cancellation note before closing this callback.'
+    : 'Add a closure note before marking this callback as done.'
+  const placeholder = isCancel
+    ? 'Why was this callback cancelled?'
+    : 'What happened on this callback?'
+
+  return new Promise(resolve => {
+    const overlay = document.createElement('div')
+    overlay.className = 'modal-overlay'
+    overlay.innerHTML = `
+      <div class="modal-box" style="max-width:520px;width:100%;">
+        <button class="modal-close" id="closeCallbackClosureModal">&times;</button>
+        <h3 class="sm-section-heading" style="margin:0 0 12px;">${title}</h3>
+        <div style="margin:0 0 12px;font-size:12px;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;">${hint}</div>
+        <form id="callbackClosureForm" style="display:flex;flex-direction:column;gap:12px;">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Closure Note *</label>
+            <textarea class="input" id="callbackClosureNote" rows="4" maxlength="1000" placeholder="${placeholder}" required style="font-size:13px;resize:vertical;"></textarea>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button type="submit" class="button" style="flex:1;font-size:14px;padding:10px;">Save & Continue</button>
+            <button type="button" class="button secondary" id="cancelCallbackClosureModal" style="flex:1;font-size:14px;padding:10px;">Cancel</button>
+          </div>
+        </form>
+      </div>
+    `
+
+    let settled = false
+    const finish = note => {
+      if (settled) return
+      settled = true
+      overlay.remove()
+      resolve(note)
+    }
+
+    document.body.appendChild(overlay)
+    const noteInput = document.getElementById('callbackClosureNote')
+    if (noteInput) noteInput.focus()
+
+    const closeBtn = document.getElementById('closeCallbackClosureModal')
+    const cancelBtn = document.getElementById('cancelCallbackClosureModal')
+    const form = document.getElementById('callbackClosureForm')
+
+    if (closeBtn) closeBtn.addEventListener('click', () => finish(null))
+    if (cancelBtn) cancelBtn.addEventListener('click', () => finish(null))
+
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) finish(null)
+    })
+
+    form.addEventListener('submit', e => {
+      e.preventDefault()
+      const note = (noteInput && noteInput.value ? noteInput.value : '').trim()
+      if (!note) {
+        showToast('Closure note is required.', 'warning')
+        return
+      }
+      finish(note)
+    })
+  })
 }
 

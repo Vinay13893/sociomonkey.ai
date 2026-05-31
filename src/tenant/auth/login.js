@@ -1,16 +1,34 @@
 function renderLogin(context) {
+  var publicRoot = document.getElementById('publicLoginRoot')
+  if (!publicRoot) {
+    publicRoot = document.createElement('div')
+    publicRoot.id = 'publicLoginRoot'
+    publicRoot.style.minHeight = '100vh'
+    publicRoot.style.width = '100%'
+    publicRoot.style.display = 'block'
+    document.body.appendChild(publicRoot)
+  }
+
   // Auto-detect context from URL when not explicitly provided
   if (!context) {
     var path = window.location.pathname.replace(/\/+$/, '')
+    var appTenantLoginM = path.match(/^\/apps\/([^\/]+)\/([^\/]+)\/login$/)
+    var appTenantM = path.match(/^\/apps\/([^\/]+)\/([^\/]+)$/)
     var tenantSimpleLoginM = path.match(/^\/([^\/]+)\/login$/)
     var tenantM = path.match(/^\/([^\/]+)\/([^\/]+)(?:\/login)?$/)
     var platformPaths = ['applications', 'organizations', 'analytics', 'settings', 'products', 'login']
-    var isPlatformPath = (!tenantM && !tenantSimpleLoginM) || path === '/login' || platformPaths.indexOf((tenantM || [])[1]) !== -1
+    var isPlatformPath = (!tenantM && !tenantSimpleLoginM && !appTenantLoginM && !appTenantM) || path === '/login' || platformPaths.indexOf((tenantM || [])[1]) !== -1
+    if (!isPlatformPath && appTenantLoginM) {
+      context = { type: 'tenant', slug: authCanonicalTenantSlug(appTenantLoginM[2]), product: appTenantLoginM[1] }
+    } else
+    if (!isPlatformPath && appTenantM) {
+      context = { type: 'tenant', slug: authCanonicalTenantSlug(appTenantM[2]), product: appTenantM[1] }
+    } else
     if (!isPlatformPath && tenantSimpleLoginM) {
-      context = { type: 'tenant', slug: tenantSimpleLoginM[1], product: 'lms' }
+      context = { type: 'tenant', slug: authCanonicalTenantSlug(tenantSimpleLoginM[1]), product: 'lms' }
     } else
     if (!isPlatformPath && tenantM) {
-      context = { type: 'tenant', slug: tenantM[1], product: tenantM[2] }
+      context = { type: 'tenant', slug: authCanonicalTenantSlug(tenantM[1]), product: tenantM[2] }
     } else {
       context = { type: 'platform' }
     }
@@ -18,6 +36,8 @@ function renderLogin(context) {
 
   var isPlatform = context.type === 'platform'
   var tenantSlug  = (!isPlatform && context.slug) ? context.slug : null
+  var tenantDataSlug = tenantSlug ? authTenantDataSlug(tenantSlug) : null
+  var isDemoTenant = tenantSlug === 'demo'
 
   // Resolve tenant branding (tenantConfig may have been loaded by dispatch())
   var tenantLogoSrc  = (typeof tenantConfig !== 'undefined' && tenantConfig && tenantConfig.logo_url)
@@ -27,11 +47,9 @@ function renderLogin(context) {
   var loginBg = (typeof tenantConfig !== 'undefined' && tenantConfig && tenantConfig.login_bg_color)
                        ? tenantConfig.login_bg_color : '#ffffff'
 
-  // Monkey icon badge for the red strip
+  // Platform logo shown above the login card (no banner background)
   var monkeyIconHtml =
-    '<div style="background:white;border-radius:50%;width:76px;height:76px;display:flex;align-items:center;justify-content:center;">' +
-    '<img src="Assets/top-banner-logo.png" style="height:62px;width:62px;object-fit:contain;" />' +
-    '</div>'
+    '<img src="Assets/top-banner-logo.png" alt="Sociomonkey" style="height:62px;width:62px;object-fit:contain;display:block;margin:0 auto;" />'
 
   // Build header HTML — platform: SOCIO MONKEY logo image; tenant: logo + brand name
   var headerHtml = isPlatform
@@ -65,13 +83,13 @@ function renderLogin(context) {
     root.style.overflow = 'hidden'
   }
 
-  var otpDisplay      = isPlatform ? 'none'  : 'block'
-  var passwordDisplay = isPlatform ? 'block' : 'none'
+  var otpDisplay      = (isPlatform || isDemoTenant) ? 'none'  : 'block'
+  var passwordDisplay = (isPlatform || isDemoTenant) ? 'block' : 'none'
 
-  root.innerHTML =
+  publicRoot.innerHTML =
     '<div style="display:flex;flex-direction:column;width:100%;height:100vh;overflow:hidden;background:' + bgColor + ';">' +
       (isPlatform
-        ? '<div style="background:#de2e2e;height:90px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + monkeyIconHtml + '</div>'
+        ? '<div style="padding:18px 0 6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + monkeyIconHtml + '</div>'
         : '') +
       '<div style="flex:1;display:flex;align-items:center;justify-content:center;padding:24px;overflow-y:auto;">' +
         '<div class="card" style="max-width:400px;width:100%;margin:0;">' +
@@ -108,7 +126,7 @@ function renderLogin(context) {
                 'display:none;">Resend OTP</a>' +
             '</div>' +
           '</div>' +
-          (isPlatform
+          ((isPlatform || isDemoTenant)
             ? ''
             : ('<div style="text-align:center;margin-top:18px;">' +
                '<a href="#" id="switchToPassword" style="font-size:12px;color:#94a3b8;">' +
@@ -119,9 +137,15 @@ function renderLogin(context) {
           '<form id="loginForm">' +
             '<input class="input" id="email" type="email" placeholder="Email" ' +
               'autocomplete="email" required />' +
-            '<input class="input" id="password" type="password" placeholder="Password" ' +
-              'autocomplete="current-password" required />' +
-            '<label style="display:flex;align-items:center;gap:8px;margin-top:10px;' +
+            '<div style="position:relative;display:flex;align-items:center;">' +
+              '<input class="input" id="password" type="password" placeholder="Password" ' +
+                'autocomplete="current-password" required style="padding-right:40px;flex:1;" />' +
+              '<button type="button" id="togglePasswordBtn" aria-label="Toggle password visibility" ' +
+                'style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;' +
+                'border:none;cursor:pointer;padding:0;color:#94a3b8;font-size:17px;line-height:1;' +
+                'display:flex;align-items:center;min-height:0;" tabindex="-1">👁</button>' +
+            '</div>' +
+              '<label style="display:flex;align-items:center;gap:8px;margin-top:10px;' +
               'font-size:13px;color:#64748b;cursor:pointer;">' +
               '<input type="checkbox" id="rememberMeCheck" ' +
                 'style="width:15px;height:15px;cursor:pointer;" />' +
@@ -130,13 +154,13 @@ function renderLogin(context) {
             '<button class="button" style="width:100%;margin-top:16px;font-size:15px;">' +
               'Login</button>' +
           '</form>' +
-          (isPlatform
+           (isPlatform
             ? ('<div style="text-align:center;margin-top:12px;">' +
                '<a href="#" id="switchToOtp" style="font-size:13px;color:#0284c7;">' +
                'Login with OTP instead &rarr;</a></div>')
-            : ('<div style="text-align:center;margin-top:10px;">' +
+            : (isDemoTenant ? '' : ('<div style="text-align:center;margin-top:10px;">' +
                '<a href="#" id="backToOtp" style="font-size:12px;color:#0284c7;">' +
-               '&larr; Back to OTP login</a></div>')) +
+              '&larr; Back to OTP login</a></div>'))) +
         '</div>' +
         '<div id="loginError" style="color:#dc2626;text-align:center;' +
           'margin-top:12px;font-size:13px;min-height:18px;"></div>' +
@@ -152,6 +176,17 @@ function renderLogin(context) {
   // ── Helpers ────────────────────────────────────────────────────────────────
   function showError(msg) { var el = document.getElementById('loginError'); if (el) el.textContent = msg }
   function clearError()   { showError('') }
+
+  var passwordInput = document.getElementById('password')
+  var togglePasswordBtn = document.getElementById('togglePasswordBtn')
+  if (passwordInput && togglePasswordBtn) {
+    togglePasswordBtn.addEventListener('click', function() {
+      var isHidden = passwordInput.type === 'password'
+      passwordInput.type = isHidden ? 'text' : 'password'
+      togglePasswordBtn.textContent = isHidden ? '🙈' : '👁'
+      togglePasswordBtn.setAttribute('aria-label', isHidden ? 'Hide password' : 'Show password')
+    })
+  }
 
   // ── Password form submit ───────────────────────────────────────────────────
   document.getElementById('loginForm').addEventListener('submit', async function(e) {
@@ -171,7 +206,7 @@ function renderLogin(context) {
       document.getElementById('otpSection').style.display = 'block'
       clearError()
     })
-  } else {
+  } else if (!isDemoTenant) {
     document.getElementById('switchToPassword').addEventListener('click', function(e) {
       e.preventDefault()
       document.getElementById('otpSection').style.display = 'none'
@@ -219,7 +254,7 @@ function renderLogin(context) {
     clearError()
     try {
       var body = { email: emailVal }
-      if (tenantSlug) body.tenant_slug = tenantSlug
+      if (tenantDataSlug) body.tenant_slug = tenantDataSlug
       var res  = await fetch(API_BASE + '/auth/send-otp', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
@@ -273,7 +308,7 @@ function renderLogin(context) {
     clearError()
     try {
       var body = { email: emailVal, otp: otpVal }
-      if (tenantSlug) body.tenant_slug = tenantSlug
+      if (tenantDataSlug) body.tenant_slug = tenantDataSlug
       var res  = await fetch(API_BASE + '/auth/verify-otp', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })

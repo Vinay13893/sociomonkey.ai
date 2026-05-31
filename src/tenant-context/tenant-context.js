@@ -14,6 +14,9 @@
 // Active tenant config (null = no tenant loaded / platform view)
 var tenantConfig = null
 
+var _PLATFORM_TAB_TITLE = 'Sociomonkey Admin'
+var _DEFAULT_FAVICON = 'Assets/top-banner-logo.png'
+
 // In-memory cache keyed by slug so repeated calls within a session are free
 var _tenantConfigCache = {}
 
@@ -147,7 +150,8 @@ function clearTenantContext() {
   var el = document.getElementById('_tenantBrandingStyles')
   if (el) el.remove()
   // Restore page title
-  document.title = 'SocioMonkey Platform'
+  document.title = _PLATFORM_TAB_TITLE
+  _setFavicon(_DEFAULT_FAVICON)
 }
 
 // ── Branding Application ───────────────────────────────────────────────────
@@ -160,10 +164,10 @@ function clearTenantContext() {
 function applyTenantBranding(config) {
   if (!config) return
 
-  // Only these 5 properties are tenant-controlled.
+  // Only these 4 properties are tenant-controlled.
   // Primary buttons and global UI chrome are Sociomonkey-owned (var(--sm-ink)).
   var accent     = config.accent_color     || '#de2e2e'
-  var sidebarBg  = config.sidebar_bg_color || '#c22828'
+  var sidebarBg  = '#1f2a37'
   var loginBg    = config.login_bg_color   || '#f1f5f9'
 
   // Derive darker shade and soft background for the accent
@@ -178,7 +182,7 @@ function applyTenantBranding(config) {
     document.head.appendChild(el)
   }
 
-  // Set only the 5 allowed tenant CSS variables.
+  // Set tenant CSS variables.
   // All button styles and nav active states resolve via these variables in styles.css.
   el.textContent = [
     ':root {',
@@ -190,16 +194,8 @@ function applyTenantBranding(config) {
     '}',
   ].join('\n')
 
-  // Update favicon
-  if (config.favicon_url) {
-    var link = document.querySelector("link[rel='icon']")
-    if (!link) {
-      link = document.createElement('link')
-      link.rel = 'icon'
-      document.head.appendChild(link)
-    }
-    link.href = config.favicon_url
-  }
+  // Update favicon (tenant-specific if configured; otherwise platform monkey icon)
+  _setFavicon(config.favicon_url || _DEFAULT_FAVICON)
 
   // Update sidebar logo + page title
   _applyLogoAndTitle(config)
@@ -233,8 +229,18 @@ function _applyLogoAndTitle(config) {
   // Update browser tab title
   var displayName = config.brand_name || config.name
   if (displayName) {
-    document.title = displayName
+    document.title = displayName + ' | LMS'
   }
+}
+
+function _setFavicon(href) {
+  var link = document.querySelector("link[rel='icon']")
+  if (!link) {
+    link = document.createElement('link')
+    link.rel = 'icon'
+    document.head.appendChild(link)
+  }
+  link.href = href || _DEFAULT_FAVICON
 }
 
 // Re-apply logo after the sidebar is re-rendered (called from renderApp)

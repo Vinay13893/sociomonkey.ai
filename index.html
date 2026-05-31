@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <base href="/" />
-  <title>SocioMonkey Platform</title>
+  <title>Sociomonkey Admin</title>
   <!-- SEO / Canonical -->
   <meta name="description" content="SocioMonkey — AI-powered CRM and LMS platform for modern sales teams." />
   <link rel="canonical" href="https://app.sociomonkey.com" />
@@ -14,22 +14,23 @@
   <meta property="og:title" content="SocioMonkey Platform" />
   <meta property="og:description" content="AI-powered CRM and LMS platform for modern sales teams." />
   <meta property="og:site_name" content="SocioMonkey" />
+  <link rel="icon" type="image/png" href="Assets/top-banner-logo.png" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" />
   <!-- Design system: load tokens first so all vars are available to styles.css -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="src/design-system/tokens.css?v=20260529a" />
+  <link rel="stylesheet" href="src/design-system/tokens.css?v=20260530ux2" />
   <!-- Sociomonkey Design System — loaded before styles.css -->
   <link rel="stylesheet" href="src/shared/design-system/layout.css?v=20260529a" />
-  <link rel="stylesheet" href="src/shared/design-system/sidebar.css?v=20260529a" />
+  <link rel="stylesheet" href="src/shared/design-system/sidebar.css?v=20260531typo1" />
   <link rel="stylesheet" href="src/shared/design-system/typography.css?v=20260529a" />
   <link rel="stylesheet" href="src/shared/design-system/buttons.css?v=20260529a" />
   <link rel="stylesheet" href="src/shared/design-system/forms.css?v=20260529a" />
   <link rel="stylesheet" href="src/shared/design-system/tables.css?v=20260529a" />
   <link rel="stylesheet" href="src/shared/design-system/cards.css?v=20260529a" />
   <link rel="stylesheet" href="src/shared/design-system/navigation.css?v=20260529a" />
-  <link rel="stylesheet" href="styles.css?v=20260529a" />
+  <link rel="stylesheet" href="styles.css?v=20260531phaseA1" />
 </head>
 <body>
   <!-- Platform orchestration layer (shown when user.role === 'platform_owner') -->
@@ -46,11 +47,12 @@
     <div class="mobile-overlay" id="mobileOverlay"></div>
     <!-- Left Sidebar — unified .sm-sidebar component (all products) -->
     <aside class="sm-sidebar" id="sidebar">
-      <!-- Brand: logo + company name + product name (120px, white bg) -->
+      <!-- Brand: logo + company name + product name -->
       <div class="sm-sidebar-brand">
         <div class="sm-sidebar-logo-wrap">
           <img src="logo.jpg" alt="" id="sidebarLogoImg" class="sm-sidebar-logo" />
         </div>
+        <div id="sidebarCompanyName" class="sm-sidebar-company"></div>
         <div id="sidebarProductLabel" class="sm-sidebar-product" style="display:none;"></div>
       </div>
       <!-- Product switcher (platform_owner only) -->
@@ -92,39 +94,39 @@
   <script src="src/config/feature-flags.js?v=20260527z"></script>
   <script src="src/contexts/app-state.js?v=20260527z"></script>
   <!-- Auth Orchestration (must load after app-state, before api) -->
-  <script src="src/auth/auth-manager.js?v=20260602h"></script>
+  <script src="src/auth/auth-manager.js?v=20260531phaseA1"></script>
   <!-- Tenant white-label engine (must load after feature-flags + auth-manager) -->
-  <script src="src/tenant-context/tenant-context.js?v=20260529perf1"></script>
+  <script src="src/tenant-context/tenant-context.js?v=20260530ux3"></script>
 
   <!-- ── Shared Utilities ─────────────────────────────────────────── -->
   <script src="src/shared/utils/helpers.js?v=20260602c"></script>
   <script src="src/shared/utils/dom-guard.js?v=20260602n"></script>
-  <script src="src/shared/services/api.js?v=20260529perf1"></script>
+  <script src="src/shared/services/api.js?v=20260603multitenant1"></script>
 
   <!-- ── Tenant Auth ──────────────────────────────────────────────── -->
-  <script src="src/tenant/auth/login.js?v=20260528g"></script>
+  <script src="src/tenant/auth/login.js?v=20260531phaseA1"></script>
 
   <!-- ── Shared Layout & Router ───────────────────────────────────── -->
-  <script src="src/shared/layouts/sidebar.js?v=20260602p"></script>
-  <script src="src/router/router.js?v=20260603a"></script>
+  <script src="src/shared/layouts/sidebar.js?v=20260531phaseA1"></script>
+  <script src="src/router/router.js?v=20260531phaseA1"></script>
 
   <!-- ── Products / CRM ───────────────────────────────────────────── -->
-  <script src="src/products/crm/dashboard.js?v=20260529perf1"></script>
-  <script src="src/products/crm/leads.js?v=20260529ab7"></script>
-  <script src="src/products/crm/action-board.js?v=20260529ab7"></script>
-  <script src="src/products/crm/pipeline.js?v=20260602k"></script>
-  <script src="src/products/crm/recycle-queue.js?v=20260529rq1"></script>
-  <script src="src/products/crm/projects.js?v=20260602m"></script>
-  <script src="src/products/crm/team.js?v=20260602m"></script>
-  <script src="src/products/crm/excel.js?v=20260602m"></script>
-  <script src="src/products/crm/reports.js?v=20260602m"></script>
-  <script src="src/products/crm/export.js?v=20260602m"></script>
+  <script src="src/products/crm/dashboard.js?v=20260531dashrefine4"></script>
+  <script src="src/products/crm/leads.js?v=20260531phaseC1"></script>
+  <script src="src/products/crm/action-board.js?v=20260531abfix5"></script>
+  <script src="src/products/crm/pipeline.js?v=20260531pipeline3"></script>
+  <script src="src/products/crm/recycle-queue.js?v=20260531recyclehelp2"></script>
+  <script src="src/products/crm/projects.js?v=20260531responsive2"></script>
+  <script src="src/products/crm/team.js?v=20260531responsive1"></script>
+  <script src="src/products/crm/excel.js?v=20260530ux2"></script>
+  <script src="src/products/crm/reports.js?v=20260531phaseC1"></script>
+  <script src="src/products/crm/export.js?v=20260530ux2"></script>
 
   <!-- ── Products / LMS ───────────────────────────────────────────── -->
   <script src="src/products/lms/lms.js?v=20260603b"></script>
 
   <!-- ── Tenant Dashboard ─────────────────────────────────────────── -->
-  <script src="src/tenant/dashboard/activity-logs.js?v=20260602m"></script>
+  <script src="src/tenant/dashboard/activity-logs.js?v=20260531phaseC1"></script>
   <script src="src/tenant/dashboard/profile.js?v=20260602m"></script>
 
   <!-- ── Legacy Platform Embedded Tab (LMS sidebar) ───────────────── -->
@@ -133,12 +135,12 @@
   <script src="src/platform/products/products.js?v=20260527z"></script>
 
   <!-- ── Platform Orchestration Layer (NEW) ───────────────────────── -->
-  <script src="src/platform/layout/platform-layout.js?v=20260527z"></script>
+  <script src="src/platform/layout/platform-layout.js?v=20260603logoutfix2"></script>
   <script src="src/platform/dashboard/platform-home.js?v=20260527z"></script>
   <script src="src/platform/products/product-launcher.js?v=20260527z"></script>
-  <script src="src/platform/products/product-hub.js?v=20260527z"></script>
-  <script src="src/platform/organizations/org-wizard.js?v=20260602f"></script>
-  <script src="src/platform/organizations/organizations.js?v=20260602f"></script>
+  <script src="src/platform/products/product-hub.js?v=20260603multitenant1"></script>
+  <script src="src/platform/organizations/org-wizard.js?v=20260603multitenant1"></script>
+  <script src="src/platform/organizations/organizations.js?v=20260603multitenant1"></script>
   <script src="src/platform/tenants/tenant-config.js?v=20260527z"></script>
   <script src="src/platform/analytics/platform-analytics.js?v=20260527z"></script>
   <script src="src/platform/settings/platform-settings.js?v=20260527z"></script>
@@ -148,6 +150,6 @@
   <script src="src/shared/design-system/theme.js?v=20260529a"></script>
 
   <!-- ── Main Entry Point ─────────────────────────────────────────── -->
-  <script src="src/main.js?v=20260602h"></script>
+  <script src="src/main.js?v=20260531loginlayout1"></script>
 </body>
 </html>

@@ -86,6 +86,9 @@ function _buildSidebar() {
       var btn = e.target.closest('[data-tab]')
       if (!btn) return
       activeTab = btn.dataset.tab
+      if (platformTenantSlug && currentProduct && currentProduct !== 'platform') {
+        history.pushState({}, '', authBuildTenantTabPath(platformTenantSlug, currentProduct, activeTab))
+      }
       closeMobileSidebar()
       _syncNavActive()
       // If a full dispatch() is in flight it will call renderApp() → _safeShowContent()
@@ -103,13 +106,36 @@ function _buildSidebar() {
     var freshBtn = logoutBtn.cloneNode(true)
     logoutBtn.parentNode.replaceChild(freshBtn, logoutBtn)
     freshBtn.addEventListener('click', function () {
+      var tenantLoginSlug = ''
+      try {
+        if (typeof parseRoute === 'function') {
+          var route = parseRoute()
+          if (route && (route.layer === 'tenant' || route.layer === 'tenant-login') && route.slug) {
+            tenantLoginSlug = route.slug
+          }
+        }
+      } catch (_) {}
+      if (!tenantLoginSlug && user && user.role !== 'platform_owner' && user.tenant_slug) {
+        tenantLoginSlug = user.tenant_slug
+      }
+      var loginPath = tenantLoginSlug ? authBuildTenantLoginPath(tenantLoginSlug, currentProduct || 'lms') : '/login'
+
       _sidebarBuilt = false
       mobileNavInitialized = false
-      // Capture slug BEFORE clearing session (user becomes null after clear)
-      var _slug = (user && user.tenant_slug) ? user.tenant_slug : null
       authClearSession()
       clearTenantContext()
-      history.replaceState({}, '', _slug ? '/' + _slug + '/login' : '/login')
+      // Force public login route to avoid retaining tenant shell/branding.
+      history.replaceState({}, '', loginPath)
+      if (typeof _setPublicLoginMode === 'function') {
+        _setPublicLoginMode(true)
+      }
+      if (typeof renderLogin === 'function') {
+        if (tenantLoginSlug) {
+          renderLogin({ type: 'tenant', slug: tenantLoginSlug, product: 'lms' })
+        } else {
+          renderLogin({ type: 'platform' })
+        }
+      }
       dispatch()
     })
   }
@@ -181,6 +207,11 @@ function switchProduct(slug) {
   currentProduct = slug
   localStorage.setItem('current_product', slug)
   activeTab = (slug === 'crm' || slug === 'lms') ? 'dashboard' : 'product_home'
+  if (platformTenantSlug && (slug === 'crm' || slug === 'lms')) {
+    history.pushState({}, '', authBuildTenantTabPath(platformTenantSlug, slug, activeTab))
+  } else if (platformTenantSlug) {
+    history.pushState({}, '', authBuildTenantAppPath(platformTenantSlug, slug))
+  }
   _sidebarBuilt = false   // force full sidebar rebuild on product switch
   renderApp()
 }

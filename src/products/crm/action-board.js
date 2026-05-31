@@ -12,6 +12,13 @@ var _abFocusedLeadPhone = ''
 var _abUpdatedTimer = null
 var _abDateFrom = ''
 var _abDateTo = ''
+var _abSearchQuery = ''
+var _abActiveSectionKey = 'today_callbacks'
+var _abCurrentSections = []
+var _abLastRenderMs = 0
+var _abPageSize = 6
+var _abPageSizeMode = 'auto'
+var _abResizeTimer = null
 var _abSectionPages = {
   today_callbacks: 1,
   overdue_callbacks: 1,
@@ -20,6 +27,159 @@ var _abSectionPages = {
   no_answer: 1,
   warm_leads: 1,
   hot_leads: 1,
+}
+
+function _abRefreshPreservingState() {
+  var scrollY = window.scrollY || 0
+  var activeKey = _abActiveSectionKey
+  var search = _abSearchQuery
+  var pageSize = _abPageSize
+  var pageSizeMode = _abPageSizeMode
+  var sectionPages = {}
+  Object.keys(_abSectionPages).forEach(function (key) {
+    sectionPages[key] = _abSectionPages[key]
+  })
+  return Promise.resolve(renderActionBoard(_abDateFrom, _abDateTo, _abRange)).then(function () {
+    _abActiveSectionKey = activeKey
+    _abSearchQuery = search
+    _abPageSize = pageSize
+    _abPageSizeMode = pageSizeMode
+    Object.keys(sectionPages).forEach(function (key) {
+      _abSectionPages[key] = sectionPages[key]
+    })
+    window.scrollTo(0, scrollY)
+  })
+}
+
+function _abOpenStatusModal(leadId, preferredStatus) {
+  var id = Number(leadId)
+  if (!Number.isFinite(id) || id <= 0) return
+  var overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:420px;width:100%;">
+      <h3 class="sm-section-heading" style="margin-bottom:10px;">Update Lead Status</h3>
+      <select id="abNextStatus" class="select" style="width:100%;font-size:13px;margin-bottom:14px;">
+        <option value="">Select status</option>
+        ${_abStatusOptions.map(function (opt) { return `<option value="${opt.value}" ${opt.value === preferredStatus ? 'selected' : ''}>${opt.label}</option>` }).join('')}
+      </select>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="button secondary" id="abCancelStatusBtn" type="button" style="font-size:13px;">Cancel</button>
+        <button class="button" id="abSaveStatusBtn" type="button" style="font-size:13px;">Save Status</button>
+      </div>
+    </div>`
+  document.body.appendChild(overlay)
+
+  function closeModal() {
+    if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay)
+  }
+
+  var cancelBtn = overlay.querySelector('#abCancelStatusBtn')
+  if (cancelBtn) cancelBtn.addEventListener('click', closeModal)
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay) closeModal()
+  })
+
+  var saveBtn = overlay.querySelector('#abSaveStatusBtn')
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async function () {
+      var nextStatus = (overlay.querySelector('#abNextStatus') || {}).value || ''
+      if (!nextStatus) {
+        showToast('Please select a status.', 'warning')
+        return
+      }
+      try {
+        await _apiRequest(`/leads/${id}`, {
+          method: 'PUT',
+          headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+          body: JSON.stringify({ status: nextStatus }),
+          retries: 0,
+        })
+        closeModal()
+        showToast('Lead status updated.', 'success')
+        await _abRefreshPreservingState()
+        if (await confirmDialog('Add Note?', 'Yes', '#4f46e5')) {
+          _abQuickNote(id)
+        }
+      } catch (err) {
+        showToast((err && err.message) || 'Failed to update status.', 'error')
+      }
+    })
+  }
+}
+var _abStatusOptions = [
+  { value: 'interested', label: 'Interested' },
+  { value: 'site_visit_planned', label: 'Site Visit Planned' },
+  { value: 'negotiation', label: 'Negotiation' },
+  { value: 'no_answer', label: 'No Answer' },
+  { value: 'not_interested', label: 'Not Interested' },
+  { value: 'follow_up', label: 'Follow Up' },
+  { value: 'callback_scheduled', label: 'Callback Scheduled' },
+  { value: 'new', label: 'New' },
+  { value: 'site_visit_done', label: 'Site Visit Done' },
+  { value: 'booking_done', label: 'Closed' },
+  { value: 'lost', label: 'Lost' },
+  { value: 'junk', label: 'Junk' },
+]
+var _abStatusMeta = {
+  new: { label: 'New', bg: '#eaf2ff', color: '#1d4ed8', border: '#bfdbfe' },
+  interested: { label: 'Interested', bg: '#ecfeff', color: '#0e7490', border: '#a5f3fc' },
+  site_visit_planned: { label: 'Site Visit Planned', bg: '#f5f3ff', color: '#6d28d9', border: '#ddd6fe' },
+  site_visit_done: { label: 'Site Visit Done', bg: '#ecfdf5', color: '#166534', border: '#bbf7d0' },
+  negotiation: { label: 'Negotiation', bg: '#fff7ed', color: '#c2410c', border: '#fed7aa' },
+  follow_up: { label: 'Follow Up', bg: '#eef2ff', color: '#4338ca', border: '#c7d2fe' },
+  callback_scheduled: { label: 'Callback Scheduled', bg: '#fefce8', color: '#a16207', border: '#fde68a' },
+  no_answer: { label: 'No Answer', bg: '#fffbeb', color: '#b45309', border: '#fcd34d' },
+  not_interested: { label: 'Not Interested', bg: '#f8fafc', color: '#475569', border: '#cbd5e1' },
+  booking_done: { label: 'Closed', bg: '#ecfdf3', color: '#14532d', border: '#86efac' },
+  lost: { label: 'Lost', bg: '#f8fafc', color: '#64748b', border: '#cbd5e1' },
+  junk: { label: 'Junk', bg: '#f8fafc', color: '#64748b', border: '#cbd5e1' },
+}
+
+function _abRangeShortLabel(range) {
+  if (range === 'today') return 'Today'
+  if (range === 'this_week') return 'This Week'
+  if (range === 'this_month') return 'This Month'
+  if (range === 'last_30_days') return 'Last 30 Days'
+  if (range === 'custom') return 'Custom'
+  return 'All Time'
+}
+
+function _abNextCallbackLabel(item) {
+  if (!item) return '—'
+  var raw = item.next_callback_datetime || item.next_callback_at || item.next_callback || ''
+  if (!raw) return '—'
+  var dt = new Date(raw)
+  if (Number.isNaN(dt.getTime())) return '—'
+  return dt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).replace(',', '')
+}
+
+function _abRecommendedPageSize() {
+  var viewportH = window.innerHeight || 820
+  var customPenalty = _abRange === 'custom' ? 38 : 0
+  var fixedLayout = 288 + customPenalty
+  var available = Math.max(280, viewportH - fixedLayout)
+  var rowHeight = 52
+  var rawRows = Math.max(1, Math.floor(available / rowHeight))
+  var stepRows = Math.max(1, Math.floor(rawRows / 6))
+  return Math.max(6, Math.min(18, stepRows * 6))
+}
+
+function _abBindResizeAutofit() {
+  if (window.__abResizeFitBound) return
+  window.__abResizeFitBound = true
+  window.addEventListener('resize', function () {
+    if (window._ACTIVE_ROUTE !== 'action_board' || _abPageSizeMode !== 'auto') return
+    if (_abResizeTimer) clearTimeout(_abResizeTimer)
+    _abResizeTimer = setTimeout(function () {
+      var nextSize = _abRecommendedPageSize()
+      if (nextSize !== _abPageSize) {
+        _abPageSize = nextSize
+        Object.keys(_abSectionPages).forEach(function (key) { _abSectionPages[key] = 1 })
+        renderActionBoard(_abDateFrom, _abDateTo, _abRange)
+      }
+    }, 180)
+  })
 }
 
 async function renderActionBoard(dateFrom, dateTo, rangeKey) {
@@ -32,6 +192,7 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
   if (typeof dateFrom === 'string') _abDateFrom = dateFrom
   if (typeof dateTo === 'string') _abDateTo = dateTo
   if (typeof rangeKey === 'string') _abRange = rangeKey
+  _abBindResizeAutofit()
 
   function _guard() {
     return myId === _actionBoardRenderId && window._ACTIVE_ROUTE === 'action_board'
@@ -46,10 +207,11 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
   }
 
   const now   = new Date()
-  const today = now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-
   function _iso(d) {
-    return d.toISOString().split('T')[0]
+    var y = d.getFullYear()
+    var m = String(d.getMonth() + 1).padStart(2, '0')
+    var day = String(d.getDate()).padStart(2, '0')
+    return y + '-' + m + '-' + day
   }
   function _resolveRange(range, customFrom, customTo) {
     const n = new Date()
@@ -81,40 +243,32 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
   const resolved = _resolveRange(_abRange, _abDateFrom, _abDateTo)
   const queryFrom = resolved.from
   const queryTo = resolved.to
-  const activeFilter = Boolean(queryFrom || queryTo)
-  const fmtD = function (d) { return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) }
-  const filterLabel = !activeFilter ? 'All Time'
-    : queryFrom && queryTo ? `${fmtD(queryFrom)} → ${fmtD(queryTo)}`
-    : queryFrom ? `From ${fmtD(queryFrom)}`
-    : `Until ${fmtD(queryTo)}`
-  const isTodayScope = _abRange === 'today'
-  const isAllTimeScope = _abRange === ''
-  const boardScopeLabel = isAllTimeScope ? 'All Time' : (isTodayScope ? 'Today' : 'Selected Range')
-  const callbacksLabel = isAllTimeScope ? 'Callbacks' : (isTodayScope ? "Today's Callbacks" : 'Callbacks in Range')
-  const newLeadsLabel = isAllTimeScope ? 'New Leads' : (isTodayScope ? 'New Leads Today' : 'New Leads in Range')
-  const followUpLabel = isAllTimeScope ? 'Follow Up' : (isTodayScope ? 'Follow Up' : 'Follow Up in Range')
-  const noAnswerLabel = isAllTimeScope ? 'No Answer' : (isTodayScope ? 'No Answer' : 'No Answer in Range')
-  const warmLeadsLabel = isAllTimeScope ? 'Warm Leads' : (isTodayScope ? 'Warm Leads' : 'Warm Leads in Range')
-  const hotLeadsLabel = isAllTimeScope ? 'Hot Leads' : (isTodayScope ? 'Hot Leads' : 'Hot Leads in Range')
+  const fmtHeader = function (d) { return new Date(d).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) }
+  const callbacksLabel = 'Today\'s Callbacks'
+  const newLeadsLabel = 'New Leads'
+  const followUpLabel = 'Follow Up'
+  const noAnswerLabel = 'No Answer'
+  const warmLeadsLabel = 'Warm Leads'
+  const hotLeadsLabel = 'Hot Leads'
+  const boardTitle = "Today's Action Board"
+  const greetingPrefix = now.getHours() < 12 ? 'Good Morning' : (now.getHours() < 17 ? 'Good Afternoon' : 'Good Evening')
+  const headerDateLabel = fmtHeader(_iso(now))
+  if (_abPageSizeMode === 'auto') _abPageSize = _abRecommendedPageSize()
 
   // Skeleton shell
   content.innerHTML = `
-    <div style="max-width:1200px;margin:0 auto;padding:20px 16px 60px;" id="actionBoardRoot">
-      <div class="sm-page-header" style="margin-bottom:20px;">
-        <div>
-          <h2 class="sm-page-title">${boardScopeLabel} Action Board</h2>
-          <p class="sm-small sm-text-muted" style="margin:4px 0 0;">${today}</p>
+    <div class="ab-root-shell" style="width:100%;max-width:none;margin:0 auto;padding:10px 14px 12px;" id="actionBoardRoot">
+      <div class="sm-page-header ab-header-shell" style="margin-bottom:8px;align-items:flex-start;gap:8px;">
+        <div style="min-width:0;">
+          <h2 class="sm-page-title ab-page-title" style="margin:0 0 2px;">${boardTitle}</h2>
+          <p id="abHeaderMeta" class="sm-small sm-text-muted ab-header-meta" style="margin:0;">Loading workbench status...</p>
         </div>
-        <button onclick="renderActionBoard(_abDateFrom, _abDateTo, _abRange)" class="sm-btn sm-btn-secondary"><i class="fa-solid fa-rotate" style="margin-right:6px;"></i>Refresh</button>
+        <span id="abHeaderDate" class="ab-header-date" style="white-space:nowrap;">${headerDateLabel}</span>
       </div>
 
-      <div id="abBriefing" style="margin:-8px 0 18px;padding:10px 12px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;color:#334155;font-size:13px;">
-        Loading your day briefing...
-      </div>
-
-      <div class="dash-filters" style="margin-bottom:18px;">
+      <div class="dash-filters ab-filter-bar" style="margin-bottom:8px;">
         <div class="dash-filter-group">
-          <label class="dash-filter-label">Time Range</label>
+          <label class="dash-filter-label">Range</label>
           <select id="abRangeFilter" class="dash-filter-ctl">
             <option value="" ${_abRange === '' ? 'selected' : ''}>All Time</option>
             <option value="today" ${_abRange === 'today' ? 'selected' : ''}>Today</option>
@@ -124,38 +278,39 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
             <option value="custom" ${_abRange === 'custom' ? 'selected' : ''}>Custom Date</option>
           </select>
         </div>
-        <div id="abCustomRange" style="display:${_abRange === 'custom' ? 'flex' : 'none'};gap:8px;align-items:flex-end;">
+        <div id="abCustomRange" class="ab-custom-range" style="display:${_abRange === 'custom' ? 'flex' : 'none'};gap:8px;align-items:flex-end;">
           <div class="dash-filter-group">
-            <label class="dash-filter-label">From</label>
+            <label class="dash-filter-label">From Date</label>
             <input type="date" id="abDateFrom" class="dash-filter-ctl" value="${_abDateFrom}" />
           </div>
           <div class="dash-filter-group">
-            <label class="dash-filter-label">To</label>
+            <label class="dash-filter-label">To Date</label>
             <input type="date" id="abDateTo" class="dash-filter-ctl" value="${_abDateTo}" />
           </div>
         </div>
-        <div class="dash-filter-group">
-          <label class="dash-filter-label" style="visibility:hidden;">p</label>
-          <span style="font-size:12px;font-weight:600;color:${activeFilter ? '#2563eb' : '#64748b'};background:${activeFilter ? '#eff6ff' : '#f8fafc'};padding:8px 10px;border-radius:8px;border:1px solid ${activeFilter ? '#bfdbfe' : '#e2e8f0'};white-space:nowrap;">${filterLabel}</span>
+        <div class="dash-filter-group ab-search-group">
+          <label class="dash-filter-label">Lead Search</label>
+          <input type="text" id="abSearchInput" class="dash-filter-ctl ab-search-input" value="${escape(_abSearchQuery)}" placeholder="Search by name, mobile, email, or project" />
+        </div>
+        <div class="dash-filter-group ab-search-actions">
+          <label class="dash-filter-label" style="visibility:hidden;">Search</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button id="abSearchBtn" type="button" class="dash-refresh-btn" style="background:#1e3a5f;">Search</button>
+            <button id="abSearchResetBtn" type="button" class="sm-btn sm-btn-secondary" style="height:34px;">Reset</button>
+          </div>
         </div>
       </div>
 
-      <!-- Summary strip -->
-      <div id="abSummary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px;">
-        ${['Today\'s Callbacks','Overdue','New Leads','Follow Up','No Answer','Hot Leads'].map(l => `
-          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;text-align:center;">
-            <div style="height:28px;background:#f1f5f9;border-radius:6px;margin-bottom:6px;animation:_loaderBar 1.4s infinite;"></div>
-            <div style="font-size:11px;color:#64748b;font-weight:600;">${l}</div>
-          </div>`).join('')}
-      </div>
-
-      <!-- Section container -->
-      <div id="abSections" style="display:flex;flex-direction:column;gap:20px;">
-        ${[1,2,3,4,5,6].map(() => `
-          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;">
-            <div style="height:18px;width:200px;background:#f1f5f9;border-radius:6px;margin-bottom:14px;animation:_loaderBar 1.4s infinite;"></div>
-            <div style="height:12px;width:100%;background:#f8fafc;border-radius:4px;"></div>
-          </div>`).join('')}
+      <div id="abWorkspace" class="ab-workspace-shell">
+        <div class="ab-kpi-strip-skeleton">
+          ${[1,2,3,4,5,6,7].map(() => `<div class="ab-kpi-skeleton-tile"></div>`).join('')}
+        </div>
+        <div class="ab-panel-skeleton">
+          <div style="height:18px;width:220px;background:#f1f5f9;border-radius:6px;margin-bottom:14px;animation:_loaderBar 1.4s infinite;"></div>
+          <div style="height:12px;width:100%;background:#f8fafc;border-radius:4px;margin-bottom:10px;"></div>
+          <div style="height:12px;width:100%;background:#f8fafc;border-radius:4px;margin-bottom:10px;"></div>
+          <div style="height:12px;width:86%;background:#f8fafc;border-radius:4px;"></div>
+        </div>
       </div>
     </div>
   `
@@ -164,6 +319,9 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
   const abCustomRange = document.getElementById('abCustomRange')
   const abDateFrom = document.getElementById('abDateFrom')
   const abDateTo = document.getElementById('abDateTo')
+  const abSearchInput = document.getElementById('abSearchInput')
+  const abSearchBtn = document.getElementById('abSearchBtn')
+  const abSearchResetBtn = document.getElementById('abSearchResetBtn')
 
   if (abRangeFilter) {
     abRangeFilter.addEventListener('change', function () {
@@ -188,12 +346,34 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
     })
   }
 
+  function _abApplySearch() {
+    _abSearchQuery = (abSearchInput && abSearchInput.value ? abSearchInput.value : '').trim()
+    _abRenderWorkspace()
+  }
+  if (abSearchInput) {
+    abSearchInput.addEventListener('input', _abApplySearch)
+    abSearchInput.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return
+      e.preventDefault()
+      _abApplySearch()
+    })
+  }
+  if (abSearchBtn) abSearchBtn.addEventListener('click', _abApplySearch)
+  if (abSearchResetBtn) {
+    abSearchResetBtn.addEventListener('click', function () {
+      _abSearchQuery = ''
+      if (abSearchInput) abSearchInput.value = ''
+      _abRenderWorkspace()
+    })
+  }
+
   _actionBoardRenderInFlight = false
 
   // Fetch data
   let data
   try {
     const params = new URLSearchParams()
+    params.set('page_size', String(_abPageSize || 6))
     if (queryFrom) params.set('date_from', queryFrom)
     if (queryTo) params.set('date_to', queryTo)
     Object.keys(_abSectionPages).forEach(function (key) {
@@ -213,7 +393,7 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
     callbackRows.forEach(function (r) {
       const lid = Number(r.lead_id || 0)
       if (!lid || seenLeadIds[lid]) return
-      if (!r.project_name || typeof r.latest_note === 'undefined' || !r.lead_phone || !r.lead_status) {
+      if (!r.project_name || typeof r.latest_note === 'undefined' || !r.lead_phone || !r.lead_status || !r.assigned_to_name) {
         needsEnrichment.push(lid)
       }
       seenLeadIds[lid] = true
@@ -243,13 +423,15 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
         if (!r.project_name) r.project_name = lead.project_name || '-'
         if (typeof r.latest_note === 'undefined' || r.latest_note === null) r.latest_note = lead.latest_note || ''
         if (!r.lead_phone) r.lead_phone = lead.phone || ''
+        if (!r.lead_email) r.lead_email = lead.email || ''
         if (!r.lead_status) r.lead_status = lead.status || ''
         if (!r.lead_name) r.lead_name = lead.name || ('Lead #' + r.lead_id)
+        if (!r.assigned_to_name) r.assigned_to_name = lead.assigned_to_name || lead.assigned_user_name || 'Unassigned'
       })
     }
   } catch (err) {
     if (!_guard()) return
-    document.getElementById('abSections').innerHTML = `
+    document.getElementById('abWorkspace').innerHTML = `
       <div style="text-align:center;padding:60px 20px;">
         <div style="font-size:36px;margin-bottom:12px;">⚠️</div>
         <p style="color:#64748b;">Failed to load action board. <button class="button" onclick="renderActionBoard(_abDateFrom, _abDateTo)" style="font-size:13px;">Retry</button></p>
@@ -267,96 +449,62 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
   if ((s.warm_leads_count || 0) > 0) briefingParts.push(`${s.warm_leads_count} warm leads`)
   if ((s.hot_leads_count || 0) > 0) briefingParts.push(`${s.hot_leads_count} hot leads`)
   if ((s.new_leads_count || 0) > 0) briefingParts.push(`${s.new_leads_count} new leads`)
-  const briefing = briefingParts.length
-    ? `${boardScopeLabel}: You have ${briefingParts.join(', ')} to action now.`
-    : `${boardScopeLabel}: No urgent actions right now. Focus on quality follow-ups and notes hygiene.`
-  const briefingEl = document.getElementById('abBriefing')
-  if (briefingEl) briefingEl.textContent = briefing
-
-  // ── Summary strip ────────────────────────────────────────────────────────
-  const summaryItems = [
-    { count: s.today_callbacks_count || 0, label: callbacksLabel, color: '#2563eb', icon: 'fa-solid fa-phone' },
-    { count: s.overdue_count          || 0, label: 'Overdue Callbacks', color: '#dc2626', icon: 'fa-solid fa-triangle-exclamation' },
-    { count: s.new_leads_count        || 0, label: newLeadsLabel,      color: '#0891b2', icon: 'fa-solid fa-user-plus' },
-    { count: s.follow_up_count        || 0, label: followUpLabel,      color: '#7c3aed', icon: 'fa-solid fa-rotate' },
-    { count: s.no_answer_count        || 0, label: noAnswerLabel,      color: '#ea580c', icon: 'fa-solid fa-phone-slash' },
-    { count: s.warm_leads_count       || 0, label: warmLeadsLabel,     color: '#f59e0b', icon: 'fa-solid fa-sun' },
-    { count: s.hot_leads_count        || 0, label: hotLeadsLabel,      color: '#de2e2e', icon: 'fa-solid fa-fire' },
-  ]
-  const sumEl = document.getElementById('abSummary')
-  if (sumEl) {
-    sumEl.innerHTML = summaryItems.map(function (i) {
-      if (_abViewMode === 'compact') {
-        return `
-          <div style="background:#fff;border:1px solid #e2e8f0;border-left:3px solid ${i.color};border-radius:8px;padding:10px 12px;box-shadow:0 1px 2px rgba(2,6,23,0.04);display:flex;align-items:center;gap:10px;min-height:54px;">
-            <div style="width:28px;height:28px;border-radius:7px;background:${i.color}12;display:flex;align-items:center;justify-content:center;color:${i.color};font-size:13px;flex-shrink:0;"><i class="${i.icon}"></i></div>
-            <div style="min-width:0;flex:1;">
-              <div style="font-size:18px;font-weight:800;color:#0f172a;line-height:1;">${i.count}</div>
-              <div style="font-size:10px;color:#64748b;font-weight:600;margin-top:3px;line-height:1.2;">${i.label}</div>
-            </div>
-          </div>
-        `
-      }
-      return `
-        <div style="background:#fff;border:1px solid #e2e8f0;border-left:4px solid ${i.color};border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(2,6,23,0.06);display:flex;align-items:center;gap:14px;min-height:74px;">
-          <div style="width:38px;height:38px;border-radius:8px;background:${i.color}15;display:flex;align-items:center;justify-content:center;color:${i.color};font-size:16px;flex-shrink:0;"><i class="${i.icon}"></i></div>
-          <div>
-            <div style="font-size:26px;font-weight:800;color:#0f172a;line-height:1;">${i.count}</div>
-            <div style="font-size:11px;color:#64748b;font-weight:600;margin-top:4px;">${i.label}</div>
-          </div>
-        </div>
-      `
-    }).join('')
-  }
+  const briefing = Number(s.overdue_count || 0) > 0
+    ? `${Number(s.overdue_count || 0)} overdue callback${Number(s.overdue_count || 0) === 1 ? '' : 's'} require attention.`
+    : 'No pending actions. Have a productive day.'
+  const headerMetaEl = document.getElementById('abHeaderMeta')
+  const headerDateEl = document.getElementById('abHeaderDate')
+  if (headerMetaEl) headerMetaEl.textContent = `${greetingPrefix}, ${user.name} • ${briefing}`
+  if (headerDateEl) headerDateEl.textContent = headerDateLabel
 
   // ── Helper: lead mini-card ───────────────────────────────────────────────
   function _leadCard(l, extra) {
     const priority = _abLeadPriority(l)
-    const sc = (typeof STATUS_COLORS !== 'undefined' ? STATUS_COLORS : {})[l.status]
-    const badge = sc ? `<span style="background:${sc.bg};color:${sc.color};font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;flex-shrink:0;">${sc.label}</span>`
-                     : `<span style="background:#f1f5f9;color:#475569;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;flex-shrink:0;">${(l.status||'').replace(/_/g,' ')}</span>`
     const age = l.created_at ? _leadAge(new Date(l.created_at)) : ''
     const compact = _abViewMode === 'compact'
     const phone = l.phone || ''
+    const alternatePhone = l.alternate_phone || ''
     const project = l.project_name || '-'
+    const nextCallback = _abNextCallbackLabel(l)
     const latestNote = (l.latest_note || '').trim()
-    const statusText = sc ? sc.label : (l.status || '').replace(/_/g, ' ')
     const safePhone = escape(phone)
+    const safeAlternatePhone = escape(alternatePhone)
     const callPhoneArg = JSON.stringify(phone)
+    const callAlternatePhoneArg = JSON.stringify(alternatePhone)
     const callNameArg = JSON.stringify(l.name || 'Lead')
-    const compactNameStyle = compact ? 'font-weight:700;font-size:12.5px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' : 'font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
-    const compactPhoneStyle = compact ? 'display:none;' : 'font-size:11px;color:#94a3b8;'
-    const avatarStyle = compact ? 'width:30px;height:30px;border-radius:7px;background:#e0e7ff;color:#4f46e5;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0;' : 'width:36px;height:36px;border-radius:8px;background:#e0e7ff;color:#4f46e5;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;'
+    const compactNameStyle = compact ? 'font-weight:700;font-size:12.5px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' : 'font-weight:700;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+    const avatarStyle = compact ? 'width:30px;height:30px;border-radius:9px;background:#eef2ff;color:#4f46e5;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;flex-shrink:0;' : 'width:34px;height:34px;border-radius:10px;background:#eef2ff;color:#4f46e5;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex-shrink:0;'
     const callBtn = phone
-      ? `<button onclick='_abStartCallFlow(${l.id}, ${callPhoneArg}, ${callNameArg})' style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #dbeafe;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#1d4ed8;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-phone" style="margin-right:${compact ? '0' : '4px'};font-size:10px;"></i>${compact ? '' : 'Call'}</button>`
+      ? `<button onclick='_abStartCallFlow(${l.id}, ${callPhoneArg}, ${callNameArg}, ${callAlternatePhoneArg})' style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #dbeafe;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#1d4ed8;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-phone" style="margin-right:${compact ? '0' : '4px'};font-size:10px;"></i>${compact ? '' : 'Call'}</button>`
       : ''
+    const statusControl = _abStatusControl(l.id, l.status)
     return `
-      <div class="ab-lead-card" data-lead-id="${l.id}" data-phone="${safePhone}" tabindex="0" style="display:flex;align-items:center;gap:${compact ? '8px' : '12px'};padding:${compact ? '6px 10px' : '10px 14px'};background:${compact ? '#fff' : '#f8fafc'};border-radius:${compact ? '6px' : '8px'};border:1px solid #e2e8f0;border-left:4px solid ${priority.color};outline:none;">
-        <div style="${avatarStyle}">
-          ${escape((l.name||'?')[0]).toUpperCase()}
-        </div>
-        <div style="flex:1;min-width:0;">
-          <button onclick="_abOpenLead(${l.id})" style="${compactNameStyle}background:none;border:none;padding:0;cursor:pointer;color:#1e40af;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(30,64,175,.35);">${escape(l.name||'')}</button>
-          <div style="font-size:11px;color:#64748b;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <span><strong style="color:#334155;">Phone:</strong> ${escape(phone || '—')}</span>
-            <span><strong style="color:#334155;">Status:</strong> ${escape(statusText || '—')}</span>
-            <span><strong style="color:#334155;">Project:</strong> ${escape(project)}</span>
-            <span style="display:inline-flex;align-items:center;gap:6px;min-width:220px;">
-              <strong style="color:#334155;">Latest Note:</strong>
-              <span title="${escape(latestNote || 'No notes')}" style="max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${latestNote ? '#475569' : '#94a3b8'};">${escape(latestNote || '—')}</span>
-              <button onclick="_abQuickNote(${l.id})" style="font-size:10px;font-weight:700;background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:2px 7px;color:#334155;cursor:pointer;">Update</button>
-            </span>
+      <div class="ab-lead-card ab-row-shell" data-lead-id="${l.id}" data-phone="${safePhone}" tabindex="0" style="border-left:4px solid ${priority.color};">
+        <div class="ab-row-identity">
+          <div style="${avatarStyle}">${escape((l.name||'?')[0]).toUpperCase()}</div>
+          <div class="ab-row-identity-copy">
+            <button onclick="_abOpenLead(${l.id})" style="${compactNameStyle}background:none;border:none;padding:0;cursor:pointer;color:#1e40af;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(30,64,175,.35);">${escape(l.name||'')}</button>
+            <div class="ab-row-age">${escape(age || '1 Day')} • ${escape(priority.short)}</div>
+            <div class="ab-row-phone"><strong style="color:#334155;">Phone:</strong> ${escape(phone || '—')}${alternatePhone ? ` <span style="color:#64748b;">· Alt ${safeAlternatePhone}</span>` : ''}</div>
           </div>
-          <div style="${compactPhoneStyle}">${age ? '<span style="color:#f59e0b;font-weight:600;">'+age+'</span>' : ''}</div>
-          ${compact ? `<div style="font-size:10px;color:${priority.color};font-weight:700;margin-top:1px;">${priority.label}</div>` : `<div style="font-size:10px;color:${priority.color};font-weight:700;margin-top:2px;">${priority.label}</div>`}
         </div>
-        ${compact ? '' : badge}
+        <div class="ab-row-context">
+          <div class="ab-row-label">Project</div>
+          <div class="ab-row-value">${escape(project)}</div>
+          <div class="ab-row-label" style="margin-top:2px;">Latest Note</div>
+          <div class="ab-row-note" title="${escape(latestNote || 'No notes')}">${escape(latestNote || 'No notes')}</div>
+        </div>
+        <div class="ab-row-callback">
+          <div class="ab-row-label">Next Callback</div>
+          <div class="ab-row-value">${escape(nextCallback)}</div>
+        </div>
+        <div class="ab-row-status-cell">${statusControl}</div>
         ${extra || ''}
-        <div style="display:flex;gap:6px;flex-shrink:0;">
+        <div class="ab-row-actions">
           ${callBtn}
           <button onclick="_abOpenLead(${l.id})" style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#4f46e5;cursor:pointer;white-space:nowrap;">${compact ? '<i class="fa-solid fa-folder-open"></i>' : 'Open Lead'}</button>
-          ${compact ? '' : `<button onclick="_abQuickNote(${l.id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#64748b;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-pen-to-square" style="margin-right:4px;font-size:10px;"></i>Note</button>`}
-          ${compact ? '' : `<button onclick="_abCallCallback(${l.id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#0369a1;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-calendar-plus" style="margin-right:4px;font-size:10px;"></i>Callback</button>`}
+          <button onclick="_abQuickNote(${l.id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#64748b;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-pen-to-square" style="margin-right:4px;font-size:10px;"></i>Note</button>
+          <button onclick="_abCallCallback(${l.id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#0369a1;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-calendar-plus" style="margin-right:4px;font-size:10px;"></i>Callback</button>
         </div>
       </div>`
   }
@@ -370,76 +518,47 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
     const faIcon = isPast ? 'fa-solid fa-triangle-exclamation' : 'fa-solid fa-bell'
     const compact = _abViewMode === 'compact'
     const phone = c.lead_phone || c.phone || ''
+    const alternatePhone = c.lead_alternate_phone || c.alternate_phone || ''
     const project = c.project_name || c.project || c.project_title || '-'
     const latestNote = (c.latest_note || '').trim()
     const safePhone = escape(phone)
+    const safeAlternatePhone = escape(alternatePhone)
     const callPhoneArg = JSON.stringify(phone)
+    const callAlternatePhoneArg = JSON.stringify(alternatePhone)
     const callNameArg = JSON.stringify(c.lead_name || 'Lead')
     const compactNameStyle = compact ? 'font-weight:700;font-size:12.5px;color:#0f172a;' : 'font-weight:600;font-size:13px;color:#0f172a;'
     const callBtn = phone
-      ? `<button onclick='_abStartCallFlow(${c.lead_id}, ${callPhoneArg}, ${callNameArg})' style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #dbeafe;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#1d4ed8;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-phone" style="margin-right:${compact ? '0' : '4px'};font-size:10px;"></i>${compact ? '' : 'Call'}</button>`
+      ? `<button onclick='_abStartCallFlow(${c.lead_id}, ${callPhoneArg}, ${callNameArg}, ${callAlternatePhoneArg})' style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #dbeafe;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#1d4ed8;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-phone" style="margin-right:${compact ? '0' : '4px'};font-size:10px;"></i>${compact ? '' : 'Call'}</button>`
       : ''
     const timeStr = dt.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+    const statusText = (c.lead_status || '').replace(/_/g,' ') || 'callback'
+    const statusControl = c.lead_id ? _abStatusControl(c.lead_id, c.lead_status) : ''
     return `
-      <div class="ab-lead-card" data-lead-id="${c.lead_id}" data-phone="${safePhone}" tabindex="0" style="display:flex;align-items:center;gap:${compact ? '8px' : '12px'};padding:${compact ? '6px 10px' : '10px 14px'};background:${compact ? '#fff' : bg};border-radius:${compact ? '6px' : '8px'};border:1px solid ${col}22;border-left:4px solid ${col};outline:none;">
-        <div style="width:${compact ? '28px' : '32px'};height:${compact ? '28px' : '32px'};border-radius:8px;background:${col}15;display:flex;align-items:center;justify-content:center;color:${col};font-size:${compact ? '12px' : '14px'};flex-shrink:0;">
-          <i class="${faIcon}"></i>
-        </div>
-        <div style="flex:1;min-width:0;">
-          <button onclick="_abOpenLead(${c.lead_id})" style="${compactNameStyle}background:none;border:none;padding:0;cursor:pointer;color:#1e40af;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(30,64,175,.35);">${escape(c.lead_name||'')}</button>
-          <div style="font-size:${compact ? '10px' : '11px'};color:${col};font-weight:600;">${timeStr}</div>
-          <div style="font-size:11px;color:#64748b;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <span><strong style="color:#334155;">Phone:</strong> ${escape(phone || '—')}</span>
-            <span><strong style="color:#334155;">Status:</strong> ${escape((c.lead_status || '').replace(/_/g,' ') || '—')}</span>
-            <span><strong style="color:#334155;">Project:</strong> ${escape(project)}</span>
-            <span style="display:inline-flex;align-items:center;gap:6px;min-width:220px;">
-              <strong style="color:#334155;">Latest Note:</strong>
-              <span title="${escape(latestNote || 'No notes')}" style="max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${latestNote ? '#475569' : '#94a3b8'};">${escape(latestNote || '—')}</span>
-              <button onclick="_abQuickNote(${c.lead_id})" style="font-size:10px;font-weight:700;background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:2px 7px;color:#334155;cursor:pointer;">Update</button>
-            </span>
+      <div class="ab-lead-card ab-row-shell" data-lead-id="${c.lead_id}" data-phone="${safePhone}" tabindex="0" style="background:${compact ? '#fff' : bg};border-left:4px solid ${col};border-color:${col}22;">
+        <div class="ab-row-identity">
+          <div style="width:${compact ? '28px' : '32px'};height:${compact ? '28px' : '32px'};border-radius:10px;background:${col}15;display:flex;align-items:center;justify-content:center;color:${col};font-size:${compact ? '12px' : '14px'};flex-shrink:0;"><i class="${faIcon}"></i></div>
+          <div class="ab-row-identity-copy">
+            <button onclick="_abOpenLead(${c.lead_id})" style="${compactNameStyle}background:none;border:none;padding:0;cursor:pointer;color:#1e40af;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(30,64,175,.35);">${escape(c.lead_name||'')}</button>
+            <div class="ab-row-age">${escape((c.lead_created_at ? _leadAge(new Date(c.lead_created_at)) : '1 Day'))} • Callback</div>
+            <div class="ab-row-phone"><strong style="color:#334155;">Phone:</strong> ${escape(phone || '—')}${alternatePhone ? ` <span style="color:#64748b;">· Alt ${safeAlternatePhone}</span>` : ''}</div>
           </div>
-          ${c.notes ? `<div style="font-size:11px;color:#64748b;margin-top:2px;">${escape(c.notes)}</div>` : ''}
         </div>
-        ${compact || !c.lead_status ? '' : `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;background:#f1f5f9;color:#475569;">${c.lead_status.replace(/_/g,' ')}</span>`}
-        <div style="display:flex;gap:6px;flex-shrink:0;">
+        <div class="ab-row-context">
+          <div class="ab-row-label">Project</div>
+          <div class="ab-row-value">${escape(project)}</div>
+          <div class="ab-row-label" style="margin-top:2px;">Latest Note</div>
+          <div class="ab-row-note" title="${escape(latestNote || 'No notes')}">${escape(latestNote || 'No notes')}</div>
+        </div>
+        <div class="ab-row-callback">
+          <div class="ab-row-label">Next Callback</div>
+          <div class="ab-row-value">${escape(timeStr)}</div>
+        </div>
+        <div class="ab-row-status-cell">${statusControl}</div>
+        <div class="ab-row-actions">
           ${callBtn}
           <button onclick="_abOpenLead(${c.lead_id})" style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#4f46e5;cursor:pointer;white-space:nowrap;">${compact ? '<i class="fa-solid fa-folder-open"></i>' : 'Open Lead'}</button>
-          ${compact ? '' : `<button onclick="markCallbackDone(${c.id}, ${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #d1fae5;border-radius:6px;padding:5px 10px;color:#059669;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-check" style="margin-right:4px;font-size:10px;"></i>Done</button>`}
-        </div>
-      </div>`
-  }
-
-  // ── Helper: section wrapper ──────────────────────────────────────────────
-  function _section(key, title, icon, items, emptyMsg, accentColor, paging) {
-    const collapsed = items.length === 0
-    const compact = _abViewMode === 'compact'
-    const totalCount = paging && typeof paging.total === 'number' ? paging.total : items.length
-    const showingLabel = paging && paging.total > 0
-      ? ('Showing ' + paging.shown + ' of ' + paging.total)
-      : ''
-    const pager = paging && paging.total > 0
-      ? `<div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${showingLabel}</span>
-            <button type="button" class="ab-page-btn" data-section-key="${key}" data-page-action="prev" ${paging.has_prev ? '' : 'disabled'} style="font-size:11px;font-weight:600;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:${paging.has_prev ? '#334155' : '#cbd5e1'};cursor:${paging.has_prev ? 'pointer' : 'default'};">Prev</button>
-            <button type="button" class="ab-page-btn" data-section-key="${key}" data-page-action="next" ${paging.has_next ? '' : 'disabled'} style="font-size:11px;font-weight:600;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:${paging.has_next ? '#334155' : '#cbd5e1'};cursor:${paging.has_next ? 'pointer' : 'default'};">Next</button>
-          </div>`
-      : ''
-    return `
-      <div class="ab-section" data-section-key="${key}" data-collapsed="${collapsed ? '1' : '0'}" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(2,6,23,0.04);">
-        <div class="ab-section-toggle" data-section-key="${key}" style="padding:${compact ? '11px 16px' : '14px 20px'};border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <div style="width:${compact ? '28px' : '32px'};height:${compact ? '28px' : '32px'};border-radius:8px;background:${accentColor}15;display:flex;align-items:center;justify-content:center;color:${accentColor};font-size:${compact ? '13px' : '14px'};">${icon}</div>
-            <h3 style="font-size:${compact ? '13px' : '14px'};font-weight:700;color:#0f172a;margin:0;">${title}</h3>
-            <span style="background:${accentColor}15;color:${accentColor};font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;min-width:22px;text-align:center;">${totalCount}</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            ${compact ? '' : pager}
-            ${compact ? '' : `<span class="ab-updated" data-updated-at="${nowMs}" style="font-size:11px;color:#94a3b8;">Updated just now</span>`}
-            <i class="fa-solid ${collapsed ? 'fa-chevron-down' : 'fa-chevron-up'}" style="font-size:11px;color:#94a3b8;"></i>
-          </div>
-        </div>
-        <div class="ab-section-body" style="padding:${compact ? '8px 12px' : '12px 16px'};display:${collapsed ? 'none' : 'flex'};flex-direction:column;gap:${compact ? '6px' : '8px'};">
-          ${items.length ? items.join('') : `<p style="color:#94a3b8;font-size:13px;margin:12px 0;text-align:center;font-style:italic;">${emptyMsg}</p>`}
+          <button onclick="_abQuickNote(${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#64748b;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-pen-to-square" style="margin-right:4px;font-size:10px;"></i>Note</button>
+          <button onclick="markCallbackDone(${c.id}, ${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #d1fae5;border-radius:6px;padding:5px 10px;color:#059669;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-check" style="margin-right:4px;font-size:10px;"></i>Done</button>
         </div>
       </div>`
   }
@@ -450,84 +569,356 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
       key: 'today_callbacks',
       title: callbacksLabel,
       icon: '<i class="fa-solid fa-phone"></i>',
-      items: (data.today_callbacks || []).map(_callbackRow),
+      rawItems: data.today_callbacks || [],
+      renderItem: _callbackRow,
       emptyMsg: 'No callbacks scheduled for today.',
       accentColor: '#2563eb',
-      paging: (data.pagination || {}).today_callbacks || null
+      paging: (data.pagination || {}).today_callbacks || null,
+      count: s.today_callbacks_count || 0,
     },
     {
       key: 'overdue_callbacks',
       title: 'Overdue Callbacks',
       icon: '<i class="fa-solid fa-triangle-exclamation"></i>',
-      items: (data.overdue_callbacks || []).map(_callbackRow),
+      rawItems: data.overdue_callbacks || [],
+      renderItem: _callbackRow,
       emptyMsg: 'No overdue callbacks - great work!',
       accentColor: '#dc2626',
-      paging: (data.pagination || {}).overdue_callbacks || null
+      paging: (data.pagination || {}).overdue_callbacks || null,
+      count: s.overdue_count || 0,
     },
     {
       key: 'new_leads_today',
       title: newLeadsLabel,
       icon: '<i class="fa-solid fa-user-plus"></i>',
-      items: (data.new_leads_today || []).map(l => {
+      rawItems: data.new_leads_today || [],
+      renderItem: function (l) {
         const age = l.created_at ? _leadAge(new Date(l.created_at)) : ''
         return _leadCard(l, age ? `<span style="background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;">${age}</span>` : '')
-      }),
+      },
       emptyMsg: 'No new leads assigned today.',
       accentColor: '#0891b2',
-      paging: (data.pagination || {}).new_leads_today || null
+      paging: (data.pagination || {}).new_leads_today || null,
+      count: s.new_leads_count || 0,
     },
     {
       key: 'follow_up',
       title: followUpLabel,
       icon: '<i class="fa-solid fa-rotate"></i>',
-      items: (data.follow_up_leads || []).map(l => _leadCard(l)),
+      rawItems: data.follow_up_leads || [],
+      renderItem: _leadCard,
       emptyMsg: 'No leads in Follow Up or Callback Scheduled status.',
       accentColor: '#7c3aed',
-      paging: (data.pagination || {}).follow_up || null
+      paging: (data.pagination || {}).follow_up || null,
+      count: s.follow_up_count || 0,
     },
     {
       key: 'no_answer',
       title: noAnswerLabel,
       icon: '<i class="fa-solid fa-phone-slash"></i>',
-      items: (data.no_answer_leads || []).map(l => _leadCard(l)),
+      rawItems: data.no_answer_leads || [],
+      renderItem: _leadCard,
       emptyMsg: 'No unanswered leads pending retry.',
       accentColor: '#ea580c',
-      paging: (data.pagination || {}).no_answer || null
+      paging: (data.pagination || {}).no_answer || null,
+      count: s.no_answer_count || 0,
     },
     {
       key: 'warm_leads',
       title: warmLeadsLabel,
       icon: '<i class="fa-solid fa-sun"></i>',
-      items: (data.warm_leads || []).map(l => _leadCard(l)),
+      rawItems: data.warm_leads || [],
+      renderItem: _leadCard,
       emptyMsg: 'No warm leads at the moment.',
       accentColor: '#f59e0b',
-      paging: (data.pagination || {}).warm_leads || null
+      paging: (data.pagination || {}).warm_leads || null,
+      count: s.warm_leads_count || 0,
     },
     {
       key: 'hot_leads',
       title: hotLeadsLabel,
       icon: '<i class="fa-solid fa-fire"></i>',
-      items: (data.hot_leads || []).map(l => _leadCard(l)),
+      rawItems: data.hot_leads || [],
+      renderItem: _leadCard,
       emptyMsg: 'No hot leads at the moment.',
       accentColor: '#6d28d9',
-      paging: (data.pagination || {}).hot_leads || null
+      paging: (data.pagination || {}).hot_leads || null,
+      count: s.hot_leads_count || 0,
     }
   ]
 
-  const sections = sectionData.map(function (sec) {
-    return _section(sec.key, sec.title, sec.icon, sec.items, sec.emptyMsg, sec.accentColor, sec.paging)
-  })
-
-  const secEl = document.getElementById('abSections')
-  if (secEl && _guard()) {
-    secEl.innerHTML = sections.join('')
-    _abWireSectionToggles(secEl)
-    _abWirePagination(secEl)
-    _abWireCardFocus(secEl)
+  _abCurrentSections = sectionData
+  if (!_abCurrentSections.some(function (sec) { return sec.key === _abActiveSectionKey })) {
+    _abActiveSectionKey = _abCurrentSections.length ? _abCurrentSections[0].key : 'today_callbacks'
   }
+  _abLastRenderMs = Date.now()
+  if (_guard()) _abRenderWorkspace()
 
   _abRefreshUpdatedLabels()
   _abUpdatedTimer = setInterval(_abRefreshUpdatedLabels, 60000)
+}
+
+function _abGetSearchFields(section, item) {
+  if (!section || !item) return []
+  if (section.key === 'today_callbacks' || section.key === 'overdue_callbacks') {
+    return [item.lead_name || '', item.lead_phone || '', item.lead_email || item.email || '', item.project_name || '']
+  }
+  return [item.name || '', item.phone || '', item.email || '', item.project_name || '']
+}
+
+function _abFilterSectionItems(section) {
+  var items = Array.isArray(section && section.rawItems) ? section.rawItems : []
+  var q = (_abSearchQuery || '').toLowerCase().trim()
+  if (!q) return items
+  return items.filter(function (item) {
+    return _abGetSearchFields(section, item).some(function (value) {
+      return String(value || '').toLowerCase().includes(q)
+    })
+  })
+}
+
+function _abFormatActionDate(raw) {
+  if (!raw) return '—'
+  var dt = new Date(raw)
+  if (Number.isNaN(dt.getTime())) return '—'
+  return dt.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).replace(',', '')
+}
+
+function _abNotePreview(note) {
+  var text = String(note || '').replace(/\s+/g, ' ').trim()
+  if (!text) return '—'
+  return text.length > 30 ? (text.slice(0, 30).trimEnd() + '...') : text
+}
+
+function _abOpenNoteEditor(leadId) {
+  if (typeof openLeadInlineNoteEditor === 'function') return openLeadInlineNoteEditor(leadId)
+  return _abQuickNote(leadId)
+}
+
+function _abOpenCallbackScheduler(leadId) {
+  if (typeof openLeadCallbackScheduler === 'function') return openLeadCallbackScheduler(leadId)
+  return _abCallCallback(leadId)
+}
+
+function _abNormalizeActionRow(section, item) {
+  var isCallback = section && (section.key === 'today_callbacks' || section.key === 'overdue_callbacks')
+  var leadId = Number(isCallback ? item.lead_id : item.id)
+  var status = String(isCallback ? (item.lead_status || '') : (item.status || '')).toLowerCase()
+  var priority = _abLeadPriority({ status: status })
+  var createdAt = isCallback ? item.lead_created_at : item.created_at
+  var age = createdAt ? _leadAge(new Date(createdAt)) : '1 Day'
+  var nextCallback = isCallback
+    ? _abFormatActionDate(item.callback_datetime)
+    : _abFormatActionDate(item.next_callback_datetime || item.next_callback_at || item.next_callback)
+  return {
+    leadId: leadId,
+    name: isCallback ? (item.lead_name || ('Lead #' + leadId)) : (item.name || ('Lead #' + leadId)),
+    age: age,
+    priority: priority.short,
+    phone: isCallback ? (item.lead_phone || item.phone || '') : (item.phone || ''),
+    status: status,
+    project: isCallback ? (item.project_name || item.project || item.project_title || '—') : (item.project_name || '—'),
+    latestNote: isCallback ? (item.latest_note || '') : (item.latest_note || ''),
+    nextCallback: nextCallback,
+  }
+}
+
+function _abRenderActionRow(section, item) {
+  var row = _abNormalizeActionRow(section, item)
+  if (!row.leadId) return ''
+  var callPhoneArg = JSON.stringify(row.phone || '')
+  var callNameArg = JSON.stringify(row.name || 'Lead')
+  var notePreview = _abNotePreview(row.latestNote)
+  return `
+    <tr class="ab-action-row ab-lead-card" data-lead-id="${row.leadId}" data-phone="${escape(row.phone || '')}" tabindex="0">
+      <td>
+        <div class="ab-action-name-cell">
+          <button type="button" class="ab-action-name-btn" onclick="_abOpenLead(${row.leadId})">${escape(row.name)}</button>
+          <div class="ab-action-name-meta">${escape(row.age)} • ${escape(row.priority)}</div>
+        </div>
+      </td>
+      <td><span class="ab-cell-text">${escape(row.phone || '—')}</span></td>
+      <td data-ab-no-open="1"><div class="ab-action-status" data-ab-no-open="1">${_abStatusControl(row.leadId, row.status)}</div></td>
+      <td><span class="ab-cell-text" title="${escape(row.project)}">${escape(row.project)}</span></td>
+      <td>
+        <div class="ab-note-cell" title="${escape(row.latestNote || 'No notes')}">
+          <span class="ab-note-preview">${escape(notePreview)}</span>
+        </div>
+      </td>
+      <td>
+        <div class="ab-callback-cell">
+          <span class="ab-cell-text" title="${escape(row.nextCallback)}">${escape(row.nextCallback)}</span>
+        </div>
+      </td>
+      <td>
+        <div class="ab-action-buttons">
+          ${row.phone ? `<button type="button" class="ab-row-action-btn" onclick='_abStartCallFlow(${row.leadId}, ${callPhoneArg}, ${callNameArg}, ${JSON.stringify(row.alternate_phone || row.lead_alternate_phone || '')})'><span class="ab-row-action-icon">📞</span><span class="ab-row-action-label">Call</span></button>` : ''}
+          <button type="button" class="ab-row-action-btn" onclick="_abOpenNoteEditor(${row.leadId})"><span class="ab-row-action-icon">📝</span><span class="ab-row-action-label">Note</span></button>
+          <button type="button" class="ab-row-action-btn" onclick="_abOpenCallbackScheduler(${row.leadId})"><span class="ab-row-action-icon">📅</span><span class="ab-row-action-label">Callback</span></button>
+        </div>
+      </td>
+    </tr>`
+}
+
+function _abRenderWorkspace() {
+  var workspace = document.getElementById('abWorkspace')
+  if (!workspace || !workspace.isConnected) return
+  if (!_abCurrentSections || !_abCurrentSections.length) {
+    workspace.innerHTML = '<div class="message">No KPI data available.</div>'
+    return
+  }
+
+  var active = _abCurrentSections.find(function (sec) { return sec.key === _abActiveSectionKey }) || _abCurrentSections[0]
+  _abActiveSectionKey = active.key
+  var isMobile = (window.innerWidth || 0) <= 768
+  var filteredItems = _abFilterSectionItems(active)
+  var renderedRows = filteredItems.map(function (item) { return _abRenderActionRow(active, item) }).filter(Boolean)
+  var renderedCards = filteredItems.map(function (item) { return active.renderItem(item) }).filter(Boolean)
+  var paging = active.paging || null
+  var totalPages = paging && paging.page_size ? Math.max(1, Math.ceil((paging.total || 0) / paging.page_size)) : 1
+  var recordCount = paging && typeof paging.total === 'number' ? paging.total : filteredItems.length
+  var searchApplied = !!((_abSearchQuery || '').trim())
+  var startIndex = paging && typeof paging.start === 'number' ? paging.start : (filteredItems.length ? 1 : 0)
+  var endIndex = paging && typeof paging.end === 'number' ? paging.end : filteredItems.length
+  var totalCount = paging && typeof paging.total === 'number' ? paging.total : filteredItems.length
+  var searchMeta = searchApplied
+    ? ('Showing ' + filteredItems.length + ' matching result' + (filteredItems.length === 1 ? '' : 's'))
+    : ('Showing ' + startIndex + '-' + endIndex + ' of ' + totalCount)
+  workspace.innerHTML = `
+    <div class="ab-kpi-strip">
+        ${_abCurrentSections.map(function (sec) {
+          var isActive = sec.key === active.key
+          return `
+            <button type="button" class="ab-kpi-tab${isActive ? ' is-active' : ''}" data-section-key="${sec.key}" style="--ab-kpi-color:${sec.accentColor};">
+              <span class="ab-kpi-count">${Number(sec.count || 0).toLocaleString()}</span>
+              <span class="ab-kpi-copy">
+                <span class="ab-kpi-title">${sec.title}</span>
+              </span>
+            </button>`
+        }).join('')}
+    </div>
+    <section class="ab-active-panel">
+        <div class="ab-active-panel-body" style="min-height:0;">
+          <div class="ab-list-shell">
+            <div class="ab-list-header">
+              <div>
+                <p class="ab-list-eyebrow">Action List</p>
+                <h3 class="ab-list-title">${active.title}</h3>
+              </div>
+              <span class="ab-list-count">${Number(recordCount || 0).toLocaleString()} leads</span>
+            </div>
+            ${isMobile
+              ? (renderedCards.length
+                ? `<div class="ab-mobile-list">${renderedCards.join('')}</div>`
+                : `<p class="ab-empty-state">${searchApplied ? 'No results match this search in the selected KPI list.' : active.emptyMsg}</p>`)
+              : (renderedRows.length
+                ? `<div class="ab-table-wrap">
+                    <table class="ab-action-table">
+                      <colgroup>
+                        <col style="width:17%;" />
+                        <col style="width:12%;" />
+                        <col style="width:15%;" />
+                        <col style="width:12%;" />
+                        <col style="width:16%;" />
+                        <col style="width:12%;" />
+                        <col style="width:16%;" />
+                      </colgroup>
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Phone</th>
+                          <th>Status</th>
+                          <th>Project</th>
+                          <th>Latest Note</th>
+                          <th>Next Callback</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>${renderedRows.join('')}</tbody>
+                    </table>
+                  </div>`
+                : `<p class="ab-empty-state">${searchApplied ? 'No results match this search in the selected KPI list.' : active.emptyMsg}</p>`)}
+          </div>
+        </div>
+        <div class="ab-utility-row">
+          <div class="ab-utility-left">
+            <span class="ab-panel-meta">${searchMeta || `Showing ${recordCount} records`}</span>
+            <label class="ab-page-label" for="abPageSizeSelect">Page Size</label>
+            <select id="abPageSizeSelect" class="ab-size-select ab-page-size-select">
+              <option value="auto" ${_abPageSizeMode === 'auto' ? 'selected' : ''}>Auto (${_abRecommendedPageSize()})</option>
+              ${[6, 12, 18].map(function (size) { return `<option value="${size}" ${_abPageSizeMode !== 'auto' && Number(_abPageSize || 6) === size ? 'selected' : ''}>${size}</option>` }).join('')}
+            </select>
+          </div>
+          <div class="ab-utility-right">
+            <div class="ab-panel-pager">
+              <span class="ab-panel-page-state">Page ${paging && paging.page ? paging.page : 1} of ${totalPages}</span>
+              <select id="abPageSelect" class="ab-page-select" data-section-key="${active.key}">
+                ${Array.from({ length: totalPages }, function (_unused, idx) {
+                  var pageNum = idx + 1
+                  return `<option value="${pageNum}" ${paging && pageNum === paging.page ? 'selected' : ''}>${pageNum}</option>`
+                }).join('')}
+              </select>
+              <button type="button" class="ab-page-btn" data-section-key="${active.key}" data-page-action="prev" ${paging && paging.has_prev ? '' : 'disabled'}>Prev</button>
+              <button type="button" class="ab-page-btn" data-section-key="${active.key}" data-page-action="next" ${paging && paging.has_next ? '' : 'disabled'}>Next</button>
+            </div>
+            <button type="button" id="abRefreshBtn" class="dash-refresh-btn">↻ Refresh</button>
+          </div>
+        </div>
+      </section>
+  `
+
+  _abWireKpiTabs(workspace)
+  _abWirePagination(workspace)
+  _abWireCardFocus(workspace)
+  var sizeSel = workspace.querySelector('#abPageSizeSelect')
+  if (sizeSel) {
+    sizeSel.addEventListener('change', function () {
+      if (sizeSel.value === 'auto') {
+        _abPageSizeMode = 'auto'
+        _abPageSize = _abRecommendedPageSize()
+      } else {
+        _abPageSizeMode = 'manual'
+        _abPageSize = Math.max(6, parseInt(sizeSel.value, 10) || 6)
+      }
+      Object.keys(_abSectionPages).forEach(function (key) { _abSectionPages[key] = 1 })
+      renderActionBoard(_abDateFrom, _abDateTo, _abRange)
+    })
+  }
+  var refreshBtn = workspace.querySelector('#abRefreshBtn')
+  if (refreshBtn) refreshBtn.addEventListener('click', function () { renderActionBoard(_abDateFrom, _abDateTo, _abRange) })
+}
+
+function _abStatusControl(leadId, currentStatus) {
+  var id = Number(leadId || 0)
+  if (!id) return ''
+  var current = String(currentStatus || '').toLowerCase()
+  var meta = _abStatusMeta[current] || { label: current.replace(/_/g, ' '), bg: '#f8fafc', color: '#334155', border: '#cbd5e1' }
+  return `
+    <span class="ab-status-chip" data-ab-no-open="1" style="padding:0 8px;border:1px solid ${meta.border};border-radius:999px;background:${meta.bg};">
+      <select class="ab-inline-status-select" data-ab-no-open="1" data-lead-id="${id}" style="color:${meta.color};">
+        ${_abStatusOptions.map(function (opt) {
+          return `<option value="${opt.value}" ${opt.value === current ? 'selected' : ''}>${opt.label}</option>`
+        }).join('')}
+      </select>
+    </span>`
+}
+
+function _abWireKpiTabs(root) {
+  var tabs = root.querySelectorAll('.ab-kpi-tab')
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      var key = tab.getAttribute('data-section-key') || ''
+      if (!key || key === _abActiveSectionKey) return
+      _abActiveSectionKey = key
+      _abRenderWorkspace()
+    })
+  })
 }
 
 
@@ -535,13 +926,13 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
 
 function _abLeadPriority(l) {
   const st = (l && l.status ? String(l.status) : '').toLowerCase()
-  if (st.indexOf('hot') >= 0 || st === 'negotiation' || st === 'booking_done') {
-    return { color: '#dc2626', label: 'High Priority' }
+  if (st === 'site_visit_done' || st === 'negotiation') {
+    return { color: '#dc2626', short: 'High', icon: '🔴', bg: '#fef2f2', text: '#b91c1c', border: '#fecaca' }
   }
-  if (st === 'follow_up' || st === 'callback_scheduled' || st === 'interested' || st === 'site_visit_planned') {
-    return { color: '#ea580c', label: 'Medium Priority' }
+  if (st === 'interested' || st === 'site_visit_planned') {
+    return { color: '#ca8a04', short: 'Medium', icon: '🟡', bg: '#fefce8', text: '#a16207', border: '#fde68a' }
   }
-  return { color: '#0891b2', label: 'Normal Priority' }
+  return { color: '#16a34a', short: 'Normal', icon: '🟢', bg: '#f0fdf4', text: '#166534', border: '#bbf7d0' }
 }
 
 function _abWireSectionToggles(root) {
@@ -576,8 +967,28 @@ function _abWireCardFocus(root) {
       _abFocusedLeadId = Number(card.getAttribute('data-lead-id') || 0) || null
       _abFocusedLeadPhone = card.getAttribute('data-phone') || ''
     })
-    card.addEventListener('click', function () {
+    card.addEventListener('click', function (event) {
       card.focus()
+
+      var target = event && event.target
+      if (target && typeof target.closest === 'function') {
+        var interactive = target.closest('button, a, input, select, textarea, label, [role="button"], [data-ab-no-open], .ab-action-status, .ab-status-chip, .ab-inline-status-select')
+        if (interactive && interactive !== card) return
+      }
+
+      var leadId = Number(card.getAttribute('data-lead-id') || 0)
+      if (leadId > 0) _abOpenLead(leadId)
+    })
+    card.addEventListener('keydown', function (event) {
+      if (!event || (event.key !== 'Enter' && event.key !== ' ')) return
+      var target = event.target
+      if (target && typeof target.closest === 'function') {
+        var interactive = target.closest('button, a, input, select, textarea, label, [role="button"], [data-ab-no-open], .ab-action-status, .ab-status-chip, .ab-inline-status-select')
+        if (interactive && interactive !== card) return
+      }
+      event.preventDefault()
+      var leadId = Number(card.getAttribute('data-lead-id') || 0)
+      if (leadId > 0) _abOpenLead(leadId)
     })
   })
 }
@@ -597,10 +1008,57 @@ function _abWirePagination(root) {
       renderActionBoard(_abDateFrom, _abDateTo, _abRange)
     })
   })
+
+  var selects = root.querySelectorAll('.ab-page-select')
+  selects.forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      var key = sel.getAttribute('data-section-key') || ''
+      if (!key || typeof _abSectionPages[key] === 'undefined') return
+      var page = Number(sel.value || 1)
+      _abSectionPages[key] = Math.max(1, page)
+      renderActionBoard(_abDateFrom, _abDateTo, _abRange)
+    })
+  })
+
+  var statusSelects = root.querySelectorAll('.ab-inline-status-select')
+  statusSelects.forEach(function (sel) {
+    ;['pointerdown', 'mousedown', 'touchstart', 'click'].forEach(function (evtName) {
+      sel.addEventListener(evtName, function (e) {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+      })
+    })
+    sel.addEventListener('keydown', function (e) {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+    })
+    sel.addEventListener('change', async function () {
+      var id = Number(sel.getAttribute('data-lead-id') || 0)
+      var toStatus = String(sel.value || '').trim()
+      if (!id || !toStatus) return
+      sel.disabled = true
+      try {
+        await _apiRequest(`/pipeline/leads/${id}/move`, {
+          method: 'POST',
+          headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+          body: JSON.stringify({ to_status: toStatus }),
+          retries: 0,
+          timeoutMs: 20000,
+        })
+        showToast('Lead status updated.', 'success')
+        await _abRefreshPreservingState()
+        if (await confirmDialog('Add Note?', 'Yes', '#4f46e5')) {
+          _abQuickNote(id)
+        }
+      } catch (err) {
+        showToast((err && err.message) || 'Failed to update status.', 'error')
+      } finally {
+        sel.disabled = false
+      }
+    })
+  })
 }
 
 function _abRefreshUpdatedLabels() {
-  var labels = document.querySelectorAll('#abSections .ab-updated')
+  var labels = document.querySelectorAll('#abWorkspace .ab-updated')
   labels.forEach(function (el) {
     var ts = Number(el.getAttribute('data-updated-at') || 0)
     if (!ts) return
@@ -623,7 +1081,7 @@ function _abCallLead(phone, leadName) {
   window.location.href = 'tel:' + sanitized
 }
 
-async function _abStartCallFlow(leadId, phone, leadName) {
+async function _abStartCallFlow(leadId, phone, leadName, alternatePhone) {
   var id = Number(leadId)
   if (!Number.isFinite(id) || id <= 0) {
     showToast('Invalid lead selected.', 'warning')
@@ -640,10 +1098,10 @@ async function _abStartCallFlow(leadId, phone, leadName) {
     // Proceed even if the audit ping fails; the outcome log still matters.
   }
 
-  _abOpenCallOutcomeModal(id, phone, leadName)
+  _abOpenCallOutcomeModal(id, phone, leadName, alternatePhone || '')
 }
 
-function _abOpenCallOutcomeModal(leadId, phone, leadName) {
+function _abOpenCallOutcomeModal(leadId, phone, leadName, alternatePhone) {
   var id = Number(leadId)
   if (!Number.isFinite(id) || id <= 0) return
 
@@ -654,7 +1112,7 @@ function _abOpenCallOutcomeModal(leadId, phone, leadName) {
     <div class="modal-box" style="max-width:520px;width:100%;">
       <h3 class="sm-section-heading" style="margin-bottom:8px;">📞 Log Call Outcome</h3>
       <div style="font-size:13px;color:#64748b;margin-bottom:16px;line-height:1.5;">
-        ${escape(leadName || 'Lead')} ${phone ? '· ' + escape(phone) : ''}
+        ${escape(leadName || 'Lead')} ${phone ? '· ' + escape(phone) : ''}${alternatePhone ? ' · Alt ' + escape(alternatePhone) : ''}
       </div>
       <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:6px;">Outcome *</label>
       <select id="abCallOutcome" class="select" style="width:100%;font-size:13px;margin-bottom:12px;">
@@ -816,13 +1274,10 @@ if (!window.__abShortcutBound) {
 }
 
 function _leadAge(created) {
-  const mins = Math.floor((Date.now() - created.getTime()) / 60000)
-  if (mins < 60) return `${mins}m ago`
-  const hrs  = Math.floor(mins / 60)
-  if (hrs  < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-
-  return `${days}d ago`
+  const mins = Math.max(0, Math.floor((Date.now() - created.getTime()) / 60000))
+  const hrs = Math.floor(mins / 60)
+  const days = Math.max(1, Math.floor(hrs / 24) || (hrs > 0 ? 1 : 1))
+  return `${days} Day${days === 1 ? '' : 's'}`
 }
 
 function _abQuickNote(leadId) {
@@ -854,6 +1309,10 @@ async function _abSubmitNote(leadId) {
     })
     showToast('Note saved.', 'success')
     if (overlay) overlay.remove()
+    await _abRefreshPreservingState()
+    if (await confirmDialog('Update Lead Status?', 'Yes', '#4f46e5')) {
+      _abOpenStatusModal(leadId)
+    }
   } catch {
     showToast('Failed to save note.', 'error')
   }
@@ -861,7 +1320,7 @@ async function _abSubmitNote(leadId) {
 
 function _abCallCallback(leadId) {
   if (typeof openCallbackModal === 'function') {
-    openCallbackModal(leadId)
+    openCallbackModal(leadId, { source: 'action_board' })
   } else {
     showToast('Callback scheduler is loading...', 'info')
   }

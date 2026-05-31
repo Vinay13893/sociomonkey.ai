@@ -24,7 +24,7 @@ function renderProductLauncher() {
       '<button class="plat-app-open-btn ' + (coming ? 'inactive' : '') + '"' +
         (coming ? '' : ' onclick="event.stopPropagation();platNavigate(\'product-hub\', { productCode: \'' + p.code + '\' })"') +
         ' style="color:' + (coming ? '#94a3b8' : p.color) + ';">' +
-        (coming ? 'Coming Soon' : 'Open App <i class="fa-solid fa-arrow-right" style="font-size:11px;"></i>') +
+        (coming ? 'Coming Soon' : 'Open Hub <i class="fa-solid fa-arrow-right" style="font-size:11px;"></i>') +
       '</button>' +
     '</div>'
   }

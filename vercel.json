@@ -28,6 +28,12 @@
       ]
     }
   ],
+  "redirects": [
+    { "source": "/ganga/lms", "destination": "/apps/lms/ganga-realty", "permanent": true },
+    { "source": "/ganga/lms/login", "destination": "/apps/lms/ganga-realty/login", "permanent": true },
+    { "source": "/:tenant/lms", "destination": "/apps/lms/:tenant", "permanent": true },
+    { "source": "/:tenant/lms/login", "destination": "/apps/lms/:tenant/login", "permanent": true }
+  ],
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
