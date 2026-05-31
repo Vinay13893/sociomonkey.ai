@@ -1942,7 +1942,7 @@ a:focus-visible {
 .dash-status-grid {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(auto-fill, minmax(115px, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .dash-funnel-inner {
@@ -1990,6 +1990,39 @@ a:focus-visible {
   flex-direction: column;
   padding-left: 34px;
   justify-content: center;
+}
+
+.dash-legend-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 2px 0;
+}
+
+.dash-legend-key {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.dash-legend-label {
+  color: #334155;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-legend-metric {
+  color: #0f172a;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .ab-search-group {

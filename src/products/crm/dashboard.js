@@ -251,7 +251,10 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
     function renderStatusGrid(counts, totalLeads) {
     const grid = document.getElementById('statusGrid')
     if (!grid || !grid.isConnected) return  // DOM removed or disconnected
-      const PIPELINE_STATUSES = STATUS_ORDER.filter(s => s !== 'assigned' && s !== 'unassigned')
+      // LMS dashboard contract: keep status distribution as 12 cards (2 rows x 6 on desktop).
+      const PIPELINE_STATUSES = STATUS_ORDER
+        .filter(s => s !== 'assigned' && s !== 'unassigned')
+        .slice(0, 12)
     const STATUS_EMOJIS = {
       new: '🆕',
       no_answer: '📵',
@@ -333,9 +336,10 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
       const v = values[i]
       const pct = ((v / total) * 100).toFixed(1)
       return `
-        <div style="min-height:${SH}px;display:grid;grid-template-columns:minmax(88px,1fr) auto;align-items:center;column-gap:10px;padding:2px 0;">
-          <span style="color:#334155;font-size:11.5px;font-weight:500;white-space:nowrap;">${s.label}</span>
-          <span style="color:#0f172a;font-size:11.5px;font-weight:700;white-space:nowrap;width:112px;text-align:right;font-variant-numeric:tabular-nums;">${v.toLocaleString()} (${pct}%)</span>
+        <div class="dash-legend-row" style="min-height:${SH}px;">
+          <span class="dash-legend-key" style="background:${s.color};"></span>
+          <span class="dash-legend-label" title="${s.label}">${s.label}</span>
+          <span class="dash-legend-metric">${v.toLocaleString()} (${pct}%)</span>
         </div>
       `
     }).join('')
@@ -406,10 +410,12 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
 
     const rows = items.map((s, i) => {
       const pct = Math.round((s.count / total) * 100)
+      const color = SOURCE_COLORS[i % SOURCE_COLORS.length]
       return `
-        <div style="min-height:${rowH}px;display:grid;grid-template-columns:minmax(56px,1fr) auto;align-items:center;column-gap:10px;padding:2px 0;">
-          <span style="color:#334155;font-size:${fz};font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escape(s.source)}</span>
-          <span style="color:#0f172a;font-size:${fz};font-weight:700;white-space:nowrap;width:90px;text-align:right;font-variant-numeric:tabular-nums;">${pct}% (${s.count.toLocaleString()})</span>
+        <div class="dash-legend-row" style="min-height:${rowH}px;">
+          <span class="dash-legend-key" style="background:${color};"></span>
+          <span class="dash-legend-label" style="font-size:${fz};" title="${escape(s.source)}">${escape(s.source)}</span>
+          <span class="dash-legend-metric" style="font-size:${fz};">${pct}% (${s.count.toLocaleString()})</span>
         </div>`
     }).join('')
 
