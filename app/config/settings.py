@@ -32,7 +32,10 @@ class BaseConfig:
 
 
 def _resolve_db_url(default: str) -> str:
-    url = os.getenv('DATABASE_URL', default)
+    raw = os.getenv('DATABASE_URL')
+    url = (raw or '').strip()
+    if not url:
+        url = default
     # SQLAlchemy 1.4+ requires postgresql:// not postgres://
     if url.startswith('postgres://'):
         url = url.replace('postgres://', 'postgresql://', 1)
@@ -45,6 +48,21 @@ class DevelopmentConfig(BaseConfig):
 
 
 _prod_db_url = _resolve_db_url('sqlite:///mvp.db')
+_runtime_env = os.getenv('APP_ENV', os.getenv('FLASK_ENV', 'development')).strip().lower()
+_is_serverless = bool(os.getenv('VERCEL'))
+
+if _runtime_env in ('prod', 'production') and _is_serverless:
+    _raw_database_url = (os.getenv('DATABASE_URL') or '').strip()
+    if not _raw_database_url:
+        raise RuntimeError(
+            'DATABASE_URL is empty in production serverless runtime. '
+            'Refusing SQLite fallback on Vercel.'
+        )
+    if _prod_db_url.startswith('sqlite://'):
+        raise RuntimeError(
+            'DATABASE_URL resolved to SQLite in production serverless runtime. '
+            'Set DATABASE_URL to a PostgreSQL connection string.'
+        )
 
 
 class ProductionConfig(BaseConfig):

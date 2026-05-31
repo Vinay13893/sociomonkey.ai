@@ -5,10 +5,14 @@ These endpoints are called by the frontend *before* login to load
 tenant branding, enabled products, and feature flags so the login page
 and tenant application can be white-labelled correctly.
 """
-from flask import Blueprint, jsonify
+import re
+
+from flask import Blueprint, jsonify, request
 
 from app.models.base import db
 from app.models.tenant import Tenant
+from app.models.demo_request import DemoRequest
+from app.utils.activity import log_activity
 
 public_bp = Blueprint('public', __name__, url_prefix='/api/public')
 
@@ -75,3 +79,46 @@ def get_tenant_config(slug):
         'plan':   tenant.plan,
         'status': tenant.status,
     }), 200
+
+
+@public_bp.route('/demo-requests', methods=['POST'])
+def create_demo_request():
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    company = (data.get('company') or '').strip()
+    email = (data.get('email') or '').strip().lower()
+    phone = (data.get('phone') or '').strip()
+    message = (data.get('message') or '').strip()
+    product_code = (data.get('product_code') or '').strip().lower() or None
+    product_name = (data.get('product_name') or '').strip() or None
+
+    if not name or not company or not email or not phone or not message:
+        return jsonify({'error': 'name, company, email, phone, and message are required'}), 400
+    if not re.match(r'^[^@]+@[^@]+\.[^@]+$', email):
+        return jsonify({'error': 'Invalid email address'}), 400
+
+    demo = DemoRequest(
+        name=name,
+        company=company,
+        email=email,
+        phone=phone,
+        message=message,
+        product_code=product_code,
+        product_name=product_name,
+        ip_address=request.remote_addr,
+        source='product_hub',
+        status='new',
+    )
+    db.session.add(demo)
+    db.session.commit()
+
+    log_activity(
+        None,
+        'request_demo',
+        'platform',
+        demo.id,
+        'DemoRequest',
+        description='Demo request received for ' + (product_name or product_code or 'platform') + ' from ' + company,
+    )
+
+    return jsonify({'success': True, 'demo_request': demo.to_dict()}), 201

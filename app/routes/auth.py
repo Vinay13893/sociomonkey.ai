@@ -4,8 +4,10 @@ import os
 import secrets
 
 from flask import Blueprint, jsonify, request
+from sqlalchemy import func
 
 from app.middleware import require_auth
+from app.models.base import db
 from app.models.user import User
 from app.utils.jwt import check_password, create_token
 from app.utils.activity import log_activity
@@ -19,15 +21,18 @@ def login():
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
 
+    if not email or not password:
+        return jsonify({'error': 'Invalid credentials'}), 401
+
     user = User.query.filter_by(email=email).first()
 
-    # Always run a password check to prevent timing-based user enumeration.
-    # If no real user exists, compare against a dummy hash (result is always False).
-    _DUMMY_HASH = '$2b$12$yQnlpEp0N7xjXJGKAe3ONOtdpqWUiHmF3Rr7yxthDSiUlmDGlV9i2'
-    real_hash = user.password_hash if user else _DUMMY_HASH
-    password_ok = check_password(password, real_hash)
+    # Fail fast when user is unknown. This avoids heavy bcrypt work on
+    # non-existent users and keeps serverless auth latency predictable.
+    if not user:
+        return jsonify({'error': 'Invalid credentials'}), 401
 
-    if not user or not password_ok:
+    password_ok = check_password(password, user.password_hash)
+    if not password_ok:
         return jsonify({'error': 'Invalid credentials'}), 401
 
     if not user.is_active:
@@ -109,6 +114,8 @@ _OTP_MAX_ATTEMPTS        = 5
 _OTP_RESEND_COOLDOWN     = 30   # seconds between resends (UX guard)
 _OTP_RATE_LIMIT          = 5    # max OTP requests per email per window
 _OTP_RATE_WINDOW_MINUTES = 15   # rolling window in minutes
+_OTP_LENGTH              = 6    # fixed policy: 6 digits
+_OTP_EXPIRY_MINUTES      = 5    # fixed policy: 5 minutes
 
 
 def _hash_otp(otp: str) -> str:
@@ -183,10 +190,9 @@ def send_otp():
     # Invalidate all previous unused OTPs for this email
     _db.session.query(OtpCode).filter_by(email=email, used=False).update({'used': True})
 
-    # Crypto-safe OTP (never random.choices / Math.random)
-    otp_length = max(4, min(8, int(os.environ.get('OTP_LENGTH', '6'))))
-    raw_otp    = ''.join(str(secrets.randbelow(10)) for _ in range(otp_length))
-    expiry_min = max(1, int(os.environ.get('OTP_EXPIRY_MINUTES', '5')))
+    # Crypto-safe OTP with fixed policy constraints.
+    raw_otp    = ''.join(str(secrets.randbelow(10)) for _ in range(_OTP_LENGTH))
+    expiry_min = _OTP_EXPIRY_MINUTES
 
     code_row = OtpCode(
         email       = email,
@@ -204,8 +210,11 @@ def send_otp():
     smtp_user = os.environ.get('SMTP_USER', '')
     smtp_pass = os.environ.get('SMTP_PASS', '')
     smtp_from = os.environ.get('SMTP_FROM', smtp_user)
+    brevo_key  = os.environ.get('BREVO_API_KEY', '')
+    brevo_from = os.environ.get('BREVO_FROM', '')
+    resend_key = os.environ.get('RESEND_API_KEY', '')
 
-    if not smtp_user or not smtp_pass:
+    if not brevo_key and not resend_key and (not smtp_user or not smtp_pass):
         _db.session.delete(code_row)
         _db.session.commit()
         return jsonify({'error': 'Email service not configured on this server'}), 503
@@ -235,19 +244,25 @@ def send_otp():
         'Ganga Realty &mdash; Powered by SocioMonkey.ai</p>'
         '</div>'
     )
-
-    brevo_key  = os.environ.get('BREVO_API_KEY', '')
-    resend_key = os.environ.get('RESEND_API_KEY', '')
+    text_body = (
+        f'Hello {user.name},\n\n'
+        f'Your Ganga Realty LMS login OTP is: {raw_otp}\n'
+        f'This code is valid for {expiry_min} minutes and can be used only once.\n\n'
+        'If you did not request this code, please ignore this email.\n\n'
+        'Ganga Realty - Powered by SocioMonkey.ai'
+    )
 
     try:
         if brevo_key:
             # ── Brevo API (HTTPS — works on Railway, sends to any recipient) ─
             import urllib.request as _ur, json as _json
+            sender_email = brevo_from or smtp_from or smtp_user
             payload = {
-                'sender':      {'name': 'Ganga Realty LMS', 'email': smtp_from or smtp_user},
+                'sender':      {'name': 'Ganga Realty LMS', 'email': sender_email},
                 'to':          [{'email': email}],
                 'subject':     'Your Ganga Realty LMS Login OTP',
                 'htmlContent': html_body,
+                'textContent': text_body,
             }
             api_req = _ur.Request(
                 'https://api.brevo.com/v3/smtp/email',
@@ -339,6 +354,8 @@ def verify_otp():
 
     if not email or not otp:
         return jsonify({'error': 'Email and OTP are required'}), 400
+    if len(otp) != _OTP_LENGTH or not otp.isdigit():
+        return jsonify({'error': f'OTP must be exactly {_OTP_LENGTH} digits.'}), 400
 
     from app.models.base import db as _db
     from app.models.otp import OtpCode
@@ -409,7 +426,33 @@ def _get_user_products(user):
     try:
         from app.models.product import Product, TenantProduct
         if user.role == 'platform_owner':
-            return [p.to_dict(include_stats=True) for p in Product.query.filter_by(is_active=True).all()]
+            products = Product.query.filter_by(is_active=True).all()
+            product_ids = [p.id for p in products]
+            counts_by_product = {}
+            if product_ids:
+                count_rows = (
+                    db.session.query(
+                        TenantProduct.product_id,
+                        func.count(TenantProduct.id).label('tenant_count'),
+                    )
+                    .filter(
+                        TenantProduct.product_id.in_(product_ids),
+                        TenantProduct.status == 'active',
+                    )
+                    .group_by(TenantProduct.product_id)
+                    .all()
+                )
+                counts_by_product = {
+                    row.product_id: int(row.tenant_count or 0)
+                    for row in count_rows
+                }
+            return [
+                {
+                    **p.to_dict(),
+                    'tenant_count': counts_by_product.get(p.id, 0),
+                }
+                for p in products
+            ]
         if user.tenant_id:
             subs = TenantProduct.query.filter_by(
                 tenant_id=user.tenant_id, status='active'

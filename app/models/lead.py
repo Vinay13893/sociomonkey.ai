@@ -9,6 +9,7 @@ class Lead(db.Model):
     tenant_id = db.Column(db.Integer, db.ForeignKey('tenants.id'), nullable=True)
     name = db.Column(db.String(200), nullable=False)
     phone = db.Column(db.String(50))
+    alternate_phone = db.Column(db.String(50))
     email = db.Column(db.String(200))
     source = db.Column(db.String(100))
     budget_min = db.Column(db.Float)
@@ -50,6 +51,7 @@ class Lead(db.Model):
             'id': self.id,
             'name': self.name,
             'phone': self.phone,
+            'alternate_phone': self.alternate_phone,
             'email': self.email,
             'source': self.source,
             'budget_min': self.budget_min,

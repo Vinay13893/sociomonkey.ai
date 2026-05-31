@@ -1,11 +1,37 @@
-from flask import Blueprint, jsonify, request
+from io import BytesIO
+
+from flask import Blueprint, jsonify, request, send_file
+from werkzeug.utils import secure_filename
 
 from app.middleware import require_auth, require_role
 from app.models.base import db
 from app.models.project import Project
+from app.models.project_asset import ProjectAsset
 from app.utils.activity import log_activity
 
 projects_bp = Blueprint('projects', __name__, url_prefix='/api/projects')
+
+ALLOWED_ASSET_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.xlsx', '.xls', '.doc', '.docx', '.zip'}
+ALLOWED_ASSET_MIMES = {
+    'application/pdf',
+    'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/zip',
+    'application/x-zip-compressed',
+}
+
+
+def _can_access_project(project, tenant_id):
+    return project and project.tenant_id == tenant_id and project.is_active
+
+
+def _asset_ext(name):
+    lower = (name or '').lower()
+    dot = lower.rfind('.')
+    return lower[dot:] if dot >= 0 else ''
 
 
 @projects_bp.route('', methods=['GET'])
@@ -104,3 +130,106 @@ def delete_project(project_id):
         description=f'Deleted project {project.name}',
     )
     return jsonify({'message': 'Project deleted'}), 200
+
+
+@projects_bp.route('/<int:project_id>/assets', methods=['GET'])
+@require_auth
+def list_project_assets(project_id):
+    tid = request.current_tenant_id
+    project = Project.query.get(project_id)
+    if not _can_access_project(project, tid):
+        return jsonify({'error': 'Project not found'}), 404
+
+    assets = (
+        ProjectAsset.query
+        .filter_by(project_id=project_id, tenant_id=tid)
+        .order_by(ProjectAsset.uploaded_at.desc())
+        .all()
+    )
+    return jsonify({'assets': [a.to_dict() for a in assets]}), 200
+
+
+@projects_bp.route('/<int:project_id>/assets', methods=['POST'])
+@require_auth
+def upload_project_asset(project_id):
+    user = request.current_user
+    tid = request.current_tenant_id
+    project = Project.query.get(project_id)
+    if not _can_access_project(project, tid):
+        return jsonify({'error': 'Project not found'}), 404
+
+    if 'file' not in request.files:
+        return jsonify({'error': 'file is required'}), 400
+    file = request.files['file']
+    if not file or not file.filename:
+        return jsonify({'error': 'file is required'}), 400
+
+    safe_name = secure_filename(file.filename)
+    ext = _asset_ext(safe_name)
+    mime_type = (file.mimetype or '').lower()
+    if ext not in ALLOWED_ASSET_EXTENSIONS:
+        return jsonify({'error': 'Unsupported file type'}), 400
+    if mime_type and mime_type not in ALLOWED_ASSET_MIMES:
+        return jsonify({'error': 'Unsupported file type'}), 400
+
+    payload = file.read()
+    if not payload:
+        return jsonify({'error': 'Empty file'}), 400
+
+    asset = ProjectAsset(
+        tenant_id=tid,
+        project_id=project_id,
+        file_name=safe_name,
+        mime_type=mime_type or 'application/octet-stream',
+        file_size=len(payload),
+        file_data=payload,
+        uploaded_by=user.id,
+    )
+    db.session.add(asset)
+    db.session.commit()
+
+    log_activity(
+        user.id, 'upload_project_asset', 'projects', project_id, 'ProjectAsset',
+        description=f'Uploaded asset {safe_name} for project {project.name}',
+    )
+    return jsonify({'asset': asset.to_dict()}), 201
+
+
+@projects_bp.route('/<int:project_id>/assets/<int:asset_id>/download', methods=['GET'])
+@require_auth
+def download_project_asset(project_id, asset_id):
+    tid = request.current_tenant_id
+    project = Project.query.get(project_id)
+    if not _can_access_project(project, tid):
+        return jsonify({'error': 'Project not found'}), 404
+
+    asset = ProjectAsset.query.filter_by(id=asset_id, project_id=project_id, tenant_id=tid).first()
+    if not asset:
+        return jsonify({'error': 'Asset not found'}), 404
+
+    return send_file(
+        BytesIO(asset.file_data),
+        mimetype=asset.mime_type or 'application/octet-stream',
+        as_attachment=True,
+        download_name=asset.file_name,
+    )
+
+
+@projects_bp.route('/<int:project_id>/assets/<int:asset_id>/view', methods=['GET'])
+@require_auth
+def view_project_asset(project_id, asset_id):
+    tid = request.current_tenant_id
+    project = Project.query.get(project_id)
+    if not _can_access_project(project, tid):
+        return jsonify({'error': 'Project not found'}), 404
+
+    asset = ProjectAsset.query.filter_by(id=asset_id, project_id=project_id, tenant_id=tid).first()
+    if not asset:
+        return jsonify({'error': 'Asset not found'}), 404
+
+    return send_file(
+        BytesIO(asset.file_data),
+        mimetype=asset.mime_type or 'application/octet-stream',
+        as_attachment=False,
+        download_name=asset.file_name,
+    )

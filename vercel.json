@@ -1,9 +1,19 @@
 {
   "version": 2,
-  "builds": [
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+  "crons": [
     {
-      "src": "api/index.py",
-      "use": "@vercel/python"
+      "path": "/api/internal/reminders/process",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/internal/jobs/process",
+      "schedule": "15 2 * * *"
     }
   ],
   "routes": [

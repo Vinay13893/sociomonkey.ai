@@ -86,7 +86,7 @@ class ExcelService:
             ('source', 'YES', 'Website / Referral / Walk-in / Meta / Google / Email Campaign / Direct / Other / G1 / G2 / G3 / TP'),
             ('status', 'YES',
              'new / attempted / connected / interested / site_visit_planned / '
-             'site_visit_done / negotiation / booking_done / lost / junk'),
+             'site_visit_done / negotiation / booking_done / not_interested / lost'),
             ('budget_min', 'no', 'Minimum budget in INR (numbers only)'),
             ('budget_max', 'no', 'Maximum budget in INR (numbers only)'),
             ('project', 'YES', 'Project name exactly as listed in the Projects page (e.g. Ganga Residency Phase 1)'),

@@ -16,6 +16,7 @@ from app.utils.jwt import hash_password
 from app.utils.activity import log_activity
 
 tenants_bp = Blueprint('tenants', __name__, url_prefix='/api/platform')
+INTERNAL_TENANT_SLUGS = frozenset(['demo'])
 
 
 # ─────────────────────────────────────────────────────────────
@@ -24,9 +25,19 @@ tenants_bp = Blueprint('tenants', __name__, url_prefix='/api/platform')
 @tenants_bp.route('/analytics', methods=['GET'])
 @require_platform_owner
 def platform_analytics():
-    tenants     = Tenant.query.all()
-    total_users = User.query.filter(User.role != 'platform_owner').count()
-    total_leads = Lead.query.filter_by(is_active=True).count()
+    tenants = Tenant.query.filter(~Tenant.slug.in_(INTERNAL_TENANT_SLUGS)).all()
+    total_users = (
+        User.query
+        .join(Tenant, User.tenant_id == Tenant.id)
+        .filter(User.role != 'platform_owner', ~Tenant.slug.in_(INTERNAL_TENANT_SLUGS))
+        .count()
+    )
+    total_leads = (
+        Lead.query
+        .join(Tenant, Lead.tenant_id == Tenant.id)
+        .filter(Lead.is_active == True, ~Tenant.slug.in_(INTERNAL_TENANT_SLUGS))
+        .count()
+    )
     active_t    = sum(1 for t in tenants if t.status == 'active')
 
     tenant_stats = []
@@ -59,7 +70,12 @@ def platform_analytics():
 @tenants_bp.route('/tenants', methods=['GET'])
 @require_platform_owner
 def list_tenants():
-    tenants = Tenant.query.order_by(Tenant.created_at.desc()).all()
+    tenants = (
+        Tenant.query
+        .filter(~Tenant.slug.in_(INTERNAL_TENANT_SLUGS))
+        .order_by(Tenant.created_at.desc())
+        .all()
+    )
     return jsonify({'tenants': [t.to_dict(include_stats=True) for t in tenants]}), 200
 
 

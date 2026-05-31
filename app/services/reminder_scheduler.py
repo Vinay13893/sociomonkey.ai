@@ -19,39 +19,52 @@ The frontend polls /api/leads/notifications every 30 s to drain the queue.
 Architecture is delivery-provider agnostic: swap _deliver() to add email
 / WhatsApp / push-notification providers later.
 """
-import threading
 import logging
+import os
+import threading
 from datetime import datetime, timedelta
 
 from app.models.base import db
 from app.models.lead import CallbackReminder
+from app.models.notification import Notification
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# In-app notification store  {user_id: [notification_dict, ...]}
-# ---------------------------------------------------------------------------
-_notification_store: dict[int, list] = {}
-_store_lock = threading.Lock()
-
-_scheduler_started = False
-_scheduler_lock = threading.Lock()
-
 
 def push_notification(user_id: int, notification: dict):
-    with _store_lock:
-        if user_id not in _notification_store:
-            _notification_store[user_id] = []
-        _notification_store[user_id].append(notification)
-        # Keep at most 50 notifications per user to avoid unbounded growth
-        _notification_store[user_id] = _notification_store[user_id][-50:]
+    note = Notification(
+        tenant_id=notification.get('tenant_id'),
+        user_id=user_id,
+        category=notification.get('type') or notification.get('category') or 'system',
+        kind=notification.get('kind') or 'info',
+        title=notification.get('title'),
+        message=notification.get('message') or '',
+        payload=notification,
+        source=notification.get('source') or 'callback_scheduler',
+    )
+    db.session.add(note)
+    db.session.commit()
 
 
 def drain_notifications(user_id: int) -> list:
-    """Return and clear pending notifications for a user."""
-    with _store_lock:
-        msgs = _notification_store.pop(user_id, [])
-    return msgs
+    """Return unread notifications for a user and mark them read."""
+    rows = (
+        Notification.query
+        .filter_by(user_id=user_id, is_read=False)
+        .order_by(Notification.created_at.asc())
+        .all()
+    )
+    if not rows:
+        return []
+
+    now = datetime.utcnow()
+    payloads = []
+    for row in rows:
+        row.is_read = True
+        row.read_at = now
+        payloads.append(row.to_dict())
+    db.session.commit()
+    return payloads
 
 
 # ---------------------------------------------------------------------------
@@ -67,13 +80,16 @@ def _deliver(callback: 'CallbackReminder', kind: str):
     cb_time   = callback.callback_datetime.strftime('%d %b %Y %H:%M')
 
     if kind == '10min':
+        title = 'Upcoming Callback'
         msg = f'🔔 Reminder: Callback for {lead_name} in 10 minutes ({cb_time})'
     else:
+        title = 'Callback Due Now'
         msg = f'⏰ Callback due NOW: {lead_name} ({cb_time})'
 
-    note = {'type': 'callback', 'kind': kind, 'lead_id': callback.lead_id,
+    note = {'type': 'callback', 'kind': kind, 'title': title, 'lead_id': callback.lead_id,
             'lead_name': lead_name, 'callback_id': callback.id,
             'message': msg, 'ts': datetime.utcnow().isoformat()}
+    note['tenant_id'] = callback.tenant_id
 
     recipients = set()
     if callback.assigned_user_id:
@@ -138,16 +154,24 @@ def _process_reminders():
         db.session.commit()
 
 
+def process_pending_reminders():
+    """Public one-shot entry point for cron/worker execution."""
+    _process_reminders()
+
+
 # ---------------------------------------------------------------------------
 # Start the scheduler once per process
 # ---------------------------------------------------------------------------
 
 def start_scheduler(app):
-    global _scheduler_started
-    with _scheduler_lock:
-        if _scheduler_started:
-            return
-        _scheduler_started = True
+    # Backward-compatible hook retained for Railway, but notifications now persist in DB.
+    if threading is None:
+        return
+    if app.config.get('ENV') == 'production' and (app.config.get('VERCEL') or os.environ.get('VERCEL')):
+        return
+    if getattr(app, '_scheduler_started', False):
+        return
+    app._scheduler_started = True
 
     t = threading.Thread(
         target=_run_scheduler,

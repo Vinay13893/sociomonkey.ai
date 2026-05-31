@@ -1,5 +1,7 @@
+from collections import Counter
+
 from flask import Blueprint, jsonify, request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import case, func
 from sqlalchemy.orm import selectinload, joinedload
@@ -8,6 +10,7 @@ from app.middleware import require_auth, require_role
 from app.models.base import db
 from app.models.activity import ActivityLog
 from app.models.lead import Lead, StatusHistory, LeadNote, LeadAssignmentHistory, CallbackReminder
+from app.models.job import LeadReshuffleJob
 from app.models.project import Project
 from app.models.user import User
 from app.utils.activity import log_activity
@@ -22,6 +25,200 @@ CALL_OUTCOME_LABELS = {
     'wrong_number': 'Wrong Number',
     'callback_scheduled': 'Callback Scheduled',
 }
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _parse_ist_datetime(raw_value):
+    if not raw_value:
+        raise ValueError('Missing datetime value')
+    parsed = datetime.fromisoformat(str(raw_value).replace('Z', '+00:00'))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=IST)
+    else:
+        parsed = parsed.astimezone(IST)
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _format_ist_datetime(value):
+    if not value:
+        return ''
+    dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return dt.astimezone(IST).strftime('%d %b %Y %H:%M IST')
+
+
+def _runtime_prefers_async_jobs() -> bool:
+    import os
+    return (os.environ.get('VERCEL') or '').strip().lower() in {'1', 'true', 'yes'}
+
+
+def _process_reshuffle_job(job, user, team, strategy, reason, cooldown_days):
+    # Pre-compute active lead counts for all team members (used by multiple strategies)
+    NON_ACTIVE = ['lost', 'junk', 'booking_done', 'not_interested']
+    load_counts: dict = {}
+    for tm in team:
+        load_counts[tm.id] = Lead.query.filter(
+            Lead.assigned_to == tm.id,
+            Lead.is_active == True,
+            Lead.status.notin_(NON_ACTIVE),
+        ).count()
+
+    cooldown_threshold = datetime.utcnow() - timedelta(days=cooldown_days)
+
+    def _get_next_assignee_intelligent(lead):
+        current_uid = lead.assigned_to
+
+        history = LeadAssignmentHistory.query.filter_by(lead_id=lead.id).all()
+        last_assigned: dict = {}
+        for h in history:
+            if h.assigned_to:
+                if h.assigned_to not in last_assigned or h.assigned_at > last_assigned[h.assigned_to]:
+                    last_assigned[h.assigned_to] = h.assigned_at
+
+        candidates = [u for u in team if u.id != current_uid]
+        if not candidates:
+            return team[0]
+
+        def _load(u):
+            return load_counts.get(u.id, 0)
+
+        tier1 = [u for u in candidates if u.id not in last_assigned]
+        if tier1:
+            tier1.sort(key=_load)
+            return tier1[0]
+
+        tier2 = [u for u in candidates if last_assigned.get(u.id, datetime.min) < cooldown_threshold]
+        if tier2:
+            tier2.sort(key=lambda u: (last_assigned[u.id], _load(u)))
+            return tier2[0]
+
+        candidates.sort(key=lambda u: (last_assigned.get(u.id, datetime.min), _load(u)))
+        return candidates[0]
+
+    rr_index = 0
+    reshuffled = 0
+    assignments = []
+
+    for lead_id in job.lead_ids:
+        lead = Lead.query.filter_by(id=lead_id, tenant_id=user.tenant_id, is_active=True).first()
+        if not lead:
+            continue
+
+        if user.role == 'sales_manager':
+            team_ids = {tm.id for tm in team} | {user.id}
+            if lead.assigned_to not in team_ids and lead.sales_manager_id != user.id:
+                continue
+
+        if lead.status in ['lost', 'junk']:
+            continue
+
+        if strategy == 'intelligent':
+            new_assignee = _get_next_assignee_intelligent(lead)
+        elif strategy == 'least_loaded':
+            prev_ids = {
+                h.assigned_to
+                for h in LeadAssignmentHistory.query.filter_by(lead_id=lead_id).all()
+                if h.assigned_to
+            }
+            prev_ids.add(lead.assigned_to)
+            cands = [u for u in team if u.id not in prev_ids] or team
+            new_assignee = min(cands, key=lambda u: load_counts.get(u.id, 0))
+            load_counts[new_assignee.id] = load_counts.get(new_assignee.id, 0) + 1
+        else:
+            prev_ids = {
+                h.assigned_to
+                for h in LeadAssignmentHistory.query.filter_by(lead_id=lead_id).all()
+                if h.assigned_to
+            }
+            prev_ids.add(lead.assigned_to)
+            cands = [u for u in team if u.id not in prev_ids] or team
+            new_assignee = cands[rr_index % len(cands)]
+            rr_index += 1
+
+        old_assignee_id = lead.assigned_to
+        db.session.add(LeadAssignmentHistory(
+            lead_id=lead_id,
+            assigned_from=old_assignee_id,
+            assigned_to=new_assignee.id,
+            assigned_by=user.id,
+            reason=reason,
+        ))
+        lead.assigned_to = new_assignee.id
+        lead.assigned_by = user.id
+        load_counts[new_assignee.id] = load_counts.get(new_assignee.id, 0) + 1
+
+        log_activity(
+            user.id, 'reshuffle_lead', 'leads', lead_id, 'Lead',
+            description=f'Reshuffled lead {lead.name} to {new_assignee.name} (strategy={strategy})',
+        )
+
+        old_name = (User.query.get(old_assignee_id).name if old_assignee_id else 'Unassigned')
+        assignments.append({
+            'lead_id': lead_id,
+            'lead_name': lead.name,
+            'from_user_id': old_assignee_id,
+            'from_user_name': old_name,
+            'to_user_id': new_assignee.id,
+            'to_user_name': new_assignee.name,
+        })
+        reshuffled += 1
+
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    job.summary = {'reshuffled': reshuffled, 'assignments': assignments}
+    db.session.commit()
+    return {'job': job.to_dict(), 'reshuffled': reshuffled, 'assignments': assignments}
+
+
+def process_queued_reshuffle_jobs(limit: int = 10) -> dict:
+    processed = failed = 0
+    rows = (
+        LeadReshuffleJob.query
+        .filter(LeadReshuffleJob.status.in_(['queued', 'processing']))
+        .order_by(LeadReshuffleJob.created_at.asc())
+        .limit(max(1, int(limit)))
+        .all()
+    )
+    for job in rows:
+        if job.status == 'completed':
+            continue
+        user = job.user
+        if not user:
+            job.status = 'failed'
+            job.error_message = 'Job owner not found'
+            job.completed_at = datetime.utcnow()
+            db.session.commit()
+            failed += 1
+            continue
+
+        if user.role == 'sales_manager':
+            team = User.query.filter_by(manager_id=user.id, is_active=True).all()
+        else:
+            team = User.query.filter_by(role='team_member', tenant_id=user.tenant_id, is_active=True).all()
+
+        if not team:
+            job.status = 'failed'
+            job.error_message = 'No active team members available'
+            job.completed_at = datetime.utcnow()
+            db.session.commit()
+            failed += 1
+            continue
+
+        try:
+            job.status = 'processing'
+            job.started_at = job.started_at or datetime.utcnow()
+            db.session.commit()
+            _process_reshuffle_job(job, user, team, job.strategy, job.reason, job.cooldown_days)
+            processed += 1
+        except Exception as exc:
+            db.session.rollback()
+            job.status = 'failed'
+            job.error_message = str(exc)
+            job.completed_at = datetime.utcnow()
+            db.session.commit()
+            failed += 1
+
+    return {'queued_scanned': len(rows), 'processed': processed, 'failed': failed}
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +262,7 @@ def create_lead():
         return jsonify({'error': 'Lead name is required'}), 400
 
     phone_val = (data.get('phone') or '').strip()
+    alternate_phone_val = (data.get('alternate_phone') or '').strip()
     if phone_val:
         force = data.get('force') and user.role == 'superadmin'
         if not force:
@@ -86,7 +284,8 @@ def create_lead():
 
     lead = Lead(
         name=name,
-        phone=data.get('phone'),
+        phone=phone_val or None,
+        alternate_phone=alternate_phone_val or None,
         email=data.get('email'),
         source=data.get('source'),
         budget_min=data.get('budget_min'),
@@ -144,7 +343,9 @@ def update_lead(lead_id):
     old_status = lead.status
 
     lead.name = data.get('name', lead.name)
-    lead.phone = data.get('phone', lead.phone)
+    if user.role == 'superadmin':
+        lead.phone = (data.get('phone') or lead.phone or '').strip() or None
+    lead.alternate_phone = (data.get('alternate_phone') or lead.alternate_phone or '').strip() or None
     lead.email = data.get('email', lead.email)
     lead.source = data.get('source', lead.source)
     lead.budget_min = data.get('budget_min', lead.budget_min)
@@ -161,7 +362,27 @@ def update_lead(lead_id):
             changed_by=user.id,
         ))
 
+    changes = []
+    if old_data.get('phone') != lead.phone:
+        changes.append(f"primary number {old_data.get('phone') or '—'} → {lead.phone or '—'}")
+    if old_data.get('alternate_phone') != lead.alternate_phone:
+        changes.append(f"alternate number {old_data.get('alternate_phone') or '—'} → {lead.alternate_phone or '—'}")
+    if old_data.get('project_id') != lead.project_id:
+        old_project = old_data.get('project_name') or old_data.get('project_id') or '—'
+        new_project = lead.project.name if lead.project else (lead.project_id or '—')
+        changes.append(f"project {old_project} → {new_project}")
+
     db.session.commit()
+
+    for change in changes:
+        log_activity(
+            user.id,
+            'update_lead',
+            'leads',
+            lead_id,
+            'Lead',
+            description=f'Updated lead {lead.name} ({change})',
+        )
 
     log_activity(
         user.id, 'update_lead', 'leads', lead_id, 'Lead',
@@ -524,9 +745,8 @@ def dashboard_stats():
     def calc_rates(total, counts):
         if total == 0:
             return {'hot_rate': 0, 'warm_rate': 0}
-        warm = (counts.get('follow_up', 0) + counts.get('callback_scheduled', 0) + counts.get('interested', 0))
-        site_visit = counts.get('site_visit_planned', 0) + counts.get('site_visit_done', 0)
-        hot = site_visit + counts.get('negotiation', 0) + counts.get('booking_done', 0)
+        warm = counts.get('interested', 0) + counts.get('site_visit_planned', 0)
+        hot = counts.get('site_visit_done', 0) + counts.get('negotiation', 0)
         return {
             'hot_rate': round(hot / total * 100, 1),
             'warm_rate': round(warm / total * 100, 1),
@@ -555,87 +775,70 @@ def dashboard_stats():
             q = Lead.query.filter_by(assigned_to=user.id, is_active=True, tenant_id=tid_scope)
         return apply_project_filter(apply_time_filter(q))
 
-    base_q = scoped_query_for_role()
-    lead_scope = base_q.with_entities(
-        Lead.id.label('id'),
+    scoped_leads = scoped_query_for_role().with_entities(
         Lead.status.label('status'),
         Lead.source.label('source'),
         Lead.project_id.label('project_id'),
         Lead.assigned_to.label('assigned_to'),
-    ).subquery()
+    ).all()
 
-    status_count_exprs = [
-        func.coalesce(func.sum(case((lead_scope.c.status == s, 1), else_=0)), 0).label(f'{s}_count')
-        for s in statuses
-    ]
-    overall_row = db.session.query(
-        func.count(lead_scope.c.id).label('total'),
-        func.coalesce(func.sum(case((lead_scope.c.assigned_to.isnot(None), 1), else_=0)), 0).label('assigned'),
-        func.coalesce(func.sum(case((lead_scope.c.assigned_to.is_(None), 1), else_=0)), 0).label('unassigned'),
-        *status_count_exprs,
-    ).select_from(lead_scope).one()
-
-    status_counts = {s: int(getattr(overall_row, f'{s}_count') or 0) for s in statuses}
-    status_counts['assigned'] = int(overall_row.assigned or 0)
-    status_counts['unassigned'] = int(overall_row.unassigned or 0)
-    total = int(overall_row.total or 0)
+    total = len(scoped_leads)
+    status_counter = Counter(row.status for row in scoped_leads if row.status)
+    status_counts = {s: int(status_counter.get(s, 0)) for s in statuses}
+    status_counts['assigned'] = sum(1 for row in scoped_leads if row.assigned_to is not None)
+    status_counts['unassigned'] = total - status_counts['assigned']
     rates = calc_rates(total, status_counts)
 
-    source_rows = (
-        db.session.query(
-            lead_scope.c.source.label('source'),
-            func.count(lead_scope.c.id).label('count'),
-        )
-        .select_from(lead_scope)
-        .group_by(lead_scope.c.source)
-        .order_by(func.count(lead_scope.c.id).desc())
-        .all()
-    )
-    source_total = sum(int(r.count or 0) for r in source_rows)
+    source_counter = Counter((row.source or 'Unknown') for row in scoped_leads)
+    source_rows = sorted(source_counter.items(), key=lambda item: item[1], reverse=True)
+    source_total = sum(int(count or 0) for _source, count in source_rows)
     source_stats = []
-    for row in source_rows:
-        count = int(row.count or 0)
+    for source_name, source_count in source_rows:
+        count = int(source_count or 0)
         if count == 0:
             continue
         source_stats.append({
-            'source': row.source or 'Unknown',
+            'source': source_name,
             'count': count,
             'percent': round((count / source_total * 100), 1) if source_total else 0,
         })
 
-    project_count_exprs = [
-        func.coalesce(func.sum(case((lead_scope.c.status == s, 1), else_=0)), 0).label(f'{s}_count')
-        for s in statuses
-    ]
     project_rows = (
-        db.session.query(
-            Project.id.label('project_id'),
-            Project.name.label('project_name'),
-            func.count(lead_scope.c.id).label('total'),
-            *project_count_exprs,
-        )
-        .select_from(Project)
-        .outerjoin(lead_scope, lead_scope.c.project_id == Project.id)
+        Project.query
+        .with_entities(Project.id.label('project_id'), Project.name.label('project_name'))
         .filter(Project.is_active == True, Project.tenant_id == tid_scope)
-        .group_by(Project.id, Project.name)
         .order_by(Project.name)
         .all()
     )
-
-    def _project_row_to_dict(row):
-        counts = {s: int(getattr(row, f'{s}_count') or 0) for s in statuses}
-        total_count = int(row.total or 0)
-        project_rates = calc_rates(total_count, counts)
-        return {
+    project_buckets = {
+        row.project_id: {
             'project_id': row.project_id,
             'project_name': row.project_name,
-            'total': total_count,
-            'status_counts': counts,
+            'total': 0,
+            'status_counts': {s: 0 for s in statuses},
+        }
+        for row in project_rows
+    }
+    for row in scoped_leads:
+        bucket = project_buckets.get(row.project_id)
+        if not bucket:
+            continue
+        bucket['total'] += 1
+        if row.status in bucket['status_counts']:
+            bucket['status_counts'][row.status] += 1
+
+    project_stats = []
+    for row in project_rows:
+        project_data = project_buckets[row.project_id]
+        project_rates = calc_rates(project_data['total'], project_data['status_counts'])
+        project_stats.append({
+            'project_id': project_data['project_id'],
+            'project_name': project_data['project_name'],
+            'total': project_data['total'],
+            'status_counts': project_data['status_counts'],
             'hot_rate': project_rates['hot_rate'],
             'warm_rate': project_rates['warm_rate'],
-        }
-
-    project_stats = [_project_row_to_dict(row) for row in project_rows]
+        })
 
     if user.role in ('superadmin', 'platform_owner'):
         stats = {
@@ -645,7 +848,7 @@ def dashboard_stats():
                 User.tenant_id == tid_scope,
                 User.is_active == True,
             ).scalar(),
-            'total_projects': len(project_rows),
+            'total_projects': len(project_stats),
             'status_counts': status_counts,
             'hot_rate': rates['hot_rate'],
             'warm_rate': rates['warm_rate'],
@@ -656,7 +859,7 @@ def dashboard_stats():
         stats = {
             'my_leads': total,
             'team_size': len(team_ids or []),
-            'total_projects': len(project_rows),
+            'total_projects': len(project_stats),
             'status_counts': status_counts,
             'hot_rate': rates['hot_rate'],
             'warm_rate': rates['warm_rate'],
@@ -685,7 +888,10 @@ def dashboard_stats():
 def action_board():
     """Return all data needed for the Daily Action Board for the current user."""
     user = request.current_user
-    page_size = 20
+    try:
+        page_size = max(5, min(24, int(request.args.get('page_size', 6))))
+    except (TypeError, ValueError):
+        page_size = 6
     now = datetime.utcnow()
     today_start = datetime(now.year, now.month, now.day)
     today_end   = today_start + timedelta(days=1)
@@ -752,14 +958,37 @@ def action_board():
     callback_window_start = range_start if range_requested else today_start
     callback_window_end   = range_end if range_requested else today_end
 
-    current_callbacks = cb_base.filter(
-        CallbackReminder.callback_datetime >= callback_window_start,
-        CallbackReminder.callback_datetime <  callback_window_end,
-    ).order_by(CallbackReminder.callback_datetime.asc()).all()
+    # FIFO per lead for callbacks: if multiple pending callbacks exist for the
+    # same lead, keep the first input (oldest created callback record).
+    all_pending_callbacks = cb_base.order_by(
+        CallbackReminder.created_at.asc(),
+        CallbackReminder.id.asc(),
+    ).all()
 
-    overdue_callbacks = cb_base.filter(
-        CallbackReminder.callback_datetime < callback_window_start,
-    ).order_by(CallbackReminder.callback_datetime.asc()).all()
+    first_callback_by_lead = {}
+    passthrough_callbacks = []
+    for cb in all_pending_callbacks:
+        # Safety: callbacks without lead_id are kept as-is.
+        if not cb.lead_id:
+            passthrough_callbacks.append(cb)
+            continue
+        if cb.lead_id not in first_callback_by_lead:
+            first_callback_by_lead[cb.lead_id] = cb
+
+    unique_callbacks = list(first_callback_by_lead.values()) + passthrough_callbacks
+
+    current_callbacks = [
+        cb for cb in unique_callbacks
+        if cb.callback_datetime >= callback_window_start and cb.callback_datetime < callback_window_end
+    ]
+    overdue_callbacks = [
+        cb for cb in unique_callbacks
+        if cb.callback_datetime < callback_window_start
+    ]
+
+    # Keep display order by due time inside each section.
+    current_callbacks.sort(key=lambda cb: cb.callback_datetime)
+    overdue_callbacks.sort(key=lambda cb: cb.callback_datetime)
 
     def _page_param(name):
         try:
@@ -807,6 +1036,7 @@ def action_board():
         d['lead_name'] = lead.name if lead else f'Lead #{c.lead_id}'
         d['lead_phone'] = lead.phone if lead else None
         d['lead_status'] = lead.status if lead else None
+        d['lead_created_at'] = lead.created_at.isoformat() if lead and lead.created_at else None
         d['project_name'] = lead.project.name if lead and lead.project else None
         d['project_id'] = lead.project_id if lead else None
         if lead and lead.notes:
@@ -817,50 +1047,31 @@ def action_board():
         return d
 
     # ── Lead section buckets (per Action Board spec) ─────────────────────────
-    # 2.3 New Leads Today: status=new + created today/range + newly assigned in range
-    # 2.4 Follow Up: follow_up + callback_scheduled where callback is from previous days
-    # 2.5 No Answer: all no_answer (today + past)
+    # Callback-first precedence: any lead with a pending callback reminder
+    # is represented in callback sections and excluded from status buckets.
+    # 2.3 New Leads Today: status=new + created today/range + assigned_to current user
+    # 2.4 Follow Up: follow_up (excluding callback-covered leads)
+    # 2.5 No Answer: all no_answer (excluding callback-covered leads)
     # 2.6 Warm: interested + site_visit_planned
     # 2.7 Hot:  site_visit_done + negotiation
     warm_statuses = ['interested', 'site_visit_planned']
     hot_statuses = ['site_visit_done', 'negotiation']
 
-    # assignment-based expansion for "new assigned for today/range"
-    assigned_ids = []
-    if visible_ids:
-        assign_q = LeadAssignmentHistory.query.filter(
-            LeadAssignmentHistory.lead_id.in_(visible_ids),
-            LeadAssignmentHistory.assigned_at >= callback_window_start,
-            LeadAssignmentHistory.assigned_at < callback_window_end,
-            LeadAssignmentHistory.assigned_to.isnot(None),
-        )
-        if user.role == 'team_member':
-            assign_q = assign_q.filter(LeadAssignmentHistory.assigned_to == user.id)
-        elif user.role == 'sales_manager':
-            team_ids = [u.id for u in User.query.filter_by(manager_id=user.id).all()]
-            team_ids.append(user.id)
-            assign_q = assign_q.filter(LeadAssignmentHistory.assigned_to.in_(team_ids))
-        assigned_ids = [r[0] for r in assign_q.with_entities(LeadAssignmentHistory.lead_id).distinct().all()]
-
     overdue_callback_lead_ids = list({c.lead_id for c in overdue_callbacks if c.lead_id})
+    callback_lead_ids = {c.lead_id for c in current_callbacks if c.lead_id}
+    callback_lead_ids.update(overdue_callback_lead_ids)
 
-    new_clauses = [
-        Lead.status == 'new',
-        db.and_(Lead.created_at >= callback_window_start, Lead.created_at < callback_window_end),
-    ]
-    if assigned_ids:
-        new_clauses.append(Lead.id.in_(assigned_ids))
-    new_bucket_q = visible.filter(db.or_(*new_clauses))
+    lead_buckets_base = visible
+    if callback_lead_ids:
+        lead_buckets_base = lead_buckets_base.filter(~Lead.id.in_(list(callback_lead_ids)))
 
-    follow_clauses = [Lead.status == 'follow_up']
-    if overdue_callback_lead_ids:
-        follow_clauses.append(
-            db.and_(Lead.status == 'callback_scheduled', Lead.id.in_(overdue_callback_lead_ids))
-        )
-    follow_up_q = visible.filter(db.or_(*follow_clauses))
-    no_answer_q = visible.filter(Lead.status == 'no_answer')
-    warm_q = visible.filter(Lead.status.in_(warm_statuses))
-    hot_q = visible.filter(Lead.status.in_(hot_statuses))
+    # New leads should always surface in Action Board within the selected window.
+    new_bucket_q = lead_buckets_base.filter(Lead.status == 'new')
+
+    follow_up_q = lead_buckets_base.filter(Lead.status == 'follow_up')
+    no_answer_q = lead_buckets_base.filter(Lead.status == 'no_answer')
+    warm_q = lead_buckets_base.filter(Lead.status.in_(warm_statuses))
+    hot_q = lead_buckets_base.filter(Lead.status.in_(hot_statuses))
 
     # counts
     today_callbacks_count = len(current_callbacks)
@@ -931,6 +1142,16 @@ def recycle_queue():
     date_from_str = (request.args.get('date_from') or '').strip()
     date_to_str = (request.args.get('date_to') or '').strip()
     status_filter = request.args.get('status')   # optional single-status filter
+    query_text = (request.args.get('q') or '').strip().lower()
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.args.get('page_size', 25))
+    except (TypeError, ValueError):
+        page_size = 25
+    page_size = max(1, min(200, page_size))
     now = datetime.utcnow()
     today_start = datetime(now.year, now.month, now.day)
     tomorrow_start = today_start + timedelta(days=1)
@@ -972,8 +1193,20 @@ def recycle_queue():
         stale_before = now - timedelta(days=stale_days)
         base = base.filter(Lead.status.in_(statuses), Lead.updated_at <= stale_before)
 
+    if query_text:
+        like_q = f'%{query_text}%'
+        base = base.outerjoin(User, Lead.assigned_to == User.id).outerjoin(Project, Lead.project_id == Project.id).filter(
+            db.or_(
+                func.lower(Lead.name).like(like_q),
+                func.lower(func.coalesce(Lead.phone, '')).like(like_q),
+                func.lower(func.coalesce(Project.name, '')).like(like_q),
+                func.lower(func.coalesce(User.name, '')).like(like_q),
+            )
+        )
+
     total = base.count()
-    leads = base.order_by(Lead.updated_at.asc()).limit(100).all()
+    offset = (page - 1) * page_size
+    leads = base.order_by(Lead.updated_at.asc()).offset(offset).limit(page_size).all()
 
     # For each lead, attach previous assignees (for display in the UI)
     def _with_history(lead):
@@ -991,6 +1224,9 @@ def recycle_queue():
     return jsonify({
         'leads':      [_with_history(l) for l in leads],
         'total':      total,
+        'page':       page,
+        'page_size':  page_size,
+        'total_pages': max(1, (total + page_size - 1) // page_size),
         'stale_days': stale_days,
         'stale_mode': stale_mode or 'older_than_days',
         'selected_range': {
@@ -1033,6 +1269,25 @@ def reshuffle_leads():
     if len(lead_ids) > 200:
         return jsonify({'error': 'Max 200 leads per reshuffle'}), 400
 
+    queued = _runtime_prefers_async_jobs() or len(lead_ids) > 50 or request.args.get('async', '').strip() == '1'
+
+    job = LeadReshuffleJob(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        lead_ids=lead_ids,
+        strategy=strategy,
+        reason=reason,
+        cooldown_days=cooldown_days,
+        status='queued' if queued else 'processing',
+        started_at=datetime.utcnow() if not queued else None,
+    )
+    db.session.add(job)
+    db.session.flush()
+
+    if queued:
+        db.session.commit()
+        return jsonify({'job': job.to_dict(), 'status': 'queued'}), 202
+
     # Gather eligible team members
     if user.role == 'sales_manager':
         team = User.query.filter_by(manager_id=user.id, is_active=True).all()
@@ -1042,133 +1297,29 @@ def reshuffle_leads():
     if not team:
         return jsonify({'error': 'No active team members available'}), 400
 
-    # Pre-compute active lead counts for all team members (used by multiple strategies)
-    NON_ACTIVE = ['lost', 'junk', 'booking_done', 'not_interested']
-    load_counts: dict = {}
-    for tm in team:
-        load_counts[tm.id] = Lead.query.filter(
-            Lead.assigned_to == tm.id,
-            Lead.is_active == True,
-            Lead.status.notin_(NON_ACTIVE),
-        ).count()
+    result = _process_reshuffle_job(job, user, team, strategy, reason, cooldown_days)
+    return jsonify(result), 200
 
-    cooldown_threshold = datetime.utcnow() - timedelta(days=cooldown_days)
 
-    def _get_next_assignee_intelligent(lead):
-        """Cooldown-Based Intelligent Recycling algorithm."""
-        current_uid = lead.assigned_to
+@leads_bp.route('/reshuffle/jobs/<int:job_id>/process', methods=['POST'])
+@require_role('superadmin', 'sales_manager')
+def process_reshuffle_job(job_id):
+    job = LeadReshuffleJob.query.get(job_id)
+    user = request.current_user
+    if not job or job.tenant_id != user.tenant_id:
+        return jsonify({'error': 'Job not found'}), 404
+    if job.user_id != user.id and user.role not in ('sales_manager', 'superadmin'):
+        return jsonify({'error': 'Forbidden'}), 403
 
-        # Full assignment history for this lead (most recent per user)
-        history = LeadAssignmentHistory.query.filter_by(lead_id=lead.id).all()
-        last_assigned: dict = {}  # user_id -> most recent assigned_at
-        for h in history:
-            if h.assigned_to:
-                if h.assigned_to not in last_assigned or h.assigned_at > last_assigned[h.assigned_to]:
-                    last_assigned[h.assigned_to] = h.assigned_at
+    if user.role == 'sales_manager':
+        team = User.query.filter_by(manager_id=user.id, is_active=True).all()
+    else:
+        team = User.query.filter_by(role='team_member', tenant_id=user.tenant_id, is_active=True).all()
 
-        # Candidates: exclude current user (Rule 1 — no consecutive same user)
-        candidates = [u for u in team if u.id != current_uid]
-        if not candidates:
-            # Only one team member — must assign back but log it
-            return team[0]
+    if not team:
+        return jsonify({'error': 'No active team members available'}), 400
 
-        def _load(u):
-            return load_counts.get(u.id, 0)
-
-        # TIER 1 — Users who have NEVER received this lead (highest priority)
-        tier1 = [u for u in candidates if u.id not in last_assigned]
-        if tier1:
-            tier1.sort(key=_load)  # balanced distribution
-            return tier1[0]
-
-        # TIER 2 — Users whose last assignment was outside the cooldown window
-        tier2 = [u for u in candidates
-                 if last_assigned.get(u.id, datetime.min) < cooldown_threshold]
-        if tier2:
-            # Sort: least recently assigned first, then by workload
-            tier2.sort(key=lambda u: (last_assigned[u.id], _load(u)))
-            return tier2[0]
-
-        # TIER 3 — Fallback: all candidates, least recently assigned
-        # (cooldown override — all in cooldown but assignment must proceed)
-        candidates.sort(key=lambda u: (last_assigned.get(u.id, datetime.min), _load(u)))
-        return candidates[0]
-
-    rr_index  = 0
-    reshuffled = 0
-    assignments = []
-
-    for lead_id in lead_ids:
-        lead = Lead.query.filter_by(id=lead_id, tenant_id=user.tenant_id, is_active=True).first()
-        if not lead:
-            continue
-
-        # Manager scope check
-        if user.role == 'sales_manager':
-            team_ids = {tm.id for tm in team} | {user.id}
-            if lead.assigned_to not in team_ids and lead.sales_manager_id != user.id:
-                continue
-
-        # Skip permanently closed leads
-        if lead.status in ['lost', 'junk']:
-            continue
-
-        # Select new assignee per strategy
-        if strategy == 'intelligent':
-            new_assignee = _get_next_assignee_intelligent(lead)
-        elif strategy == 'least_loaded':
-            prev_ids = {
-                h.assigned_to
-                for h in LeadAssignmentHistory.query.filter_by(lead_id=lead_id).all()
-                if h.assigned_to
-            }
-            prev_ids.add(lead.assigned_to)
-            cands = [u for u in team if u.id not in prev_ids] or team
-            new_assignee = min(cands, key=lambda u: load_counts.get(u.id, 0))
-            load_counts[new_assignee.id] = load_counts.get(new_assignee.id, 0) + 1
-        else:  # round_robin
-            prev_ids = {
-                h.assigned_to
-                for h in LeadAssignmentHistory.query.filter_by(lead_id=lead_id).all()
-                if h.assigned_to
-            }
-            prev_ids.add(lead.assigned_to)
-            cands = [u for u in team if u.id not in prev_ids] or team
-            new_assignee = cands[rr_index % len(cands)]
-            rr_index += 1
-
-        old_assignee_id = lead.assigned_to
-        db.session.add(LeadAssignmentHistory(
-            lead_id=lead_id,
-            assigned_from=old_assignee_id,
-            assigned_to=new_assignee.id,
-            assigned_by=user.id,
-            reason=reason,
-        ))
-        lead.assigned_to = new_assignee.id
-        lead.assigned_by = user.id
-        # Increment load counter so subsequent leads in same batch account for this
-        load_counts[new_assignee.id] = load_counts.get(new_assignee.id, 0) + 1
-
-        log_activity(
-            user.id, 'reshuffle_lead', 'leads', lead_id, 'Lead',
-            description=f'Reshuffled lead {lead.name} to {new_assignee.name} (strategy={strategy})',
-        )
-
-        old_name = (User.query.get(old_assignee_id).name
-                    if old_assignee_id else 'Unassigned')
-        assignments.append({
-            'lead_id':        lead_id,
-            'lead_name':      lead.name,
-            'from_user_id':   old_assignee_id,
-            'from_user_name': old_name,
-            'to_user_id':     new_assignee.id,
-            'to_user_name':   new_assignee.name,
-        })
-        reshuffled += 1
-
-    db.session.commit()
-    return jsonify({'reshuffled': reshuffled, 'assignments': assignments}), 200
+    return jsonify(_process_reshuffle_job(job, user, team, job.strategy, job.reason, job.cooldown_days)), 200
 
 
 # ---------------------------------------------------------------------------
@@ -1259,6 +1410,60 @@ def get_call_activity_timeline(lead_id):
     return jsonify({'call_activities': [log.to_dict() for log in call_logs]}), 200
 
 
+@leads_bp.route('/<int:lead_id>/detail-bundle', methods=['GET'])
+@require_auth
+def get_lead_detail_bundle(lead_id):
+    user = request.current_user
+    lead = Lead.query.get(lead_id)
+    err = _check_lead_access(user, lead)
+    if err:
+        return err
+
+    notes = (
+        LeadNote.query
+        .filter_by(lead_id=lead_id)
+        .order_by(LeadNote.created_at.desc())
+        .all()
+    )
+    status_history = (
+        StatusHistory.query
+        .filter_by(lead_id=lead_id)
+        .order_by(StatusHistory.changed_at.desc())
+        .all()
+    )
+    assignment_history = (
+        LeadAssignmentHistory.query
+        .filter_by(lead_id=lead_id)
+        .order_by(LeadAssignmentHistory.assigned_at.desc())
+        .all()
+    )
+    callbacks = (
+        CallbackReminder.query
+        .filter_by(lead_id=lead_id)
+        .order_by(CallbackReminder.callback_datetime.asc())
+        .all()
+    )
+    call_logs = (
+        ActivityLog.query
+        .filter(
+            ActivityLog.resource_id == lead_id,
+            ActivityLog.module == 'leads',
+            ActivityLog.action.like('call_%'),
+        )
+        .order_by(ActivityLog.created_at.asc())
+        .all()
+    )
+
+    return jsonify({
+        'lead': lead.to_dict(),
+        'notes': [n.to_dict() for n in notes],
+        'status_history': [h.to_dict() for h in status_history],
+        'assignment_history': [h.to_dict() for h in assignment_history],
+        'callbacks': [c.to_dict() for c in callbacks],
+        'call_activities': [log.to_dict() for log in call_logs],
+    }), 200
+
+
 @leads_bp.route('/<int:lead_id>/callbacks', methods=['GET'])
 @require_auth
 def get_callbacks(lead_id):
@@ -1288,12 +1493,25 @@ def create_callback(lead_id):
         return jsonify({'error': 'callback_datetime is required'}), 400
 
     try:
-        cb_dt = datetime.fromisoformat(raw_dt.replace('Z', '+00:00').split('+')[0])
+        cb_dt = _parse_ist_datetime(raw_dt)
     except ValueError:
         return jsonify({'error': 'Invalid datetime format. Use ISO 8601 (YYYY-MM-DDTHH:MM:SS)'}), 400
 
     if cb_dt <= datetime.utcnow():
         return jsonify({'error': 'Callback time must be in the future'}), 400
+
+    # Only one pending callback per lead is allowed.
+    existing_pending = (
+        CallbackReminder.query
+        .filter_by(lead_id=lead_id, status='pending')
+        .order_by(CallbackReminder.created_at.asc(), CallbackReminder.id.asc())
+        .first()
+    )
+    if existing_pending:
+        return jsonify({
+            'error': 'A pending callback already exists for this lead. Close it with a note before creating a new one.',
+            'pending_callback': existing_pending.to_dict(),
+        }), 409
 
     # Determine manager_id: from lead's sales_manager, or assigned user's manager
     manager_id = lead.sales_manager_id
@@ -1316,7 +1534,7 @@ def create_callback(lead_id):
 
     log_activity(
         user.id, 'create_callback', 'leads', lead_id, 'Lead',
-        description=f'Scheduled callback for lead {lead.name} at {cb_dt.strftime("%Y-%m-%d %H:%M")}',
+        description=f'Scheduled callback for lead {lead.name} at {_format_ist_datetime(cb_dt)}',
     )
     return jsonify({'callback': cb.to_dict()}), 201
 
@@ -1328,11 +1546,74 @@ def complete_callback(callback_id):
     cb = CallbackReminder.query.get(callback_id)
     if not cb or cb.tenant_id != user.tenant_id:
         return jsonify({'error': 'Callback not found'}), 404
+
+    if cb.status != 'pending':
+        return jsonify({'error': 'Only pending callbacks can be closed'}), 400
+
+    data = request.get_json() or {}
+    closure_note = (data.get('closure_note') or data.get('notes') or '').strip()
+    if not closure_note:
+        return jsonify({'error': 'closure_note is required to close a callback'}), 400
+
+    closed_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    actor = user.name or user.email or f'User {user.id}'
+    closure_entry = f'[COMPLETED by {actor} at {closed_at}] {closure_note}'
+    cb.notes = f'{cb.notes}\n{closure_entry}'.strip() if cb.notes else closure_entry
+
     cb.status = 'completed'
     db.session.commit()
     log_activity(
         user.id, 'complete_callback', 'leads', cb.lead_id, 'Lead',
-        description=f'Marked callback as completed',
+        description='Marked callback as completed with closure note',
+    )
+    return jsonify({'callback': cb.to_dict()}), 200
+
+
+@leads_bp.route('/callbacks/<int:callback_id>', methods=['PUT'])
+@require_auth
+def update_callback(callback_id):
+    user = request.current_user
+    cb = CallbackReminder.query.get(callback_id)
+    if not cb or cb.tenant_id != user.tenant_id:
+        return jsonify({'error': 'Callback not found'}), 404
+
+    lead = Lead.query.get(cb.lead_id) if cb.lead_id else None
+    if lead:
+        err = _check_lead_access(user, lead)
+        if err:
+            return err
+
+    if cb.status != 'pending':
+        return jsonify({'error': 'Only pending callbacks can be edited'}), 400
+
+    data = request.get_json() or {}
+    raw_dt = (data.get('callback_datetime') or '').strip()
+    if not raw_dt:
+        return jsonify({'error': 'callback_datetime is required'}), 400
+
+    try:
+        cb_dt = _parse_ist_datetime(raw_dt)
+    except ValueError:
+        return jsonify({'error': 'Invalid datetime format. Use ISO 8601 (YYYY-MM-DDTHH:MM:SS)'}), 400
+
+    if cb_dt <= datetime.utcnow():
+        return jsonify({'error': 'Callback time must be in the future'}), 400
+
+    old_dt = cb.callback_datetime
+    cb.callback_datetime = cb_dt
+    if 'notes' in data:
+        cb.notes = (data.get('notes') or '').strip() or None
+    db.session.commit()
+
+    log_activity(
+        user.id,
+        'update_callback',
+        'leads',
+        cb.lead_id,
+        'Lead',
+        old_value={'callback_datetime': old_dt.isoformat() if old_dt else None},
+        new_value={'callback_datetime': cb_dt.isoformat()},
+        description='Updated callback schedule',
     )
     return jsonify({'callback': cb.to_dict()}), 200
 
@@ -1347,6 +1628,26 @@ def delete_callback(callback_id):
     # Only the creator, assigned user, or admin/manager may delete
     if user.role == 'team_member' and cb.assigned_user_id != user.id:
         return jsonify({'error': 'Access denied'}), 403
+
+    # Pending callbacks cannot be hard-deleted. They must be closed with a note.
+    if cb.status == 'pending':
+        data = request.get_json(silent=True) or {}
+        closure_note = (data.get('closure_note') or data.get('notes') or '').strip()
+        if not closure_note:
+            return jsonify({'error': 'closure_note is required to cancel a pending callback'}), 400
+
+        closed_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        actor = user.name or user.email or f'User {user.id}'
+        closure_entry = f'[CANCELLED by {actor} at {closed_at}] {closure_note}'
+        cb.notes = f'{cb.notes}\n{closure_entry}'.strip() if cb.notes else closure_entry
+        cb.status = 'cancelled'
+        db.session.commit()
+        log_activity(
+            user.id, 'cancel_callback', 'leads', cb.lead_id, 'Lead',
+            description='Cancelled callback with closure note',
+        )
+        return jsonify({'callback': cb.to_dict(), 'message': 'Callback cancelled'}), 200
+
     db.session.delete(cb)
     db.session.commit()
     return jsonify({'message': 'Callback deleted'}), 200

@@ -1,5 +1,6 @@
 import time
 import uuid
+import os
 
 from flask import Flask, g, has_request_context, jsonify, request
 from flask_cors import CORS
@@ -7,6 +8,18 @@ from sqlalchemy import event
 
 from app.models.base import db
 from app.config import config_map, get_config_name
+
+PRIMARY_ADMIN_OLD_EMAIL = 'admin@sociomonkey.ai'
+PRIMARY_ADMIN_NEW_EMAIL = 'aseem@sociomonkey.com'
+PRIMARY_ADMIN_NAME = 'Aseem'
+DEMO_TENANT_SLUG = 'demo'
+DEMO_TENANT_NAME = 'Sociomonkey Demo'
+DEMO_BRAND_NAME = 'LMS Demo'
+DEMO_LOGO_URL = 'Assets/top-banner-logo.png'
+DEMO_FAVICON_URL = 'Assets/top-banner-logo.png'
+DEMO_ADMIN_EMAIL = 'demo.admin@sociomonkey.com'
+DEMO_ADMIN_NAME = 'Sociomonkey Admin'
+DEMO_ADMIN_PASSWORD = 'SocioMonkey#2024'
 
 
 def _perf_now_ms() -> int:
@@ -22,8 +35,12 @@ def _perf_match_route(req) -> str:
     method = (req.method or 'GET').upper()
     if method == 'POST' and path == '/api/auth/login':
         return 'login'
+    if method == 'GET' and path == '/api/auth/me':
+        return 'auth_me'
     if method == 'GET' and path.startswith('/api/public/tenants/') and path.endswith('/config'):
         return 'tenant_config'
+    if method == 'GET' and path == '/api/projects':
+        return 'projects'
     if method == 'GET' and path == '/api/leads/dashboard/stats':
         return 'dashboard_stats'
     if method == 'GET' and path == '/api/leads':
@@ -213,7 +230,8 @@ def create_app(config_name: str = None) -> Flask:
         from app.models import (  # noqa: F401
             User, Role, Project, Lead,
             StatusHistory, LeadNote, LeadAssignmentHistory, ActivityLog,
-            Product, TenantProduct, FeatureFlag, UsageLog, CallbackReminder,
+            DemoRequest, Product, TenantProduct, FeatureFlag, UsageLog, CallbackReminder,
+            ProjectAsset,
         )
         from app.models.otp import OtpToken  # noqa: F401
         from app.models.tenant import Tenant  # noqa: F401
@@ -226,6 +244,14 @@ def create_app(config_name: str = None) -> Flask:
             _run_product_migration(app)
         except Exception as e:
             app.logger.warning('Product migration skipped: %s', e)
+        try:
+            _ensure_demo_lms_tenant(app)
+        except Exception as e:
+            app.logger.warning('Demo tenant bootstrap skipped: %s', e)
+        try:
+            _migrate_primary_admin_identity(app)
+        except Exception as e:
+            app.logger.warning('Primary admin identity migration skipped: %s', e)
         # Only seed on a completely fresh database (no users = first-ever boot)
         from app.models.user import User as _User
         if _User.query.count() == 0:
@@ -242,7 +268,21 @@ def create_app(config_name: str = None) -> Flask:
     # ------------------------------------------------------------------ Notifications endpoint
     from flask import request as _req
     from app.middleware import require_auth as _require_auth
-    from app.services.reminder_scheduler import drain_notifications
+    from app.services.reminder_scheduler import drain_notifications, process_pending_reminders
+    from app.routes.uploads import process_queued_import_jobs, process_queued_export_jobs
+    from app.routes.leads import process_queued_reshuffle_jobs
+
+    def _cron_authorized(req) -> bool:
+        expected = os.environ.get('CRON_SECRET', '').strip()
+        if not expected:
+            return True
+        provided_header = (req.headers.get('X-Cron-Secret') or '').strip()
+        if provided_header == expected:
+            return True
+        authz = (req.headers.get('Authorization') or '').strip()
+        if authz == f'Bearer {expected}':
+            return True
+        return False
 
     @app.route('/api/leads/notifications', methods=['GET'])
     @_require_auth
@@ -250,6 +290,31 @@ def create_app(config_name: str = None) -> Flask:
         user = _req.current_user
         notes = drain_notifications(user.id)
         return jsonify({'notifications': notes}), 200
+
+    @app.route('/api/internal/reminders/process', methods=['GET', 'POST'])
+    def process_reminders_once():
+        if not _cron_authorized(_req):
+            return jsonify({'error': 'Forbidden'}), 403
+        process_pending_reminders()
+        return jsonify({'status': 'ok'}), 200
+
+    @app.route('/api/internal/jobs/process', methods=['GET', 'POST'])
+    def process_jobs_once():
+        if not _cron_authorized(_req):
+            return jsonify({'error': 'Forbidden'}), 403
+
+        limit_raw = (_req.args.get('limit') or _req.headers.get('X-Job-Limit') or '10').strip()
+        try:
+            limit = max(1, min(100, int(limit_raw)))
+        except ValueError:
+            limit = 10
+
+        summary = {
+            'imports': process_queued_import_jobs(limit=limit),
+            'exports': process_queued_export_jobs(limit=limit),
+            'reshuffles': process_queued_reshuffle_jobs(limit=limit),
+        }
+        return jsonify({'status': 'ok', 'summary': summary}), 200
 
     return app
 
@@ -326,12 +391,36 @@ def _ensure_platform_owner(app: 'Flask'):
     """Make sure the SocioMonkey platform owner account exists."""
     with app.app_context():
         _ensure_user(
-            name='SocioMonkey Admin',
-            email='admin@sociomonkey.ai',
+            name=PRIMARY_ADMIN_NAME,
+            email=PRIMARY_ADMIN_NEW_EMAIL,
             password='SocioMonkey#2024',
             role='platform_owner',
             tenant_id=None,
         )
+        db.session.commit()
+
+
+def _migrate_primary_admin_identity(app: 'Flask'):
+    """Idempotently migrate hardcoded primary admin identity to the new address."""
+    with app.app_context():
+        from app.models.user import User
+        from app.models.tenant import Tenant
+
+        old_user = User.query.filter_by(email=PRIMARY_ADMIN_OLD_EMAIL).first()
+        new_user = User.query.filter_by(email=PRIMARY_ADMIN_NEW_EMAIL).first()
+
+        if old_user and not new_user:
+            old_user.email = PRIMARY_ADMIN_NEW_EMAIL
+            old_user.name = PRIMARY_ADMIN_NAME
+            old_user.role = 'platform_owner'
+        elif old_user and new_user and old_user.id != new_user.id:
+            old_user.is_active = False
+
+        Tenant.query.filter_by(admin_email=PRIMARY_ADMIN_OLD_EMAIL).update(
+            {'admin_email': PRIMARY_ADMIN_NEW_EMAIL},
+            synchronize_session=False,
+        )
+
         db.session.commit()
 
 
@@ -369,7 +458,7 @@ PLATFORM_PRODUCTS = [
         color='#7c3aed',
         category='Operations',
         version='1.0.0',
-        is_active=False,
+        is_active=True,
     ),
     dict(
         name='Warehouse Management (WMS)',
@@ -380,7 +469,17 @@ PLATFORM_PRODUCTS = [
         color='#d97706',
         category='Operations',
         version='1.0.0',
-        is_active=False,
+        is_active=True,
+    ),
+    dict(
+        name='Amazon Data Intelligence & Analytics',
+        slug='amazon',
+        description='Keyword tracking, ranking analytics, advertising insights, and market intelligence.',
+        icon='🛍️',
+        color='#f97316',
+        category='E-commerce',
+        version='1.0.0',
+        is_active=True,
     ),
     dict(
         name='Human Resource Management (HRMS)',
@@ -415,8 +514,12 @@ def _run_product_migration(app: 'Flask'):
     with app.app_context():
         # 1. Ensure all platform products exist
         for p_data in PLATFORM_PRODUCTS:
-            if not Product.query.filter_by(slug=p_data['slug']).first():
+            existing = Product.query.filter_by(slug=p_data['slug']).first()
+            if not existing:
                 db.session.add(Product(**p_data))
+            else:
+                for key, value in p_data.items():
+                    setattr(existing, key, value)
         db.session.commit()
 
         # 2. Subscribe every existing active tenant to CRM (if not already subscribed)
@@ -449,6 +552,195 @@ def _run_product_migration(app: 'Flask'):
                         status='active',
                     ))
                 db.session.commit()
+
+
+def _ensure_demo_lms_tenant(app: 'Flask'):
+    """
+    Ensure a dedicated internal LMS demo tenant exists at /demo/lms.
+
+    Guarantees:
+    - Demo tenant is not created through client provisioning flow.
+    - Demo tenant uses dummy data and a dedicated demo superadmin.
+    - LMS feature flags stay in sync with Ganga on each startup.
+    """
+    from app.models.tenant import Tenant
+    from app.models.user import User
+    from app.models.project import Project
+    from app.models.lead import Lead
+    from app.models.product import Product, TenantProduct, FeatureFlag
+    from app.utils.jwt import hash_password
+
+    with app.app_context():
+        ganga = Tenant.query.filter_by(slug='ganga').first()
+        lms = Product.query.filter_by(slug='lms').first()
+        if not lms:
+            return
+
+        demo = Tenant.query.filter_by(slug=DEMO_TENANT_SLUG).first()
+        if not demo:
+            demo = Tenant(
+                name=DEMO_TENANT_NAME,
+                slug=DEMO_TENANT_SLUG,
+                brand_name=DEMO_BRAND_NAME,
+                logo_url=DEMO_LOGO_URL,
+                favicon_url=DEMO_FAVICON_URL,
+                primary_color=(ganga.primary_color if ganga else '#1e3a5f'),
+                secondary_color=(ganga.secondary_color if ganga else '#3b82f6'),
+                accent_color=(ganga.accent_color if ganga else '#10b981'),
+                sidebar_bg_color=(ganga.sidebar_bg_color if ganga else '#1e293b'),
+                login_bg_color=(ganga.login_bg_color if ganga else '#f1f5f9'),
+                plan=(ganga.plan if ganga else 'enterprise'),
+                status='active',
+                max_users=(ganga.max_users if ganga else 100),
+                admin_email=DEMO_ADMIN_EMAIL,
+                admin_name=DEMO_ADMIN_NAME,
+                industry='Demo',
+                notes='Internal LMS demo tenant. Not a client account.',
+            )
+            db.session.add(demo)
+            db.session.flush()
+        else:
+            demo.name = DEMO_TENANT_NAME
+            demo.brand_name = DEMO_BRAND_NAME
+            demo.logo_url = DEMO_LOGO_URL
+            demo.favicon_url = DEMO_FAVICON_URL
+            demo.status = 'active'
+            demo.admin_email = DEMO_ADMIN_EMAIL
+            demo.admin_name = DEMO_ADMIN_NAME
+            demo.notes = 'Internal LMS demo tenant. Not a client account.'
+            if ganga:
+                demo.primary_color = ganga.primary_color
+                demo.secondary_color = ganga.secondary_color
+                demo.accent_color = ganga.accent_color
+                demo.sidebar_bg_color = ganga.sidebar_bg_color
+                demo.login_bg_color = ganga.login_bg_color
+                demo.plan = ganga.plan
+                demo.max_users = ganga.max_users
+
+        demo_admin = User.query.filter_by(email=DEMO_ADMIN_EMAIL).first()
+        if not demo_admin:
+            demo_admin = User(
+                name=DEMO_ADMIN_NAME,
+                email=DEMO_ADMIN_EMAIL,
+                password_hash=hash_password(DEMO_ADMIN_PASSWORD),
+                role='superadmin',
+                tenant_id=demo.id,
+                is_active=True,
+            )
+            db.session.add(demo_admin)
+            db.session.flush()
+        else:
+            demo_admin.name = DEMO_ADMIN_NAME
+            demo_admin.role = 'superadmin'
+            demo_admin.tenant_id = demo.id
+            demo_admin.is_active = True
+
+        demo_sub = TenantProduct.query.filter_by(tenant_id=demo.id, product_id=lms.id).first()
+        if not demo_sub:
+            db.session.add(TenantProduct(
+                tenant_id=demo.id,
+                product_id=lms.id,
+                status='active',
+            ))
+        else:
+            demo_sub.status = 'active'
+
+        # Keep demo focused on LMS only.
+        TenantProduct.query.filter(
+            TenantProduct.tenant_id == demo.id,
+            TenantProduct.product_id != lms.id,
+        ).delete(synchronize_session=False)
+
+        # Mirror LMS feature flags from Ganga to demo on every startup.
+        if ganga:
+            source_flags = FeatureFlag.query.filter_by(
+                tenant_id=ganga.id,
+                product_id=lms.id,
+            ).all()
+            for src in source_flags:
+                dst = FeatureFlag.query.filter_by(
+                    tenant_id=demo.id,
+                    product_id=lms.id,
+                    flag_key=src.flag_key,
+                ).first()
+                if not dst:
+                    dst = FeatureFlag(
+                        flag_key=src.flag_key,
+                        tenant_id=demo.id,
+                        product_id=lms.id,
+                    )
+                    db.session.add(dst)
+                dst.is_enabled = src.is_enabled
+                dst.flag_value = src.flag_value
+                dst.description = src.description
+
+        _seed_demo_lms_data(demo.id, demo_admin.id)
+        db.session.commit()
+
+
+def _seed_demo_lms_data(demo_tenant_id: int, demo_admin_id: int):
+    """Seed deterministic dummy LMS data for demo tenant if empty."""
+    from app.models.project import Project
+    from app.models.lead import Lead
+
+    if Project.query.filter_by(tenant_id=demo_tenant_id).count() == 0:
+        demo_projects = [
+            dict(
+                name='Demo Residency Alpha',
+                description='Dummy inventory for product walkthrough.',
+                location='Demo City',
+                developer='Sociomonkey Demo Builders',
+                project_type='Residential',
+                budget_min=3500000,
+                budget_max=7800000,
+            ),
+            dict(
+                name='Demo Business Plaza',
+                description='Dummy commercial catalogue for LMS simulation.',
+                location='Demo Tech Park',
+                developer='Sociomonkey Demo Builders',
+                project_type='Commercial',
+                budget_min=9000000,
+                budget_max=24000000,
+            ),
+            dict(
+                name='Demo Heights Premium',
+                description='Dummy premium segment portfolio.',
+                location='Demo Central',
+                developer='Sociomonkey Demo Builders',
+                project_type='Luxury Residential',
+                budget_min=12000000,
+                budget_max=36000000,
+            ),
+        ]
+        for proj in demo_projects:
+            db.session.add(Project(
+                tenant_id=demo_tenant_id,
+                created_by=demo_admin_id,
+                **proj,
+            ))
+        db.session.flush()
+
+    if Lead.query.filter_by(tenant_id=demo_tenant_id).count() == 0:
+        project_ids = [p.id for p in Project.query.filter_by(tenant_id=demo_tenant_id).order_by(Project.id).all()]
+        demo_leads = [
+            dict(name='Demo Lead One', phone='9000000001', email='demo.lead1@example.com', source='Demo Campaign', status='new'),
+            dict(name='Demo Lead Two', phone='9000000002', email='demo.lead2@example.com', source='Demo Website', status='interested'),
+            dict(name='Demo Lead Three', phone='9000000003', email='demo.lead3@example.com', source='Demo Referral', status='site_visit_planned'),
+            dict(name='Demo Lead Four', phone='9000000004', email='demo.lead4@example.com', source='Demo Walk-in', status='site_visit_done'),
+            dict(name='Demo Lead Five', phone='9000000005', email='demo.lead5@example.com', source='Demo Social', status='negotiation'),
+            dict(name='Demo Lead Six', phone='9000000006', email='demo.lead6@example.com', source='Demo Campaign', status='booking_done'),
+        ]
+        for idx, ld in enumerate(demo_leads):
+            project_id = project_ids[idx % len(project_ids)] if project_ids else None
+            db.session.add(Lead(
+                tenant_id=demo_tenant_id,
+                project_id=project_id,
+                created_by=demo_admin_id,
+                budget_min=3500000,
+                budget_max=15000000,
+                **ld,
+            ))
 
 
 # ---------------------------------------------------------------------------
@@ -614,8 +906,8 @@ def _seed(app: Flask):
 
         # Seed platform owner
         _ensure_user(
-            name='SocioMonkey Admin',
-            email='admin@sociomonkey.ai',
+            name=PRIMARY_ADMIN_NAME,
+            email=PRIMARY_ADMIN_NEW_EMAIL,
             password='SocioMonkey#2024',
             role='platform_owner',
             tenant_id=None,

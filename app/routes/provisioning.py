@@ -12,6 +12,7 @@ import re
 from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
+from sqlalchemy import func
 
 from app.middleware import require_platform_owner
 from app.models.base import db
@@ -23,6 +24,24 @@ from app.utils.jwt import create_token, hash_password
 
 
 provisioning_bp = Blueprint('provisioning', __name__, url_prefix='/api/platform')
+INTERNAL_TENANT_SLUGS = frozenset(['demo'])
+
+ROUTE_TENANT_SLUG_ALIASES = {
+    'ganga': 'ganga-realty',
+}
+
+
+def _route_tenant_slug(slug: str) -> str:
+    raw = (slug or '').strip().lower()
+    return ROUTE_TENANT_SLUG_ALIASES.get(raw, raw)
+
+
+def _tenant_app_path(tenant_slug: str, product_slug: str) -> str:
+    return f'/apps/{product_slug}/{_route_tenant_slug(tenant_slug)}'
+
+
+def _tenant_login_path(tenant_slug: str, product_slug: str) -> str:
+    return f'{_tenant_app_path(tenant_slug, product_slug)}/login'
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -183,8 +202,166 @@ def provision_tenant():
         'tenant':               tenant.to_dict(include_stats=True),
         'admin_user':           {'id': admin_user.id, 'email': admin_user.email, 'name': admin_user.name},
         'products_provisioned': provisioned_slugs,
-        'login_url':            f'/{slug}/{provisioned_slugs[0]}/login',
+        'login_url':            _tenant_login_path(slug, provisioned_slugs[0]),
     }), 201
+
+
+@provisioning_bp.route('/products/<product_code>/clients', methods=['GET'])
+@require_platform_owner
+def get_product_clients(product_code):
+    """Return real organizations subscribed to a product."""
+    from app.models.lead import Lead
+
+    product = Product.query.filter_by(slug=product_code).first()
+    if not product:
+        return jsonify({'error': 'Product not found'}), 404
+
+    subs = (
+        TenantProduct.query
+        .filter_by(product_id=product.id)
+        .order_by(TenantProduct.enabled_at.desc())
+        .all()
+    )
+
+    tenant_ids = [sub.tenant_id for sub in subs]
+    tenants = Tenant.query.filter(Tenant.id.in_(tenant_ids)).all() if tenant_ids else []
+    tenant_map = {tenant.id: tenant for tenant in tenants}
+    cutoff = datetime.utcnow() - timedelta(days=30)
+
+    clients = []
+    total_users = 0
+    total_active_users = 0
+    total_leads = 0
+    active_clients = 0
+
+    for sub in subs:
+        tenant = tenant_map.get(sub.tenant_id)
+        if not tenant:
+            continue
+        if tenant.slug in INTERNAL_TENANT_SLUGS:
+            continue
+
+        user_count = User.query.filter_by(tenant_id=tenant.id, is_active=True).count()
+        active_user_count = User.query.filter(
+            User.tenant_id == tenant.id,
+            User.is_active == True,
+            User.last_login >= cutoff,
+        ).count()
+        lead_count = Lead.query.filter_by(tenant_id=tenant.id, is_active=True).count()
+        admin_user = (
+            User.query.filter_by(tenant_id=tenant.id, role='superadmin', is_active=True)
+            .order_by(User.id)
+            .first()
+        ) or (
+            User.query.filter_by(tenant_id=tenant.id, is_active=True)
+            .order_by(User.id)
+            .first()
+        )
+
+        if tenant.status == 'active' and sub.status == 'active':
+            active_clients += 1
+
+        total_users += user_count
+        total_active_users += active_user_count
+        total_leads += lead_count
+
+        clients.append({
+            'tenant_id': tenant.id,
+            'name': tenant.name,
+            'brand_name': tenant.brand_name or tenant.name,
+            'slug': tenant.slug,
+            'plan': tenant.plan,
+            'status': tenant.status,
+            'tenant_status': tenant.status,
+            'subscription_status': sub.status,
+            'subscription_start_date': sub.enabled_at.isoformat() if sub.enabled_at else None,
+            'renewal_date': sub.expires_at.isoformat() if sub.expires_at else None,
+            'users': user_count,
+            'active_users': active_user_count,
+            'leads': lead_count,
+            'admin_name': admin_user.name if admin_user else None,
+            'admin_email': admin_user.email if admin_user else None,
+            'launch_path': _tenant_app_path(tenant.slug, product.slug),
+        })
+
+    return jsonify({
+        'product': product.to_dict(include_stats=True),
+        'stats': {
+            'total_clients': len(clients),
+            'active_clients': active_clients,
+            'total_users': total_users,
+            'active_users_30d': total_active_users,
+            'usage_count': total_leads,
+        },
+        'clients': clients,
+    }), 200
+
+
+@provisioning_bp.route('/products/<product_code>/demo-launch', methods=['POST'])
+@require_platform_owner
+def launch_product_demo(product_code):
+    """
+    Generate a short-lived impersonation token for the internal demo tenant.
+    This is intentionally separate from client provisioning and client listings.
+    """
+    owner = request.current_user
+
+    product = Product.query.filter_by(slug=product_code, is_active=True).first()
+    if not product:
+        return jsonify({'error': 'Product not found'}), 404
+
+    demo_tenant = Tenant.query.filter_by(slug='demo', status='active').first()
+    if not demo_tenant:
+        return jsonify({'error': 'Demo tenant is not configured'}), 404
+
+    sub = TenantProduct.query.filter_by(
+        tenant_id=demo_tenant.id,
+        product_id=product.id,
+        status='active',
+    ).first()
+    if not sub:
+        return jsonify({'error': f'Demo tenant is not subscribed to {product_code}'}), 400
+
+    demo_admin = (
+        User.query
+        .filter_by(tenant_id=demo_tenant.id, role='superadmin', is_active=True)
+        .order_by(User.id)
+        .first()
+    ) or (
+        User.query
+        .filter_by(tenant_id=demo_tenant.id, is_active=True)
+        .order_by(User.id)
+        .first()
+    )
+
+    if not demo_admin:
+        return jsonify({'error': 'No active users found in demo tenant'}), 404
+
+    imp_token = create_token(
+        demo_admin.id,
+        demo_admin.role,
+        tenant_id=demo_admin.tenant_id,
+        expires_minutes=240,
+    )
+
+    log_activity(
+        owner.id,
+        'launch_demo_tenant',
+        'platform',
+        demo_tenant.id,
+        'Tenant',
+        description=f'{owner.email} launched demo tenant for {product_code} as {demo_admin.email}',
+    )
+
+    return jsonify({
+        'token': imp_token,
+        'user': demo_admin.to_dict(),
+        'tenant_slug': demo_tenant.slug,
+        'tenant_name': demo_tenant.name,
+        'product_slug': product.slug,
+        'launch_url': _tenant_app_path(demo_tenant.slug, product.slug),
+        'expires_in': 14400,
+    }), 200
 
 
 # ── Impersonation ──────────────────────────────────────────────────────────────

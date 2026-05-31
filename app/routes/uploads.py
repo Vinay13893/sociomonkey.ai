@@ -1,12 +1,14 @@
 import os
 import re
 import uuid
-import threading
 from datetime import datetime, timedelta
 import base64
+from io import BytesIO
 
 from flask import Blueprint, jsonify, request, send_file
 
+from app.models.base import db
+from app.models.job import ImportJob, ImportJobRow, ExportJob
 from app.middleware import require_auth, require_role
 from app.services.excel import ExcelService
 from app.utils.leads import get_user_visible_leads, VALID_STATUSES, STATUS_ALIASES
@@ -15,9 +17,7 @@ from app.utils.activity import log_activity
 uploads_bp = Blueprint('uploads', __name__, url_prefix='/api/leads')
 
 
-# ── In-memory preview token store (TTL: 10 min) ──────────────────────────────
-_PREVIEW_STORE: dict = {}
-_PREVIEW_LOCK = threading.Lock()
+# ── Database-backed preview jobs (TTL: 10 min logical expiry) ────────────────
 _PREVIEW_TTL  = timedelta(minutes=10)
 
 # Role-based field permissions
@@ -28,25 +28,216 @@ _MANAGER_FIELDS = frozenset([
 _TEAM_FIELDS = frozenset(['name', 'status', 'notes', 'callback_dt'])
 
 
-def _store_preview(data: dict) -> str:
-    token = str(uuid.uuid4())
-    with _PREVIEW_LOCK:
-        now = datetime.utcnow()
-        expired = [k for k, v in list(_PREVIEW_STORE.items()) if v['exp'] < now]
-        for k in expired:
-            del _PREVIEW_STORE[k]
-        _PREVIEW_STORE[token] = {'data': data, 'exp': now + _PREVIEW_TTL}
-    return token
+def _preview_token_for(job_id: int) -> str:
+    return f'preview:{job_id}'
 
 
-def _pop_preview(token: str) -> 'dict | None':
-    with _PREVIEW_LOCK:
-        entry = _PREVIEW_STORE.pop(token, None)
-        if not entry:
-            return None
-        if entry['exp'] < datetime.utcnow():
-            return None
-        return entry['data']
+def _preview_job_from_token(token: str) -> 'ImportJob | None':
+    raw = (token or '').strip()
+    if raw.startswith('preview:'):
+        raw = raw.split(':', 1)[1]
+    if not raw.isdigit():
+        return None
+    return ImportJob.query.get(int(raw))
+
+
+def _create_preview_job(user, rows: list[dict], summary: dict) -> str:
+    job = ImportJob(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        product_slug=getattr(getattr(request, 'current_product', None), 'slug', None),
+        filename='bulk_update_preview',
+        file_type='bulk_update',
+        status='previewed',
+        summary={
+            'summary': summary,
+            'rows': rows,
+            'preview_expires_in_seconds': int(_PREVIEW_TTL.total_seconds()),
+        },
+        started_at=datetime.utcnow(),
+    )
+    db.session.add(job)
+    db.session.flush()
+
+    for index, row in enumerate(rows, start=1):
+        db.session.add(ImportJobRow(
+            import_job_id=job.id,
+            row_number=index,
+            lead_id=row.get('lead_id'),
+            status='valid' if row.get('valid') else 'invalid',
+            payload=row,
+            errors=row.get('errors'),
+            warnings=row.get('warnings'),
+        ))
+
+    db.session.commit()
+    return _preview_token_for(job.id)
+
+
+def _runtime_prefers_async_jobs() -> bool:
+    return (os.environ.get('VERCEL') or '').strip().lower() in {'1', 'true', 'yes'}
+
+
+def _captured_upload_bytes(file_storage) -> tuple[str, str | None, str]:
+    file_storage.stream.seek(0)
+    raw = file_storage.read()
+    file_storage.stream.seek(0)
+    return base64.b64encode(raw).decode('utf-8'), getattr(file_storage, 'mimetype', None), file_storage.filename or ''
+
+
+def _import_file_from_job(job: ImportJob):
+    data = base64.b64decode(job.source_data_b64 or '')
+    buf = BytesIO(data)
+    buf.filename = job.filename or ''
+    return buf
+
+
+def _process_import_job(job: ImportJob) -> dict:
+    user = job.user
+    if not user:
+        raise RuntimeError('Import job owner not found')
+
+    job.status = 'processing'
+    job.started_at = job.started_at or datetime.utcnow()
+    db.session.commit()
+
+    result = ExcelService.import_leads(_import_file_from_job(job), user)
+    job.summary = {
+        'imported_count': len(result.get('imported_leads', []) or []),
+        'error_count': len(result.get('errors', []) or []),
+        'result': {k: v for k, v in result.items() if k != 'report_b64'},
+    }
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+
+    imported_rows = result.get('imported_leads', []) or []
+    for index, lead in enumerate(imported_rows, start=1):
+        db.session.add(ImportJobRow(
+            import_job_id=job.id,
+            row_number=index,
+            lead_id=lead.get('lead_id') if isinstance(lead, dict) else None,
+            status='completed',
+            payload=lead if isinstance(lead, dict) else {'value': lead},
+        ))
+
+    for index, error in enumerate(result.get('errors', []) or [], start=1):
+        db.session.add(ImportJobRow(
+            import_job_id=job.id,
+            row_number=len(imported_rows) + index,
+            status='failed',
+            payload=error if isinstance(error, dict) else {'value': error},
+            errors=error if isinstance(error, list) else [str(error)],
+        ))
+
+    try:
+        report_buf = ExcelService.build_import_report(
+            result.get('imported_leads', []),
+            result.get('errors', []),
+        )
+        result['report_b64'] = base64.b64encode(report_buf.read()).decode('utf-8')
+    except Exception:
+        result['report_b64'] = None
+
+    db.session.commit()
+    result['job'] = job.to_dict()
+    return result
+
+
+def process_queued_import_jobs(limit: int = 10) -> dict:
+    processed = failed = 0
+    rows = (
+        ImportJob.query
+        .filter(ImportJob.status.in_(['queued', 'processing']))
+        .order_by(ImportJob.created_at.asc())
+        .limit(max(1, int(limit)))
+        .all()
+    )
+    for job in rows:
+        if job.status == 'completed':
+            continue
+        try:
+            _process_import_job(job)
+            processed += 1
+        except Exception as exc:
+            db.session.rollback()
+            job.status = 'failed'
+            job.error_message = str(exc)
+            job.completed_at = datetime.utcnow()
+            db.session.commit()
+            failed += 1
+    return {'queued_scanned': len(rows), 'processed': processed, 'failed': failed}
+
+
+def _process_export_job(job: ExportJob) -> dict:
+    user = job.user
+    if not user:
+        raise RuntimeError('Export job owner not found')
+
+    from app.models.lead import Lead
+
+    query = get_user_visible_leads(user)
+    filters = job.filters or {}
+    status = filters.get('status')
+    project_id = filters.get('project_id')
+    date_from = filters.get('date_from')
+    date_to = filters.get('date_to')
+
+    if status:
+        query = query.filter_by(status=status)
+    if project_id:
+        query = query.filter_by(project_id=int(project_id))
+    if date_from:
+        try:
+            query = query.filter(Lead.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            query = query.filter(Lead.created_at <= datetime.strptime(date_to, '%Y-%m-%d'))
+        except ValueError:
+            pass
+
+    job.status = 'processing'
+    job.started_at = job.started_at or datetime.utcnow()
+    db.session.commit()
+
+    leads = query.all()
+    buf = ExcelService.export_leads(leads, title='Leads Export')
+    filename = f'leads_export_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.xlsx'
+
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    job.artifact_url = filename
+    job.artifact_data_b64 = base64.b64encode(buf.read()).decode('utf-8')
+    job.artifact_mime_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    db.session.commit()
+
+    return {'job': job.to_dict(), 'filename': filename}
+
+
+def process_queued_export_jobs(limit: int = 10) -> dict:
+    processed = failed = 0
+    rows = (
+        ExportJob.query
+        .filter(ExportJob.status.in_(['queued', 'processing']))
+        .order_by(ExportJob.created_at.asc())
+        .limit(max(1, int(limit)))
+        .all()
+    )
+    for job in rows:
+        if job.status == 'completed':
+            continue
+        try:
+            _process_export_job(job)
+            processed += 1
+        except Exception as exc:
+            db.session.rollback()
+            job.status = 'failed'
+            job.error_message = str(exc)
+            job.completed_at = datetime.utcnow()
+            db.session.commit()
+            failed += 1
+    return {'queued_scanned': len(rows), 'processed': processed, 'failed': failed}
 
 
 def _norm_phone_upd(raw) -> 'str | None':
@@ -362,18 +553,28 @@ def import_leads_excel():
     if not file.filename:
         return jsonify({'error': 'No file selected'}), 400
 
-    result = ExcelService.import_leads(file, request.current_user)
+    user = request.current_user
+    queued = _runtime_prefers_async_jobs() or request.args.get('async', '').strip() == '1'
+    source_data_b64, source_mime_type, _filename = _captured_upload_bytes(file)
+    job = ImportJob(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        product_slug=getattr(getattr(request, 'current_product', None), 'slug', None),
+        filename=file.filename,
+        file_type=os.path.splitext(file.filename)[1].lstrip('.').lower() or None,
+        source_data_b64=source_data_b64,
+        source_mime_type=source_mime_type,
+        status='queued' if queued else 'processing',
+        started_at=datetime.utcnow() if not queued else None,
+    )
+    db.session.add(job)
+    db.session.flush()
+    db.session.commit()
 
-    # Generate Excel report and attach as base64 for instant download
-    try:
-        report_buf = ExcelService.build_import_report(
-            result.get('imported_leads', []),
-            result.get('errors', []),
-        )
-        result['report_b64'] = base64.b64encode(report_buf.read()).decode('utf-8')
-    except Exception:
-        result['report_b64'] = None
+    if queued:
+        return jsonify({'job': job.to_dict(), 'status': 'queued'}), 202
 
+    result = _process_import_job(job)
     return jsonify(result), 200
 
 
@@ -382,42 +583,40 @@ def import_leads_excel():
 def export_leads_excel():
     """Export filtered leads as a formatted Excel file."""
     user = request.current_user
-    query = get_user_visible_leads(user)
-
+    queued = _runtime_prefers_async_jobs() or request.args.get('async', '').strip() == '1'
     status = request.args.get('status')
     project_id = request.args.get('project_id')
     date_from = request.args.get('date_from')
     date_to = request.args.get('date_to')
 
-    if status:
-        query = query.filter_by(status=status)
-    if project_id:
-        query = query.filter_by(project_id=int(project_id))
-    if date_from:
-        try:
-            query = query.filter(
-                __import__('app.models.lead', fromlist=['Lead']).Lead.created_at
-                >= datetime.strptime(date_from, '%Y-%m-%d')
-            )
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            query = query.filter(
-                __import__('app.models.lead', fromlist=['Lead']).Lead.created_at
-                <= datetime.strptime(date_to, '%Y-%m-%d')
-            )
-        except ValueError:
-            pass
+    export_job = ExportJob(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        product_slug=getattr(getattr(request, 'current_product', None), 'slug', None),
+        export_type='leads',
+        filters={
+            'status': status,
+            'project_id': project_id,
+            'date_from': date_from,
+            'date_to': date_to,
+        },
+        status='queued' if queued else 'processing',
+        started_at=datetime.utcnow() if not queued else None,
+    )
+    db.session.add(export_job)
+    db.session.flush()
+    db.session.commit()
 
-    leads = query.all()
-    buf = ExcelService.export_leads(leads, title='Leads Export')
-    filename = f'leads_export_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.xlsx'
+    if queued:
+        return jsonify({'job': export_job.to_dict(), 'status': 'queued'}), 202
+
+    result = _process_export_job(export_job)
+    buf = BytesIO(base64.b64decode(export_job.artifact_data_b64 or ''))
     return send_file(
         buf,
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        mimetype=export_job.artifact_mime_type or 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         as_attachment=True,
-        download_name=filename,
+        download_name=result['filename'],
     )
 
 
@@ -457,11 +656,7 @@ def bulk_update_preview():
     if 'error' in result:
         return jsonify({'error': result['error']}), 400
 
-    token = _store_preview({
-        'user_id':   user.id,
-        'tenant_id': user.tenant_id,
-        'rows':      result['rows'],
-    })
+    token = _create_preview_job(user, result['rows'], result['summary'])
 
     return jsonify({
         'preview_token':    token,
@@ -486,19 +681,25 @@ def bulk_update_apply():
     if not token:
         return jsonify({'error': 'preview_token is required'}), 400
 
-    preview = _pop_preview(token)
-    if not preview:
+    preview_job = _preview_job_from_token(token)
+    if not preview_job or preview_job.file_type != 'bulk_update':
         return jsonify({'error': 'Preview expired or not found — please re-upload the file'}), 400
 
     user = request.current_user
-    if preview['user_id'] != user.id:
+    if preview_job.user_id != user.id or preview_job.tenant_id != user.tenant_id:
         return jsonify({'error': 'Preview token does not belong to current user'}), 403
+
+    preview = preview_job.summary or {}
+    rows = preview.get('rows') or [row.to_dict() for row in sorted(preview_job.rows, key=lambda r: r.row_number)]
 
     updated = failed = skipped = 0
     results = []
 
     try:
-        for row in preview['rows']:
+        preview_job.status = 'processing'
+        preview_job.started_at = preview_job.started_at or datetime.utcnow()
+
+        for row in rows:
             if not row['valid']:
                 if row.get('errors'):
                     failed += 1
@@ -603,9 +804,24 @@ def bulk_update_apply():
             results.append({**row, 'applied': True})
 
         db.session.commit()
+        preview_job.status = 'completed'
+        preview_job.completed_at = datetime.utcnow()
+        preview_job.summary = {
+            **preview,
+            'applied_summary': {
+                'updated': updated,
+                'failed': failed,
+                'skipped': skipped,
+                'total': len(rows),
+            },
+        }
+        db.session.commit()
 
     except Exception as exc:
         db.session.rollback()
+        preview_job.status = 'failed'
+        preview_job.error_message = str(exc)
+        db.session.commit()
         return jsonify({'error': f'Update failed: {exc}', 'rolled_back': True}), 500
 
     # Build downloadable report
@@ -619,6 +835,54 @@ def bulk_update_apply():
         'updated':    updated,
         'failed':     failed,
         'skipped':    skipped,
-        'total':      len(preview['rows']),
+        'total':      len(rows),
         'report_b64': report_b64,
     }), 200
+
+
+@uploads_bp.route('/import/jobs/<int:job_id>', methods=['GET'])
+@require_auth
+def get_import_job(job_id):
+    job = ImportJob.query.get(job_id)
+    user = request.current_user
+    if not job or job.tenant_id != user.tenant_id:
+        return jsonify({'error': 'Job not found'}), 404
+    if job.user_id != user.id and user.role not in ('sales_manager', 'superadmin'):
+        return jsonify({'error': 'Forbidden'}), 403
+    return jsonify({'job': job.to_dict()}), 200
+
+
+@uploads_bp.route('/export/jobs/<int:job_id>', methods=['GET'])
+@require_auth
+def get_export_job(job_id):
+    job = ExportJob.query.get(job_id)
+    user = request.current_user
+    if not job or job.tenant_id != user.tenant_id:
+        return jsonify({'error': 'Job not found'}), 404
+    if job.user_id != user.id and user.role not in ('sales_manager', 'superadmin'):
+        return jsonify({'error': 'Forbidden'}), 403
+    return jsonify({'job': job.to_dict()}), 200
+
+
+@uploads_bp.route('/import/jobs/<int:job_id>/process', methods=['POST'])
+@require_role('superadmin', 'sales_manager')
+def process_import_job(job_id):
+    job = ImportJob.query.get(job_id)
+    user = request.current_user
+    if not job or job.tenant_id != user.tenant_id:
+        return jsonify({'error': 'Job not found'}), 404
+    if job.user_id != user.id and user.role not in ('sales_manager', 'superadmin'):
+        return jsonify({'error': 'Forbidden'}), 403
+    return jsonify(_process_import_job(job)), 200
+
+
+@uploads_bp.route('/export/jobs/<int:job_id>/process', methods=['POST'])
+@require_auth
+def process_export_job(job_id):
+    job = ExportJob.query.get(job_id)
+    user = request.current_user
+    if not job or job.tenant_id != user.tenant_id:
+        return jsonify({'error': 'Job not found'}), 404
+    if job.user_id != user.id and user.role not in ('sales_manager', 'superadmin'):
+        return jsonify({'error': 'Forbidden'}), 403
+    return jsonify(_process_export_job(job)), 200
