@@ -245,7 +245,17 @@ async function loadMe() {
       retries: 0,
       timeoutMs: 30000,
     })
-  } catch (_e) {
+  } catch (e) {
+    // _apiRequest already clears session on definitive auth failure (401).
+    // Keep session on transient abort/network issues to avoid false logouts.
+    var isTransient = !!e && (
+      e.name === 'AbortError' ||
+      e.name === 'TimeoutError' ||
+      typeof e.status === 'undefined'
+    )
+    if (isTransient) {
+      return
+    }
     authClearSession()
     if (typeof dispatch === 'function') dispatch(); else render()
     return
