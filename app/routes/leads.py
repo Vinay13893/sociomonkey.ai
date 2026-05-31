@@ -930,7 +930,7 @@ def action_board():
     else:
         lead_scope = visible
 
-    visible_ids_query = visible.with_entities(Lead.id)
+    visible_ids_subq = visible.with_entities(Lead.id.label('id')).subquery()
 
     # ── Callback queries (scoped by role) ────────────────────────────────────
     cb_base = CallbackReminder.query.filter(
@@ -952,7 +952,9 @@ def action_board():
     # Keep callbacks in the same visibility boundary as lead lists.
     # Use a subquery instead of materializing lead IDs in Python to avoid
     # large IN lists and expensive memory usage on tenants with many leads.
-    cb_base = cb_base.filter(CallbackReminder.lead_id.in_(visible_ids_query))
+    cb_base = cb_base.filter(
+        CallbackReminder.lead_id.in_(db.select(visible_ids_subq.c.id))
+    )
 
     # Prevent N+1 query explosions while serializing callback rows.
     cb_base = cb_base.options(
