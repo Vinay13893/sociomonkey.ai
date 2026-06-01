@@ -129,6 +129,72 @@ def _client_ip(req) -> str:
     return (req.remote_addr or '')[:45]
 
 
+def _env_text(key: str, default: str = '') -> str:
+    return (os.environ.get(key, default) or '').replace('\u00a0', ' ').strip()
+
+
+def _tenant_env_fragment(tenant_slug: str) -> str:
+    normalized = (tenant_slug or '').strip().lower()
+    chars = []
+    for ch in normalized:
+        chars.append(ch.upper() if ch.isalnum() else '_')
+    fragment = ''.join(chars)
+    while '__' in fragment:
+        fragment = fragment.replace('__', '_')
+    return fragment.strip('_')
+
+
+def _tenant_sender_key(tenant_slug: str, suffix: str) -> str:
+    frag = _tenant_env_fragment(tenant_slug)
+    if not frag:
+        return ''
+    return f'TENANT_{frag}_{suffix}'
+
+
+def _resolve_sender_email(channel: str, is_platform_user: bool, tenant_slug: str, fallback: str = '') -> str:
+    channel = (channel or '').strip().lower()
+    keys = []
+
+    # Sender architecture supports:
+    # - Platform specific: PLATFORM_<CHANNEL>_FROM / PLATFORM_SMTP_FROM
+    # - Tenant specific:   TENANT_<TENANT_SLUG>_<CHANNEL>_FROM / TENANT_<TENANT_SLUG>_SMTP_FROM
+    # - Shared fallback:   <CHANNEL>_FROM / SMTP_FROM / SMTP_USER
+    if channel == 'brevo':
+        if is_platform_user:
+            keys.extend(['PLATFORM_BREVO_FROM', 'BREVO_FROM', 'PLATFORM_SMTP_FROM', 'SMTP_FROM', 'SMTP_USER'])
+        else:
+            tenant_brevo = _tenant_sender_key(tenant_slug, 'BREVO_FROM')
+            tenant_smtp = _tenant_sender_key(tenant_slug, 'SMTP_FROM')
+            if tenant_brevo:
+                keys.append(tenant_brevo)
+            keys.append('BREVO_FROM')
+            if tenant_smtp:
+                keys.append(tenant_smtp)
+            keys.extend(['SMTP_FROM', 'SMTP_USER'])
+    elif channel == 'resend':
+        if is_platform_user:
+            keys.extend(['PLATFORM_RESEND_FROM', 'RESEND_FROM'])
+        else:
+            tenant_resend = _tenant_sender_key(tenant_slug, 'RESEND_FROM')
+            if tenant_resend:
+                keys.append(tenant_resend)
+            keys.append('RESEND_FROM')
+    elif channel == 'smtp':
+        if is_platform_user:
+            keys.extend(['PLATFORM_SMTP_FROM', 'SMTP_FROM', 'SMTP_USER'])
+        else:
+            tenant_smtp = _tenant_sender_key(tenant_slug, 'SMTP_FROM')
+            if tenant_smtp:
+                keys.append(tenant_smtp)
+            keys.extend(['SMTP_FROM', 'SMTP_USER'])
+
+    for key in keys:
+        val = _env_text(key)
+        if val:
+            return val
+    return (fallback or '').strip()
+
+
 @auth_bp.route('/send-otp', methods=['POST'])
 def send_otp():
     data        = request.get_json() or {}
@@ -207,13 +273,25 @@ def send_otp():
     # ── Send email ────────────────────────────────────────────────────────────
     smtp_host = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
     smtp_port = int(os.environ.get('SMTP_PORT', '587'))
-    smtp_user = (os.environ.get('SMTP_USER', '') or '').replace('\u00a0', ' ').strip()
-    raw_smtp_pass = (os.environ.get('SMTP_PASS', '') or '').replace('\u00a0', ' ').strip()
+    smtp_user = _env_text('SMTP_USER')
+    raw_smtp_pass = _env_text('SMTP_PASS')
     # Gmail app passwords are often copied with separators; normalize to raw token.
     smtp_pass = raw_smtp_pass.replace(' ', '')
-    smtp_from = (os.environ.get('SMTP_FROM', smtp_user) or '').replace('\u00a0', ' ').strip()
+    is_platform_user = user.role == 'platform_owner'
+    user_tenant_slug = ''
+    if not is_platform_user:
+        if getattr(user, 'tenant', None) and getattr(user.tenant, 'slug', None):
+            user_tenant_slug = (user.tenant.slug or '').strip().lower()
+        else:
+            user_tenant_slug = tenant_slug
+
+    smtp_from = _resolve_sender_email(
+        channel='smtp',
+        is_platform_user=is_platform_user,
+        tenant_slug=user_tenant_slug,
+        fallback=smtp_user,
+    )
     brevo_key  = os.environ.get('BREVO_API_KEY', '')
-    brevo_from = os.environ.get('BREVO_FROM', '')
     resend_key = os.environ.get('RESEND_API_KEY', '')
 
     if not brevo_key and not resend_key and (not smtp_user or not smtp_pass):
@@ -258,7 +336,12 @@ def send_otp():
         if brevo_key:
             # ── Brevo API (HTTPS — works on Railway, sends to any recipient) ─
             import urllib.request as _ur, json as _json
-            sender_email = brevo_from or smtp_from or smtp_user
+            sender_email = _resolve_sender_email(
+                channel='brevo',
+                is_platform_user=is_platform_user,
+                tenant_slug=user_tenant_slug,
+                fallback=smtp_from or smtp_user,
+            )
             payload = {
                 'sender':      {'name': 'Ganga Realty LMS', 'email': sender_email},
                 'to':          [{'email': email}],
@@ -283,7 +366,12 @@ def send_otp():
         elif resend_key:
             # ── Resend API (HTTPS — works on Railway) ────────────────────────
             import urllib.request as _ur, json as _json
-            resend_from = os.environ.get('RESEND_FROM', 'Ganga Realty LMS <onboarding@resend.dev>')
+            resend_from = _resolve_sender_email(
+                channel='resend',
+                is_platform_user=is_platform_user,
+                tenant_slug=user_tenant_slug,
+                fallback='Ganga Realty LMS <onboarding@resend.dev>',
+            )
             payload = {
                 'from':    resend_from,
                 'to':      [email],
