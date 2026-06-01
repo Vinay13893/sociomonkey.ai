@@ -970,6 +970,14 @@ a:focus-visible {
   min-width: 154px;
 }
 
+.leads-sort-select {
+  appearance: auto;
+  -webkit-appearance: auto;
+  cursor: pointer;
+  min-width: 110px;
+  max-width: 130px;
+}
+
 .leads-advanced-filters {
   margin-top: 8px;
   padding-top: 12px;
@@ -1112,11 +1120,10 @@ a:focus-visible {
 }
 
 .leads-note-cell {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 0;
+  gap: 4px;
+  max-width: 100%;
 }
 
 .leads-note-preview {

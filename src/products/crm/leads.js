@@ -38,7 +38,10 @@ function _leadsResolveTimeRange(rangeKey) {
 }
 
 function _leadsFmtDateInput(d) {
-  return d.toISOString().split('T')[0]
+  var y = d.getFullYear()
+  var m = String(d.getMonth() + 1).padStart(2, '0')
+  var day = String(d.getDate()).padStart(2, '0')
+  return y + '-' + m + '-' + day
 }
 
 function _leadsFmtRangeText(fromYmd, toYmd) {
@@ -61,6 +64,50 @@ function _leadsUpdateRangeDisplay() {
   var text = _leadsFmtRangeText(from, to)
   display.textContent = text
   display.style.display = text ? 'block' : 'none'
+}
+
+function _leadsShowCustomDateModal() {
+  const existing = document.getElementById('_leadsCustomDateModal')
+  if (existing) existing.remove()
+  var fromVal = document.getElementById('filterDateFrom')?.value || ''
+  var toVal = document.getElementById('filterDateTo')?.value || ''
+  var modal = document.createElement('div')
+  modal.id = '_leadsCustomDateModal'
+  modal.className = 'modal-overlay'
+  modal.innerHTML = `
+    <div class="modal-box" style="max-width:340px;width:95%;">
+      <h3 class="sm-section-heading" style="margin-bottom:14px;">Custom Date Range</h3>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div><label class="dash-filter-label">From</label><input type="date" id="_customDateFrom" class="dash-filter-ctl" value="${fromVal}" /></div>
+        <div><label class="dash-filter-label">To</label><input type="date" id="_customDateTo" class="dash-filter-ctl" value="${toVal}" /></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
+        <button class="button secondary" id="_customDateCancel">Cancel</button>
+        <button class="button" id="_customDateApply">Apply</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(modal)
+  document.getElementById('_customDateCancel').onclick = () => {
+    modal.remove()
+    var from = document.getElementById('filterDateFrom')?.value
+    var to = document.getElementById('filterDateTo')?.value
+    if (!from && !to) {
+      var trSel = document.getElementById('filterTimeRange')
+      if (trSel) trSel.value = ''
+    }
+  }
+  document.getElementById('_customDateApply').onclick = () => {
+    var from = document.getElementById('_customDateFrom').value
+    var to = document.getElementById('_customDateTo').value
+    modal.remove()
+    var fromEl = document.getElementById('filterDateFrom')
+    var toEl = document.getElementById('filterDateTo')
+    if (fromEl) fromEl.value = from
+    if (toEl) toEl.value = to
+    _leadsUpdateRangeDisplay()
+    filterAndRenderLeads()
+  }
 }
 
 function _leadsSetAdvancedFiltersVisibility(open) {
@@ -114,14 +161,11 @@ async function renderLeads() {
                 <button class="sm-btn sm-btn-secondary leads-quick-chip" data-quick-status="interested">Interested</button>
                 <button class="sm-btn sm-btn-secondary leads-quick-chip" data-quick-status="negotiation">Negotiation</button>
               </div>
-              <div class="dash-filter-group" style="min-width:170px;">
-                <label class="dash-filter-label">Quick Sort</label>
-                <select id="quickSortOrder" class="dash-filter-ctl">
+              <div class="leads-advanced-toggle-row leads-priority-secondary">
+                <select id="quickSortOrder" class="sm-btn sm-btn-secondary leads-advanced-toggle-btn leads-sort-select">
                   <option value="new_old">New → Old</option>
                   <option value="old_new">Old → New</option>
                 </select>
-              </div>
-              <div class="leads-advanced-toggle-row leads-priority-secondary">
                 <button type="button" id="toggleLeadsAdvancedBtn" class="sm-btn sm-btn-secondary leads-advanced-toggle-btn">Advanced Filters ▼</button>
               </div>
             </div>
@@ -152,7 +196,7 @@ async function renderLeads() {
             <select id="filterProject" class="dash-filter-ctl"><option value="">All Projects</option></select>
           </div>
           <div class="dash-filter-group">
-            <label class="dash-filter-label">Manager</label>
+            <label class="dash-filter-label">Team Member</label>
             <select id="filterTeamMember" class="dash-filter-ctl">
               <option value="">All Members</option>
               <option value="unassigned">Unassigned</option>
@@ -162,6 +206,10 @@ async function renderLeads() {
           <div class="dash-filter-group">
             <label class="dash-filter-label">Sales Manager</label>
             <select id="filterSalesManager" class="dash-filter-ctl"><option value="">All Managers</option></select>
+          </div>` : (user.role === 'sales_manager' || user.role === 'team_member') ? `
+          <div class="dash-filter-group">
+            <label class="dash-filter-label">Sales Manager</label>
+            <select id="filterSalesManager" class="dash-filter-ctl" disabled></select>
           </div>` : ''}
           <div class="dash-filter-group">
             <label class="dash-filter-label">Source</label>
@@ -234,7 +282,7 @@ async function renderLeads() {
   document.getElementById('filterTimeRange').addEventListener('change', e => {
     var key = e.target.value
     if (key === 'custom') {
-      _leadsUpdateRangeDisplay()
+      _leadsShowCustomDateModal()
       return
     }
     if (!key) {
@@ -291,16 +339,38 @@ async function renderLeads() {
 
   const teamSelect = document.getElementById('filterTeamMember')
   if (teamSelect) {
-    const teamMembers = users.filter(u => u.role === 'team_member')
-    teamSelect.innerHTML = '<option value="">All Members</option><option value="unassigned">Unassigned</option>' +
-      teamMembers.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
+    if (user.role === 'team_member') {
+      teamSelect.innerHTML = `<option value="${user.id}">${escape(user.name)}</option>`
+      teamSelect.value = String(user.id)
+      teamSelect.disabled = true
+    } else {
+      let teamMembers = users.filter(u => u.role === 'team_member')
+      if (user.role === 'sales_manager') {
+        teamMembers = teamMembers.filter(u => String(u.manager_id) === String(user.id))
+      }
+      teamSelect.innerHTML = '<option value="">All Members</option><option value="unassigned">Unassigned</option>' +
+        teamMembers.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
+    }
   }
 
   const smSelect = document.getElementById('filterSalesManager')
   if (smSelect) {
-    const salesManagers = users.filter(u => u.role === 'sales_manager')
-    smSelect.innerHTML = '<option value="">All Sales Managers</option>' +
-      salesManagers.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
+    if (user.role === 'superadmin') {
+      const salesManagers = users.filter(u => u.role === 'sales_manager')
+      smSelect.innerHTML = '<option value="">All Sales Managers</option>' +
+        salesManagers.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
+    } else if (user.role === 'sales_manager') {
+      smSelect.innerHTML = `<option value="${user.id}">${escape(user.name)}</option>`
+      smSelect.value = String(user.id)
+      smSelect.disabled = true
+    } else if (user.role === 'team_member') {
+      const mgr = users.find(u => String(u.id) === String(user.manager_id))
+      smSelect.innerHTML = mgr
+        ? `<option value="${mgr.id}">${escape(mgr.name)}</option>`
+        : `<option value="">—</option>`
+      if (mgr) smSelect.value = String(mgr.id)
+      smSelect.disabled = true
+    }
   }
 
   function updateTeamMemberDropdown(managerId) {
@@ -378,20 +448,26 @@ function clearLeadsFilters() {
   _leadsSearchQuery = ''
   const searchInput = document.getElementById('leadsSearchInput')
   if (searchInput) searchInput.value = ''
-  ;['filterStatus','filterProject','filterSource','filterTeamMember','filterSalesManager',
-   'filterDateFrom','filterDateTo','filterUpdatedFrom','filterUpdatedTo','filterTimeRange','quickSortOrder'].forEach(id => {
+  ;['filterStatus','filterProject','filterSource',
+   'filterDateFrom','filterDateTo','filterUpdatedFrom','filterUpdatedTo','filterTimeRange'].forEach(id => {
     const el = document.getElementById(id)
     if (el) el.value = ''
+  })
+  ;['filterTeamMember','filterSalesManager'].forEach(id => {
+    const el = document.getElementById(id)
+    if (el && !el.disabled) el.value = ''
   })
   var quickSort = document.getElementById('quickSortOrder')
   if (quickSort) quickSort.value = 'new_old'
   _leadsUpdateRangeDisplay()
 
-  // If Sales Manager filter was used, restore full member list so advanced
-  // filters are visually and functionally reset.
+  // Restore team member list (respecting role-based filtering)
   const teamSelect = document.getElementById('filterTeamMember')
-  if (teamSelect && Array.isArray(users)) {
-    const teamMembers = users.filter(function (u) { return u.role === 'team_member' })
+  if (teamSelect && !teamSelect.disabled && Array.isArray(users)) {
+    let teamMembers = users.filter(function (u) { return u.role === 'team_member' })
+    if (user.role === 'sales_manager') {
+      teamMembers = teamMembers.filter(function (u) { return String(u.manager_id) === String(user.id) })
+    }
     teamSelect.innerHTML = '<option value="">All Members</option><option value="unassigned">Unassigned</option>' +
       teamMembers.map(function (u) { return `<option value="${u.id}">${escape(u.name)}</option>` }).join('')
   }
