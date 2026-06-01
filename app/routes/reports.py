@@ -14,6 +14,7 @@ from app.models.lead import Lead, StatusHistory
 from app.models.user import User
 from app.services.reports import ReportService
 from app.utils.leads import get_user_visible_leads
+from app.utils.time_utils import IST
 
 reports_bp = Blueprint('reports', __name__, url_prefix='/api/reports')
 
@@ -383,17 +384,32 @@ def activity_report():
 
 
 @reports_bp.route('/activity-logs', methods=['GET'])
-@require_role('superadmin')
+@require_auth
 def get_activity_logs():
-    user_id = request.args.get('user_id')
+    user = request.current_user
+    user_id_param = request.args.get('user_id')
     action = request.args.get('action')
     module = request.args.get('module')
     limit = request.args.get('limit', 100, type=int)
     sort = (request.args.get('sort') or 'newest').strip().lower()
 
     query = ActivityLog.query
-    if user_id:
-        query = query.filter_by(user_id=int(user_id))
+
+    if user.role == 'team_member':
+        # Team members see only their own activity
+        query = query.filter_by(user_id=user.id)
+    elif user.role == 'sales_manager':
+        # Sales managers see own + their direct team members
+        team_ids = [m.id for m in User.query.filter_by(manager_id=user.id).all()]
+        team_ids.append(user.id)
+        query = query.filter(ActivityLog.user_id.in_(team_ids))
+        if user_id_param and int(user_id_param) in team_ids:
+            query = query.filter_by(user_id=int(user_id_param))
+    else:
+        # superadmin / platform_owner — see all
+        if user_id_param:
+            query = query.filter_by(user_id=int(user_id_param))
+
     if action:
         query = query.filter_by(action=action)
     if module:
@@ -405,15 +421,27 @@ def get_activity_logs():
 
 
 @reports_bp.route('/activity-logs/download', methods=['GET'])
-@require_role('superadmin')
+@require_auth
 def download_activity_logs():
-    user_id = request.args.get('user_id')
+    user = request.current_user
+    user_id_param = request.args.get('user_id')
     action  = request.args.get('action')
     module  = request.args.get('module')
 
     query = ActivityLog.query
-    if user_id:
-        query = query.filter_by(user_id=int(user_id))
+
+    if user.role == 'team_member':
+        query = query.filter_by(user_id=user.id)
+    elif user.role == 'sales_manager':
+        team_ids = [m.id for m in User.query.filter_by(manager_id=user.id).all()]
+        team_ids.append(user.id)
+        query = query.filter(ActivityLog.user_id.in_(team_ids))
+        if user_id_param and int(user_id_param) in team_ids:
+            query = query.filter_by(user_id=int(user_id_param))
+    else:
+        if user_id_param:
+            query = query.filter_by(user_id=int(user_id_param))
+
     if action:
         query = query.filter_by(action=action)
     if module:
@@ -451,7 +479,7 @@ def download_activity_logs():
             log.resource_id or '',
             log.description or '',
             log.ip_address or '',
-            log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '',
+            log.created_at.astimezone(IST).strftime('%d %b %Y %H:%M IST') if log.created_at else '',
         ]
         for col, val in enumerate(values, 1):
             cell = ws.cell(row=row_idx, column=col, value=val)

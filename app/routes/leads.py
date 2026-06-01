@@ -15,6 +15,7 @@ from app.models.project import Project
 from app.models.user import User
 from app.utils.activity import log_activity
 from app.utils.leads import get_user_visible_leads, VALID_STATUSES
+from app.services.reminder_scheduler import push_notification
 
 leads_bp = Blueprint('leads', __name__, url_prefix='/api/leads')
 
@@ -302,6 +303,20 @@ def create_lead():
         user.id, 'create_lead', 'leads', lead.id, 'Lead',
         description=f'Created lead {lead.name}',
     )
+
+    # Notify assigned team member about new lead (if assigned and not the creator)
+    if lead.assigned_to and lead.assigned_to != user.id:
+        push_notification(lead.assigned_to, {
+            'type': 'lead_assigned',
+            'kind': 'info',
+            'title': 'New Lead Assigned',
+            'message': f'📋 New lead "{lead.name}" has been assigned to you.',
+            'lead_id': lead.id,
+            'lead_name': lead.name,
+            'source': 'lead_created',
+            'tenant_id': lead.tenant_id,
+        })
+
     return jsonify({'lead': lead.to_dict()}), 201
 
 
@@ -614,6 +629,20 @@ def assign_lead(lead_id):
         user.id, 'assign_lead', 'leads', lead_id, 'Lead',
         description=f'Assigned lead {lead.name} from {old_name} to {target.name}',
     )
+
+    # Notify the newly assigned team member (skip if assigning to self)
+    if target.id != user.id:
+        push_notification(target.id, {
+            'type': 'lead_assigned',
+            'kind': 'info',
+            'title': 'New Lead Assigned',
+            'message': f'📋 Lead "{lead.name}" has been assigned to you by {user.name}.',
+            'lead_id': lead_id,
+            'lead_name': lead.name,
+            'source': 'lead_assignment',
+            'tenant_id': lead.tenant_id,
+        })
+
     return jsonify({'lead': lead.to_dict(), 'assignment': assignment.to_dict()}), 200
 
 

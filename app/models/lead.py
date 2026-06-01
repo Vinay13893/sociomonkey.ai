@@ -1,5 +1,6 @@
 from datetime import datetime
 from .base import db
+from app.utils.time_utils import to_ist_str
 
 
 class Lead(db.Model):
@@ -70,8 +71,8 @@ class Lead(db.Model):
             ),
             'assigned_by': self.assigned_by,
             'created_by': self.created_by,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
+            'created_at': to_ist_str(self.created_at),
+            'updated_at': to_ist_str(self.updated_at),
             'latest_note': latest_note,
             'next_callback': next_callback,
         }

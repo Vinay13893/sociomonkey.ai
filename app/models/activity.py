@@ -1,5 +1,6 @@
 from datetime import datetime
 from .base import db
+from app.utils.time_utils import to_ist_str
 
 
 class ActivityLog(db.Model):
@@ -35,5 +36,5 @@ class ActivityLog(db.Model):
             'description': self.description,
             'ip_address': self.ip_address,
             'device_info': self.device_info,
-            'created_at': self.created_at.isoformat(),
+            'created_at': to_ist_str(self.created_at),
         }

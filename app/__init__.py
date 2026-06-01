@@ -291,9 +291,36 @@ def create_app(config_name: str = None) -> Flask:
     @app.route('/api/leads/notifications', methods=['GET'])
     @_require_auth
     def get_notifications():
+        """Return unread notifications without marking them read (for bell polling)."""
+        from app.models.notification import Notification
         user = _req.current_user
-        notes = drain_notifications(user.id)
-        return jsonify({'notifications': notes}), 200
+        rows = (
+            Notification.query
+            .filter_by(user_id=user.id, is_read=False)
+            .order_by(Notification.created_at.desc())
+            .limit(50)
+            .all()
+        )
+        return jsonify({'notifications': [r.to_dict() for r in rows], 'unread_count': len(rows)}), 200
+
+    @app.route('/api/leads/notifications/mark-read', methods=['POST'])
+    @_require_auth
+    def mark_notifications_read():
+        """Mark all (or specific) notifications as read."""
+        from app.models.notification import Notification
+        from datetime import datetime as _dt
+        user = _req.current_user
+        data = (_req.get_json() or {})
+        ids = data.get('ids')  # optional list of specific ids
+        q = Notification.query.filter_by(user_id=user.id, is_read=False)
+        if ids:
+            q = q.filter(Notification.id.in_(ids))
+        now = _dt.utcnow()
+        for row in q.all():
+            row.is_read = True
+            row.read_at = now
+        db.session.commit()
+        return jsonify({'ok': True}), 200
 
     @app.route('/api/internal/reminders/process', methods=['GET', 'POST'])
     def process_reminders_once():

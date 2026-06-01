@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from .base import db
+from app.utils.time_utils import to_ist_str
 
 
 class Notification(db.Model):
@@ -33,8 +34,8 @@ class Notification(db.Model):
             'message': self.message,
             'payload': self.payload,
             'is_read': self.is_read,
-            'read_at': self.read_at.isoformat() if self.read_at else None,
+            'read_at': to_ist_str(self.read_at),
             'source': self.source,
-            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
-            'created_at': self.created_at.isoformat(),
+            'expires_at': to_ist_str(self.expires_at),
+            'created_at': to_ist_str(self.created_at),
         }
