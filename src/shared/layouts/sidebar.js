@@ -183,7 +183,7 @@ function getNavItems() {
     items.push({ key: 'pipeline', label: '📈 Pipeline' })
   }
   if (user.role === 'sales_manager' || user.role === 'superadmin') {
-    items.push({ key: 'assign_reassign', label: '🔀 Assign / Reassign' })
+    items.push({ key: 'assign_reassign', label: '�️ Allocation' })
   }
   if ((user.role === 'sales_manager' || user.role === 'superadmin') && isTenantFeatureEnabled('team_management')) {
     items.push({ key: 'team', label: '👨‍💼 Team' })

@@ -11,6 +11,7 @@ var _arSelectedLeads = new Set()
 
 // ── Tab: Unassigned ──────────────────────────────────────────────────────────
 var _arUnassignedPage = 1
+var _arUnassignedPageSize = 25
 var _arUnassignedTotal = 0
 var _arUnassignedLeads = []
 var _arUnassignedAssignable = []
@@ -19,6 +20,7 @@ var _arUnassignedAssignable = []
 var _arStaleDays = 5
 var _arStaleStatus = ''
 var _arStalePage = 1
+var _arStalePageSize = 25
 var _arStaleTotal = 0
 var _arStaleLeads = []
 var _arStaleAssignable = []
@@ -29,7 +31,56 @@ var _arWorkloadMembers = []
 var _arWorkloadAssignable = []
 
 // ── Tab: Recycle Queue (embedded) ────────────────────────────────────────────
-// Delegates to renderRecycleQueue() — just switches route key
+// Delegates to _rqRenderShell() from recycle-queue.js
+
+// ── Global helpers called from inline onclick attrs ───────────────────────────
+
+function _arUToggle(leadId) {
+  var chk = document.getElementById('arUChk_' + leadId)
+  var row = document.getElementById('arURow_' + leadId)
+  if (!chk) return
+  if (chk.checked) { _arSelectedLeads.add(leadId); if (row) row.style.background = '#eff6ff' }
+  else { _arSelectedLeads.delete(leadId); if (row) row.style.background = '#fff' }
+  _arUpdateAssignBtn()
+}
+
+function _arSToggle(leadId) {
+  var chk = document.getElementById('arSChk_' + leadId)
+  var row = document.getElementById('arSRow_' + leadId)
+  if (!chk) return
+  if (chk.checked) { _arStaleSelectedLeads.add(leadId); if (row) row.style.background = '#eff6ff' }
+  else { _arStaleSelectedLeads.delete(leadId); if (row) row.style.background = '#fff' }
+  _arUpdateStaleAssignBtn()
+}
+
+function _arUSelectAll(checked) {
+  document.querySelectorAll('[id^="arUChk_"]').forEach(function(chk) {
+    var id = parseInt(chk.id.replace('arUChk_', ''), 10)
+    chk.checked = checked
+    var row = document.getElementById('arURow_' + id)
+    if (checked) { _arSelectedLeads.add(id); if (row) row.style.background = '#eff6ff' }
+    else { _arSelectedLeads.delete(id); if (row) row.style.background = '#fff' }
+  })
+  _arUpdateAssignBtn()
+}
+
+function _arSSelectAll(checked) {
+  document.querySelectorAll('[id^="arSChk_"]').forEach(function(chk) {
+    var id = parseInt(chk.id.replace('arSChk_', ''), 10)
+    chk.checked = checked
+    var row = document.getElementById('arSRow_' + id)
+    if (checked) { _arStaleSelectedLeads.add(id); if (row) row.style.background = '#eff6ff' }
+    else { _arStaleSelectedLeads.delete(id); if (row) row.style.background = '#fff' }
+  })
+  _arUpdateStaleAssignBtn()
+}
+
+function _arUnassignedPrev() { if (_arUnassignedPage > 1) { _arUnassignedPage--; _arLoadUnassigned() } }
+function _arUnassignedNext() { var tp = Math.ceil(_arUnassignedTotal / _arUnassignedPageSize); if (_arUnassignedPage < tp) { _arUnassignedPage++; _arLoadUnassigned() } }
+function _arUnassignedSetPageSize(s) { _arUnassignedPageSize = parseInt(s, 10) || 25; _arUnassignedPage = 1; _arLoadUnassigned() }
+function _arStalePrev() { if (_arStalePage > 1) { _arStalePage--; _arLoadStale() } }
+function _arStaleNext() { var tp = Math.ceil(_arStaleTotal / _arStalePageSize); if (_arStalePage < tp) { _arStalePage++; _arLoadStale() } }
+function _arStaleSetPageSize(s) { _arStalePageSize = parseInt(s, 10) || 25; _arStalePage = 1; _arLoadStale() }
 
 async function renderAssignReassign(initialTab) {
   if (_arRenderInFlight) return
@@ -51,7 +102,7 @@ async function renderAssignReassign(initialTab) {
     <div style="max-width:1200px;margin:0 auto;padding:20px 16px 60px;" id="arRoot">
       <div class="sm-page-header" style="margin-bottom:16px;">
         <div>
-          <h2 class="sm-page-title">🔀 Assign / Reassign</h2>
+          <h2 class="sm-page-title">�️ Allocation</h2>
           <p class="sm-small sm-text-muted" style="margin:4px 0 0;">Distribute and rebalance leads across your team.</p>
         </div>
       </div>
@@ -94,18 +145,7 @@ async function _arLoadTab() {
   if (!tabContent) return
 
   if (_arActiveTab === 'recycle') {
-    // Hand off to existing recycle queue renderer but keep our root
-    tabContent.innerHTML = `<div id="content"></div>`
-    // Swap content ref temporarily — trick: renderRecycleQueue writes to #content
-    var savedRoot = document.getElementById('content')
-    // Actually just inline the recycle queue content directly in tabContent
-    tabContent.id = 'content'
-    window._ACTIVE_ROUTE = 'recycle_queue'
-    await renderRecycleQueue()
-    // Restore our tab content id
-    var newContent = document.getElementById('content')
-    if (newContent) newContent.id = 'arTabContent'
-    window._ACTIVE_ROUTE = 'assign_reassign'
+    _rqRenderShell(tabContent, false)
     return
   }
 
@@ -122,7 +162,7 @@ async function _arLoadUnassigned() {
   tabContent.innerHTML = `<div style="text-align:center;padding:40px;color:#64748b;"><i class="fa-solid fa-spinner fa-spin"></i> Loading unassigned leads...</div>`
 
   try {
-    var qs = `?page=${_arUnassignedPage}&per_page=25`
+    var qs = `?page=${_arUnassignedPage}&per_page=${_arUnassignedPageSize}`
     var data = await _apiRequest(`/leads/assign-reassign/unassigned${qs}`, { headers: _apiAuthHeaders(), retries: 1, timeoutMs: 15000 })
     _arUnassignedLeads = data.leads || []
     _arUnassignedTotal = data.total || 0
@@ -140,92 +180,75 @@ function _arRenderUnassigned() {
   var leads = _arUnassignedLeads
   var total = _arUnassignedTotal
   var assignable = _arUnassignedAssignable
-  var perPage = 25
-  var totalPages = Math.ceil(total / perPage)
+  var totalPages = Math.max(1, Math.ceil(total / _arUnassignedPageSize))
 
   var memberOptions = assignable.map(function (u) {
-    return `<option value="${u.id}">${escape(u.name)} (${u.role.replace('_', ' ')})</option>`
+    return `<option value="${u.id}">${escape(u.name)} (${u.role.replace(/_/g, ' ')})</option>`
   }).join('')
 
-  var rows = leads.length === 0
-    ? `<tr><td colspan="6" style="text-align:center;padding:24px;color:#64748b;">No unassigned leads found.</td></tr>`
-    : leads.map(function (l) {
-      return `<tr style="border-bottom:1px solid #f1f5f9;">
-        <td style="padding:8px 10px;"><input type="checkbox" class="ar-lead-cb" data-id="${l.id}" ${_arSelectedLeads.has(l.id) ? 'checked' : ''}></td>
-        <td style="padding:8px 10px;font-weight:600;font-size:13px;">${escape(l.name || '—')}</td>
-        <td style="padding:8px 10px;font-size:12px;color:#475569;">${escape(l.phone || '—')}</td>
-        <td style="padding:8px 10px;font-size:12px;color:#475569;">${escape(l.project_name || l.project || '—')}</td>
-        <td style="padding:8px 10px;font-size:12px;"><span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:6px;">${escape((l.status || 'new').replace(/_/g, ' '))}</span></td>
-        <td style="padding:8px 10px;font-size:11px;color:#94a3b8;">${l.created_at ? new Date(l.created_at).toLocaleDateString('en-IN') : '—'}</td>
-      </tr>`
+  var leadCards = leads.length === 0
+    ? `<div style="text-align:center;padding:40px;color:#9ca3af;"><div style="font-size:32px;margin-bottom:8px;">📭</div><p>No unassigned leads found.</p></div>`
+    : leads.map(function (l, i) {
+      var sc = (typeof STATUS_COLORS !== 'undefined' ? STATUS_COLORS : {})[l.status] || { bg: '#f1f5f9', color: '#475569', label: l.status || 'new' }
+      var serial = (_arUnassignedPage - 1) * _arUnassignedPageSize + i + 1
+      var createdDate = l.created_at ? new Date(l.created_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+      var initial = escape((l.name || '?')[0].toUpperCase())
+      return `
+        <div id="arURow_${l.id}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:${_arSelectedLeads.has(l.id) ? '#eff6ff' : '#fff'};border:1px solid #e2e8f0;border-radius:10px;transition:background .15s;">
+          <input type="checkbox" id="arUChk_${l.id}" onchange="_arUToggle(${l.id})" ${_arSelectedLeads.has(l.id) ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;flex-shrink:0;" />
+          <span style="font-size:11px;font-weight:700;color:#94a3b8;min-width:22px;text-align:right;flex-shrink:0;">${serial}</span>
+          <div style="width:38px;height:38px;border-radius:50%;background:#6366f1;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;">${initial}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:13px;color:#0f172a;">${escape(l.name || '')}</div>
+            <div style="font-size:11px;color:#64748b;">${l.phone || '—'} · ${escape(l.project_name || l.project || '—')} · Added: ${createdDate}</div>
+          </div>
+          <span style="background:${sc.bg};color:${sc.color};font-size:10px;font-weight:700;padding:3px 8px;border-radius:20px;flex-shrink:0;">${sc.label || (l.status || 'new').replace(/_/g, ' ')}</span>
+          <button onclick="viewLeadDetails(${l.id})" style="font-size:11px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#6366f1;cursor:pointer;font-weight:600;white-space:nowrap;flex-shrink:0;">Open</button>
+        </div>`
     }).join('')
 
   tabContent.innerHTML = `
-    <div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap;">
-      <div style="flex:1;min-width:180px;">
-        <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">ASSIGN TO</div>
-        <select id="arUnassignedTarget" class="dash-filter-ctl" style="width:100%;max-width:260px;">
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:14px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Assign To</div>
+        <select id="arUnassignedTarget" class="dash-filter-ctl" style="max-width:240px;">
           <option value="">— Select Member —</option>
           ${memberOptions}
         </select>
       </div>
-      <button onclick="_arBulkAssignUnassigned()" class="button" style="height:36px;font-size:13px;">Assign Selected (${_arSelectedLeads.size})</button>
-      <button onclick="_arDistributeUnassigned()" class="button secondary" style="height:36px;font-size:13px;">⚖️ Equally Distribute All</button>
+      <button onclick="_arBulkAssignUnassigned()" class="button" id="arAssignBtn" style="height:36px;font-size:13px;">Assign Selected (${_arSelectedLeads.size})</button>
+      <button onclick="_arDistributeUnassigned()" class="button secondary" style="height:36px;font-size:13px;">⚖️ Distribute Equally</button>
     </div>
 
-    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;">
-        <label style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" id="arSelectAllUnassigned"> Select All (${leads.length})
-        </label>
-        <span style="font-size:12px;color:#64748b;">${total} total unassigned</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 2px;margin-bottom:10px;">
+      <label style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" onchange="_arUSelectAll(this.checked)" id="arSelectAllUnassigned"> Select All (${leads.length})
+      </label>
+      <span style="font-size:12px;color:#94a3b8;">${total} unassigned total</span>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      ${leadCards}
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 4px 0;margin-top:12px;border-top:1px solid #e2e8f0;flex-wrap:wrap;gap:8px;">
+      <span style="font-size:12px;color:#64748b;">Page ${_arUnassignedPage} of ${totalPages}</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:12px;color:#64748b;">Page size</span>
+        <select onchange="_arUnassignedSetPageSize(this.value)" style="border:1px solid #cbd5e1;border-radius:6px;padding:3px 7px;font-size:12px;">
+          ${[10, 25, 50].map(function(n) { return `<option value="${n}" ${_arUnassignedPageSize === n ? 'selected' : ''}>${n}</option>` }).join('')}
+        </select>
       </div>
-      <table style="width:100%;border-collapse:collapse;">
-        <thead><tr style="background:#f8fafc;">
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;width:40px;"></th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Name</th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Phone</th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Project</th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Status</th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Created</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div style="display:flex;gap:6px;">
+        <button onclick="_arUnassignedPrev()" ${_arUnassignedPage <= 1 ? 'disabled' : ''} style="font-size:12px;padding:4px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:${_arUnassignedPage <= 1 ? '#cbd5e1' : '#334155'};cursor:${_arUnassignedPage <= 1 ? 'default' : 'pointer'};">Prev</button>
+        <button onclick="_arUnassignedNext()" ${_arUnassignedPage >= totalPages ? 'disabled' : ''} style="font-size:12px;padding:4px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:${_arUnassignedPage >= totalPages ? '#cbd5e1' : '#334155'};cursor:${_arUnassignedPage >= totalPages ? 'default' : 'pointer'};">Next</button>
+      </div>
     </div>
-
-    ${totalPages > 1 ? `
-    <div style="display:flex;gap:8px;justify-content:center;margin-top:14px;">
-      ${_arUnassignedPage > 1 ? `<button onclick="_arUnassignedPage--;_arLoadUnassigned()" class="button secondary" style="font-size:12px;padding:5px 14px;">← Prev</button>` : ''}
-      <span style="padding:6px 12px;font-size:13px;color:#475569;">Page ${_arUnassignedPage} / ${totalPages}</span>
-      ${_arUnassignedPage < totalPages ? `<button onclick="_arUnassignedPage++;_arLoadUnassigned()" class="button secondary" style="font-size:12px;padding:5px 14px;">Next →</button>` : ''}
-    </div>` : ''}
   `
-
-  // Bind checkboxes
-  tabContent.querySelectorAll('.ar-lead-cb').forEach(function (cb) {
-    cb.addEventListener('change', function () {
-      var id = Number(cb.dataset.id)
-      if (cb.checked) _arSelectedLeads.add(id)
-      else _arSelectedLeads.delete(id)
-      _arUpdateAssignBtn()
-    })
-  })
-  var selectAll = document.getElementById('arSelectAllUnassigned')
-  if (selectAll) {
-    selectAll.addEventListener('change', function () {
-      tabContent.querySelectorAll('.ar-lead-cb').forEach(function (cb) {
-        cb.checked = selectAll.checked
-        var id = Number(cb.dataset.id)
-        if (selectAll.checked) _arSelectedLeads.add(id)
-        else _arSelectedLeads.delete(id)
-      })
-      _arUpdateAssignBtn()
-    })
-  }
 }
 
 function _arUpdateAssignBtn() {
-  var btn = document.querySelector('[onclick="_arBulkAssignUnassigned()"]')
+  var btn = document.getElementById('arAssignBtn')
   if (btn) btn.textContent = `Assign Selected (${_arSelectedLeads.size})`
 }
 
@@ -294,7 +317,7 @@ async function _arLoadStale() {
   tabContent.innerHTML = `<div style="text-align:center;padding:40px;color:#64748b;"><i class="fa-solid fa-spinner fa-spin"></i> Loading stale leads...</div>`
 
   try {
-    var qs = `?days=${_arStaleDays}&page=${_arStalePage}&per_page=25${_arStaleStatus ? '&status=' + encodeURIComponent(_arStaleStatus) : ''}`
+    var qs = `?days=${_arStaleDays}&page=${_arStalePage}&per_page=${_arStalePageSize}${_arStaleStatus ? '&status=' + encodeURIComponent(_arStaleStatus) : ''}`
     var data = await _apiRequest(`/leads/assign-reassign/stale${qs}`, { headers: _apiAuthHeaders(), retries: 1, timeoutMs: 15000 })
     _arStaleLeads = data.leads || []
     _arStaleTotal = data.total || 0
@@ -312,8 +335,7 @@ function _arRenderStale() {
   var leads = _arStaleLeads
   var total = _arStaleTotal
   var assignable = _arStaleAssignable
-  var perPage = 25
-  var totalPages = Math.ceil(total / perPage)
+  var totalPages = Math.max(1, Math.ceil(total / _arStalePageSize))
 
   var memberOptions = assignable.map(function (u) {
     return `<option value="${u.id}">${escape(u.name)}</option>`
@@ -327,97 +349,80 @@ function _arRenderStale() {
     return `<option value="${s}" ${_arStaleStatus === s ? 'selected' : ''}>${s ? s.replace(/_/g, ' ') : 'All Statuses'}</option>`
   }).join('')
 
-  var rows = leads.length === 0
-    ? `<tr><td colspan="7" style="text-align:center;padding:24px;color:#64748b;">No stale leads found.</td></tr>`
-    : leads.map(function (l) {
-      var lastUpdated = l.updated_at ? new Date(l.updated_at).toLocaleDateString('en-IN') : '—'
-      return `<tr style="border-bottom:1px solid #f1f5f9;">
-        <td style="padding:8px 10px;"><input type="checkbox" class="ar-stale-cb" data-id="${l.id}" ${_arStaleSelectedLeads.has(l.id) ? 'checked' : ''}></td>
-        <td style="padding:8px 10px;font-weight:600;font-size:13px;">${escape(l.name || '—')}</td>
-        <td style="padding:8px 10px;font-size:12px;color:#475569;">${escape(l.phone || '—')}</td>
-        <td style="padding:8px 10px;font-size:12px;color:#475569;">${escape(l.project_name || l.project || '—')}</td>
-        <td style="padding:8px 10px;font-size:12px;"><span style="background:#f1f5f9;color:#475569;padding:2px 8px;border-radius:6px;">${escape((l.status || 'new').replace(/_/g, ' '))}</span></td>
-        <td style="padding:8px 10px;font-size:12px;color:#475569;">${escape(l.assigned_to_name || l.assigned_user_name || 'Unassigned')}</td>
-        <td style="padding:8px 10px;font-size:11px;color:#94a3b8;">${lastUpdated}</td>
-      </tr>`
+  var leadCards = leads.length === 0
+    ? `<div style="text-align:center;padding:40px;color:#9ca3af;"><div style="font-size:32px;margin-bottom:8px;">🕐</div><p>No stale leads found for this criteria.</p></div>`
+    : leads.map(function (l, i) {
+      var sc = (typeof STATUS_COLORS !== 'undefined' ? STATUS_COLORS : {})[l.status] || { bg: '#f1f5f9', color: '#475569', label: l.status || 'new' }
+      var serial = (_arStalePage - 1) * _arStalePageSize + i + 1
+      var lastUpdated = l.updated_at ? new Date(l.updated_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+      var initial = escape((l.name || '?')[0].toUpperCase())
+      return `
+        <div id="arSRow_${l.id}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:${_arStaleSelectedLeads.has(l.id) ? '#eff6ff' : '#fff'};border:1px solid #e2e8f0;border-radius:10px;transition:background .15s;">
+          <input type="checkbox" id="arSChk_${l.id}" onchange="_arSToggle(${l.id})" ${_arStaleSelectedLeads.has(l.id) ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;flex-shrink:0;" />
+          <span style="font-size:11px;font-weight:700;color:#94a3b8;min-width:22px;text-align:right;flex-shrink:0;">${serial}</span>
+          <div style="width:38px;height:38px;border-radius:50%;background:#0891b2;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;">${initial}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:13px;color:#0f172a;">${escape(l.name || '')}</div>
+            <div style="font-size:11px;color:#64748b;">${l.phone || '—'} · ${escape(l.project_name || l.project || '—')} · Last updated: ${lastUpdated}</div>
+            ${l.assigned_to_name || l.assigned_user_name ? `<div style="font-size:11px;color:#94a3b8;margin-top:1px;">Currently: ${escape(l.assigned_to_name || l.assigned_user_name)}</div>` : ''}
+          </div>
+          <span style="background:${sc.bg};color:${sc.color};font-size:10px;font-weight:700;padding:3px 8px;border-radius:20px;flex-shrink:0;">${sc.label || (l.status || 'new').replace(/_/g, ' ')}</span>
+          <button onclick="viewLeadDetails(${l.id})" style="font-size:11px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#6366f1;cursor:pointer;font-weight:600;white-space:nowrap;flex-shrink:0;">Open</button>
+        </div>`
     }).join('')
 
   tabContent.innerHTML = `
-    <div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap;">
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:14px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
       <div>
-        <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">STALE SINCE</div>
+        <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Stale Since</div>
         <select id="arStaleDays" class="dash-filter-ctl" style="width:auto;">
           ${[1,2,3,4,5,7,10,14,15].map(function(d) { return `<option value="${d}" ${_arStaleDays === d ? 'selected' : ''}>${d} day${d>1?'s':''}</option>` }).join('')}
         </select>
       </div>
       <div>
-        <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">STATUS</div>
+        <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Status</div>
         <select id="arStaleStatus" class="dash-filter-ctl" style="width:auto;">${statusOptions}</select>
       </div>
       <button onclick="_arStaleDays=Number(document.getElementById('arStaleDays').value);_arStaleStatus=document.getElementById('arStaleStatus').value;_arStalePage=1;_arLoadStale()" class="button secondary" style="height:36px;font-size:13px;">Apply</button>
-      <div style="flex:1;min-width:180px;margin-left:auto;">
-        <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:4px;">REASSIGN TO</div>
-        <select id="arStaleTarget" class="dash-filter-ctl" style="width:100%;max-width:220px;">
+      <div style="margin-left:auto;">
+        <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Reassign To</div>
+        <select id="arStaleTarget" class="dash-filter-ctl" style="max-width:200px;">
           <option value="">— Select Member —</option>
           ${memberOptions}
         </select>
       </div>
-      <button onclick="_arBulkAssignStale()" class="button" style="height:36px;font-size:13px;">Reassign Selected (${_arStaleSelectedLeads.size})</button>
+      <button onclick="_arBulkAssignStale()" class="button" id="arStaleAssignBtn" style="height:36px;font-size:13px;">Reassign Selected (${_arStaleSelectedLeads.size})</button>
     </div>
 
-    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;">
-        <label style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" id="arSelectAllStale"> Select All (${leads.length})
-        </label>
-        <span style="font-size:12px;color:#64748b;">${total} stale leads found</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 2px;margin-bottom:10px;">
+      <label style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" onchange="_arSSelectAll(this.checked)" id="arSelectAllStale"> Select All (${leads.length})
+      </label>
+      <span style="font-size:12px;color:#94a3b8;">${total} stale total</span>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      ${leadCards}
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 4px 0;margin-top:12px;border-top:1px solid #e2e8f0;flex-wrap:wrap;gap:8px;">
+      <span style="font-size:12px;color:#64748b;">Page ${_arStalePage} of ${totalPages}</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:12px;color:#64748b;">Page size</span>
+        <select onchange="_arStaleSetPageSize(this.value)" style="border:1px solid #cbd5e1;border-radius:6px;padding:3px 7px;font-size:12px;">
+          ${[10, 25, 50].map(function(n) { return `<option value="${n}" ${_arStalePageSize === n ? 'selected' : ''}>${n}</option>` }).join('')}
+        </select>
       </div>
-      <table style="width:100%;border-collapse:collapse;">
-        <thead><tr style="background:#f8fafc;">
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;width:40px;"></th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Name</th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Phone</th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Project</th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Status</th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Assigned To</th>
-          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600;">Last Updated</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div style="display:flex;gap:6px;">
+        <button onclick="_arStalePrev()" ${_arStalePage <= 1 ? 'disabled' : ''} style="font-size:12px;padding:4px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:${_arStalePage <= 1 ? '#cbd5e1' : '#334155'};cursor:${_arStalePage <= 1 ? 'default' : 'pointer'};">Prev</button>
+        <button onclick="_arStaleNext()" ${_arStalePage >= totalPages ? 'disabled' : ''} style="font-size:12px;padding:4px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:${_arStalePage >= totalPages ? '#cbd5e1' : '#334155'};cursor:${_arStalePage >= totalPages ? 'default' : 'pointer'};">Next</button>
+      </div>
     </div>
-
-    ${totalPages > 1 ? `
-    <div style="display:flex;gap:8px;justify-content:center;margin-top:14px;">
-      ${_arStalePage > 1 ? `<button onclick="_arStalePage--;_arLoadStale()" class="button secondary" style="font-size:12px;padding:5px 14px;">← Prev</button>` : ''}
-      <span style="padding:6px 12px;font-size:13px;color:#475569;">Page ${_arStalePage} / ${totalPages}</span>
-      ${_arStalePage < totalPages ? `<button onclick="_arStalePage++;_arLoadStale()" class="button secondary" style="font-size:12px;padding:5px 14px;">Next →</button>` : ''}
-    </div>` : ''}
   `
-
-  tabContent.querySelectorAll('.ar-stale-cb').forEach(function (cb) {
-    cb.addEventListener('change', function () {
-      var id = Number(cb.dataset.id)
-      if (cb.checked) _arStaleSelectedLeads.add(id)
-      else _arStaleSelectedLeads.delete(id)
-      _arUpdateStaleAssignBtn()
-    })
-  })
-  var selectAll = document.getElementById('arSelectAllStale')
-  if (selectAll) {
-    selectAll.addEventListener('change', function () {
-      tabContent.querySelectorAll('.ar-stale-cb').forEach(function (cb) {
-        cb.checked = selectAll.checked
-        var id = Number(cb.dataset.id)
-        if (selectAll.checked) _arStaleSelectedLeads.add(id)
-        else _arStaleSelectedLeads.delete(id)
-      })
-      _arUpdateStaleAssignBtn()
-    })
-  }
 }
 
 function _arUpdateStaleAssignBtn() {
-  var btn = document.querySelector('[onclick="_arBulkAssignStale()"]')
+  var btn = document.getElementById('arStaleAssignBtn')
   if (btn) btn.textContent = `Reassign Selected (${_arStaleSelectedLeads.size})`
 }
 

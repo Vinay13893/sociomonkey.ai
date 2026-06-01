@@ -15,31 +15,20 @@ var _rqStrategyHelpText = {
   least_loaded: 'Sends leads to users with fewer active leads first. Best when team workload is uneven.',
 }
 
-async function renderRecycleQueue() {
-  if (_recycleRenderInFlight) return
-  _recycleRenderInFlight = true
-  _recycleRenderId++
-  var myId = _recycleRenderId
-  window._ACTIVE_ROUTE = 'recycle_queue'
-
-  function _guard() {
-    return myId === _recycleRenderId && window._ACTIVE_ROUTE === 'recycle_queue'
-  }
-
-  const content = document.getElementById('content')
-  if (!content) { _recycleRenderInFlight = false; return }
-
+function _rqRenderShell(target, showHeader) {
+  if (!target) return
   _recycleSelected = new Set()
-
-  content.innerHTML = `
-    <div style="max-width:1200px;margin:0 auto;padding:20px 16px 60px;" id="recycleRoot">
+  var _headerHTML = (showHeader !== false) ? `
       <div class="sm-page-header" style="margin-bottom:20px;">
         <div>
           <h2 class="sm-page-title">♻️ Lead Recycle Queue</h2>
           <p class="sm-small sm-text-muted" style="margin:4px 0 0;">Reshuffle stale leads to fresh team members, excluding previous assignees.</p>
         </div>
-      </div>
+      </div>` : ''
 
+  target.innerHTML = `
+    <div style="max-width:1200px;margin:0 auto;padding:${showHeader !== false ? '20px 16px' : '0'} 60px;" id="recycleRoot">
+      ${_headerHTML}
       <!-- Filters -->
       <div class="rq-filter-shell">
         <div class="rq-filter-row">
@@ -48,7 +37,7 @@ async function renderRecycleQueue() {
           <select id="rqStaleMode" class="dash-filter-ctl">
             <option value="today">Today</option>
             <option value="yesterday" selected>Yesterday</option>
-            <option value="custom">Custom Timeline</option>
+            <option value="custom">Custom Date Range</option>
           </select>
         </div>
         <div class="rq-filter-field">
@@ -76,14 +65,18 @@ async function renderRecycleQueue() {
         <button onclick="_rqLoad()" class="button rq-filter-btn">Load Queue</button>
         <button onclick="_rqApplySearch()" class="button secondary rq-filter-btn">Search</button>
         </div>
-        <div id="rqCustomTimeline" class="rq-custom-row" style="display:none;">
-          <div class="rq-filter-field">
-            <label class="sm-label" style="display:block;margin-bottom:5px;">FROM</label>
-            <input id="rqDateFrom" type="date" class="dash-filter-ctl" />
-          </div>
-          <div class="rq-filter-field">
-            <label class="sm-label" style="display:block;margin-bottom:5px;">TO</label>
-            <input id="rqDateTo" type="date" class="dash-filter-ctl" />
+        <div id="rqCustomTimeline" style="display:none;background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:14px 18px;margin-top:10px;">
+          <div style="font-size:11px;font-weight:700;color:#1e40af;letter-spacing:.07em;text-transform:uppercase;margin-bottom:10px;">📅 Custom Date Range</div>
+          <div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;">
+            <div>
+              <label style="display:block;font-size:11px;font-weight:600;color:#475569;margin-bottom:4px;">FROM</label>
+              <input id="rqDateFrom" type="date" class="dash-filter-ctl" style="font-size:13px;" />
+            </div>
+            <span style="font-size:20px;color:#94a3b8;padding-bottom:6px;">→</span>
+            <div>
+              <label style="display:block;font-size:11px;font-weight:600;color:#475569;margin-bottom:4px;">TO</label>
+              <input id="rqDateTo" type="date" class="dash-filter-ctl" style="font-size:13px;" />
+            </div>
           </div>
         </div>
       </div>
@@ -124,8 +117,6 @@ async function renderRecycleQueue() {
     </div>
   `
 
-  _recycleRenderInFlight = false
-
   // Wire change events
   const staleModeSel = document.getElementById('rqStaleMode')
   const customWrap = document.getElementById('rqCustomTimeline')
@@ -133,13 +124,14 @@ async function renderRecycleQueue() {
   const dateToInput = document.getElementById('rqDateTo')
   if (staleModeSel && customWrap) {
     staleModeSel.addEventListener('change', function () {
-      customWrap.style.display = staleModeSel.value === 'custom' ? 'grid' : 'none'
+      customWrap.style.display = staleModeSel.value === 'custom' ? 'block' : 'none'
       _rqLoad()
     })
   }
   if (dateFromInput) dateFromInput.addEventListener('change', _rqLoad)
   if (dateToInput) dateToInput.addEventListener('change', _rqLoad)
-  document.getElementById('rqStatus').addEventListener('change', _rqLoad)
+  const statusEl = document.getElementById('rqStatus')
+  if (statusEl) statusEl.addEventListener('change', _rqLoad)
   const strategySel = document.getElementById('rqStrategy')
   if (strategySel) {
     strategySel.addEventListener('change', _rqUpdateStrategyHelp)
@@ -156,6 +148,17 @@ async function renderRecycleQueue() {
 
   // Auto-load
   _rqLoad()
+}
+
+async function renderRecycleQueue() {
+  if (_recycleRenderInFlight) return
+  _recycleRenderInFlight = true
+  _recycleRenderId++
+  window._ACTIVE_ROUTE = 'recycle_queue'
+  const content = document.getElementById('content')
+  if (!content) { _recycleRenderInFlight = false; return }
+  _rqRenderShell(content, true)
+  _recycleRenderInFlight = false
 }
 
 // ── Load recycle queue ────────────────────────────────────────────────────
@@ -209,7 +212,8 @@ async function _rqLoad() {
       <span style="font-size:13px;font-weight:600;color:#475569;">Showing ${leads.length} of ${total} stale lead${total !== 1 ? 's' : ''}</span>
       <button onclick="_rqSelectAll()" style="font-size:12px;color:#6366f1;background:none;border:1px solid #c7d2fe;border-radius:6px;padding:4px 10px;cursor:pointer;">Select All</button>
     </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:0 4px 8px;">
+    ${leads.map((l, i) => _rqLeadRow(l, (_rqPage - 1) * _rqPageSize + i + 1)).join('')}
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 4px 0;margin-top:8px;border-top:1px solid #e2e8f0;">
       <span style="font-size:12px;color:#64748b;">Page ${page} of ${totalPages}</span>
       <div style="display:flex;align-items:center;gap:8px;">
         <span style="font-size:12px;color:#64748b;">Page size</span>
@@ -222,7 +226,6 @@ async function _rqLoad() {
         <button onclick="_rqSetPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''} style="font-size:12px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:${page >= totalPages ? '#cbd5e1' : '#334155'};cursor:${page >= totalPages ? 'default' : 'pointer'};">Next</button>
       </div>
     </div>
-    ${leads.map((l, i) => _rqLeadRow(l, (_rqPage - 1) * _rqPageSize + i + 1)).join('')}
   `
 }
 
