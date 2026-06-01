@@ -51,7 +51,7 @@ function _abRefreshPreservingState() {
   })
 }
 
-function _abOpenStatusModal(leadId, preferredStatus) {
+function _abOpenStatusModal(leadId, preferredStatus, _skipFollowUp) {
   var id = Number(leadId)
   if (!Number.isFinite(id) || id <= 0) return
   var overlay = document.createElement('div')
@@ -98,6 +98,9 @@ function _abOpenStatusModal(leadId, preferredStatus) {
         closeModal()
         showToast('Lead status updated.', 'success')
         await _abRefreshPreservingState()
+        if (!_skipFollowUp && await confirmDialog('Add a note?', 'Yes', '#4f46e5')) {
+          _abQuickNote(id, true)
+        }
       } catch (err) {
         showToast((err && err.message) || 'Failed to update status.', 'error')
       }
@@ -1046,6 +1049,9 @@ function _abWirePagination(root) {
         })
         showToast('Lead status updated.', 'success')
         await _abRefreshPreservingState()
+        if (await confirmDialog('Add a note?', 'Yes', '#4f46e5')) {
+          _abQuickNote(id, true)
+        }
       } catch (err) {
         showToast((err && err.message) || 'Failed to update status.', 'error')
       } finally {
@@ -1278,7 +1284,7 @@ function _leadAge(created) {
   return `${days} Day${days === 1 ? '' : 's'}`
 }
 
-function _abQuickNote(leadId) {
+function _abQuickNote(leadId, _skipFollowUp) {
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
   overlay.innerHTML = `
@@ -1286,7 +1292,7 @@ function _abQuickNote(leadId) {
       <h3 class="sm-section-heading" style="margin-bottom:14px;">✏️ Quick Note</h3>
       <textarea id="abNoteText" class="select" rows="4" style="width:100%;resize:vertical;font-size:13px;" placeholder="Write a note..."></textarea>
       <div style="display:flex;gap:8px;margin-top:14px;">
-        <button class="button" onclick="_abSubmitNote(${leadId})" style="flex:1;">Save Note</button>
+        <button class="button" onclick="_abSubmitNote(${leadId}, ${!!_skipFollowUp})" style="flex:1;">Save Note</button>
         <button class="button secondary" onclick="this.closest('.modal-overlay').remove()" style="flex:1;">Cancel</button>
       </div>
     </div>`
@@ -1294,7 +1300,7 @@ function _abQuickNote(leadId) {
   overlay.querySelector('#abNoteText').focus()
 }
 
-async function _abSubmitNote(leadId) {
+async function _abSubmitNote(leadId, _skipFollowUp) {
   const overlay = document.querySelector('.modal-overlay')
   const text = (document.getElementById('abNoteText') || {}).value?.trim()
   if (!text) { showToast('Please enter a note.', 'warning'); return }
@@ -1308,6 +1314,9 @@ async function _abSubmitNote(leadId) {
     showToast('Note saved.', 'success')
     if (overlay) overlay.remove()
     await _abRefreshPreservingState()
+    if (!_skipFollowUp && await confirmDialog('Update Lead Status?', 'Yes', '#4f46e5')) {
+      _abOpenStatusModal(leadId, undefined, true)
+    }
   } catch {
     showToast('Failed to save note.', 'error')
   }
