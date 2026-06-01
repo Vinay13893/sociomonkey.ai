@@ -19,6 +19,7 @@ var _abLastRenderMs = 0
 var _abPageSize = 6
 var _abPageSizeMode = 'auto'
 var _abResizeTimer = null
+var _abViewAs = null  // null = own board; user id (number) = viewing someone else's board
 var _abSectionPages = {
   today_callbacks: 1,
   overdue_callbacks: 1,
@@ -278,6 +279,16 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
             <option value="custom" ${_abRange === 'custom' ? 'selected' : ''}>Custom Date</option>
           </select>
         </div>
+        ${(user && (user.role === 'superadmin' || user.role === 'sales_manager') && users && users.length > 0) ? `
+        <div class="dash-filter-group">
+          <label class="dash-filter-label">Viewing Board Of</label>
+          <select id="abViewAsFilter" class="dash-filter-ctl">
+            <option value="">My Board</option>
+            ${users.filter(function(u) { return u.id !== user.id }).map(function(u) {
+              return `<option value="${u.id}" ${_abViewAs === u.id ? 'selected' : ''}>${escape(u.name)}</option>`
+            }).join('')}
+          </select>
+        </div>` : ''}
         <div id="abCustomRange" class="ab-custom-range" style="display:${_abRange === 'custom' ? 'flex' : 'none'};gap:8px;align-items:flex-end;">
           <div class="dash-filter-group">
             <label class="dash-filter-label">From Date</label>
@@ -316,6 +327,7 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
   `
 
   const abRangeFilter = document.getElementById('abRangeFilter')
+  const abViewAsFilter = document.getElementById('abViewAsFilter')
   const abCustomRange = document.getElementById('abCustomRange')
   const abDateFrom = document.getElementById('abDateFrom')
   const abDateTo = document.getElementById('abDateTo')
@@ -323,6 +335,14 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
   const abSearchBtn = document.getElementById('abSearchBtn')
   const abSearchResetBtn = document.getElementById('abSearchResetBtn')
 
+  if (abViewAsFilter) {
+    abViewAsFilter.addEventListener('change', function () {
+      var v = abViewAsFilter.value ? Number(abViewAsFilter.value) : null
+      _abViewAs = v
+      Object.keys(_abSectionPages).forEach(function (k) { _abSectionPages[k] = 1 })
+      renderActionBoard(_abDateFrom, _abDateTo, _abRange)
+    })
+  }
   if (abRangeFilter) {
     abRangeFilter.addEventListener('change', function () {
       var v = abRangeFilter.value || ''
@@ -376,6 +396,7 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
     params.set('page_size', String(_abPageSize || 6))
     if (queryFrom) params.set('date_from', queryFrom)
     if (queryTo) params.set('date_to', queryTo)
+    if (_abViewAs) params.set('view_as', String(_abViewAs))
     Object.keys(_abSectionPages).forEach(function (key) {
       var page = Number(_abSectionPages[key] || 1)
       if (page > 1 || page === 1) params.set(key + '_page', String(page))
@@ -446,6 +467,8 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
 
   const s = data.summary || {}
   const nowMs = Date.now()
+  // read-only mode: managers viewing someone else's board cannot take actions
+  const _abReadOnly = !!_abViewAs && user && user.role === 'sales_manager'
 
   const briefingParts = []
   if ((s.today_callbacks_count || 0) > 0) briefingParts.push(`${s.today_callbacks_count} callbacks`)
@@ -507,8 +530,8 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
         <div class="ab-row-actions">
           ${callBtn}
           <button onclick="_abOpenLead(${l.id})" style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#4f46e5;cursor:pointer;white-space:nowrap;">${compact ? '<i class="fa-solid fa-folder-open"></i>' : 'Open Lead'}</button>
-          <button onclick="_abQuickNote(${l.id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#64748b;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-pen-to-square" style="margin-right:4px;font-size:10px;"></i>Note</button>
-          <button onclick="_abCallCallback(${l.id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#0369a1;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-calendar-plus" style="margin-right:4px;font-size:10px;"></i>Callback</button>
+          ${_abReadOnly ? '' : `<button onclick="_abQuickNote(${l.id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#64748b;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-pen-to-square" style="margin-right:4px;font-size:10px;"></i>Note</button>
+          <button onclick="_abCallCallback(${l.id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#0369a1;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-calendar-plus" style="margin-right:4px;font-size:10px;"></i>Callback</button>`}
         </div>
       </div>`
   }
@@ -561,8 +584,8 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
         <div class="ab-row-actions">
           ${callBtn}
           <button onclick="_abOpenLead(${c.lead_id})" style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#4f46e5;cursor:pointer;white-space:nowrap;">${compact ? '<i class="fa-solid fa-folder-open"></i>' : 'Open Lead'}</button>
-          <button onclick="_abQuickNote(${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#64748b;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-pen-to-square" style="margin-right:4px;font-size:10px;"></i>Note</button>
-          <button onclick="markCallbackDone(${c.id}, ${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #d1fae5;border-radius:6px;padding:5px 10px;color:#059669;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-check" style="margin-right:4px;font-size:10px;"></i>Done</button>
+          ${_abReadOnly ? '' : `<button onclick="_abQuickNote(${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#64748b;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-pen-to-square" style="margin-right:4px;font-size:10px;"></i>Note</button>
+          <button onclick="markCallbackDone(${c.id}, ${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #d1fae5;border-radius:6px;padding:5px 10px;color:#059669;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-check" style="margin-right:4px;font-size:10px;"></i>Done</button>`}
         </div>
       </div>`
   }

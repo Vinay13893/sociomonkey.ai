@@ -54,12 +54,19 @@ async function renderRecycleQueue() {
         <div class="rq-filter-field">
           <label class="sm-label" style="display:block;margin-bottom:5px;">STATUS</label>
           <select id="rqStatus" class="dash-filter-ctl">
-            <option value="">All Recyclable</option>
+            <option value="">All Statuses</option>
+            <option value="new">New</option>
             <option value="no_answer">No Answer</option>
             <option value="follow_up">Follow Up</option>
             <option value="callback_scheduled">Callback Scheduled</option>
+            <option value="interested">Interested</option>
+            <option value="site_visit_planned">Site Visit Planned</option>
+            <option value="site_visit_done">Site Visit Done</option>
+            <option value="negotiation">Negotiation</option>
+            <option value="booking_done">Booking Done</option>
             <option value="not_interested">Not Interested</option>
             <option value="lost">Lost</option>
+            <option value="junk">Junk</option>
           </select>
         </div>
         <div class="rq-filter-field rq-filter-search">

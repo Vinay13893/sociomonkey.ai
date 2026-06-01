@@ -8,8 +8,9 @@ function showContent() {
   window._ACTIVE_ROUTE = activeTab  // update global route BEFORE any render function runs — this is what kills stale _guard() checks in renders that are no longer the active route
   if (activeTab === 'dashboard') return renderDashboard()
   if (activeTab === 'leads') return renderLeads()
-  if (activeTab === 'action_board') return renderActionBoard()
-  if (activeTab === 'recycle_queue') return renderRecycleQueue()
+  if (activeTab === 'action_board') { loadUsers && loadUsers(); return renderActionBoard() }
+  if (activeTab === 'assign_reassign') return renderAssignReassign()
+  if (activeTab === 'recycle_queue') return renderAssignReassign('recycle_queue')
   if (activeTab === 'projects') return renderProjects()
   if (activeTab === 'team') return renderTeamManagement()
   if (activeTab === 'pipeline') return renderPipeline()

@@ -1974,6 +1974,16 @@ async function viewLeadDetails(leadId) {
                     }
                     if (item.type === 'activity') {
                       const a = item.data
+                      if (a.action === 'update_lead') {
+                        return `
+                      <div style="position:relative;padding:0 0 20px;">
+                        <div style="position:absolute;left:-25px;top:4px;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #fff;box-shadow:0 0 0 2px #f59e0b;"></div>
+                        <div style="background:#fafafa;border:1px solid #e2e8f0;border-radius:10px;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                          <span style="font-size:13px;color:#475569;">✏️ ${escape(a.description || 'Lead updated')}</span>
+                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${escape(a.user_name || '?')} · ${fmtDT(a.created_at)}</span>
+                        </div>
+                      </div>`
+                      }
                       const outcome = a.new_value && a.new_value.outcome_label ? a.new_value.outcome_label : (a.action || '').replace(/_/g, ' ')
                       const isAccidental = a.new_value && a.new_value.outcome === 'accidental_click'
                       const activityColor = isAccidental ? '#64748b' : '#0ea5e9'
