@@ -75,13 +75,19 @@ function _leadsShowCustomDateModal() {
   modal.id = '_leadsCustomDateModal'
   modal.className = 'modal-overlay'
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:340px;width:95%;">
-      <h3 class="sm-section-heading" style="margin-bottom:14px;">Custom Date Range</h3>
-      <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label class="dash-filter-label">From</label><input type="date" id="_customDateFrom" class="dash-filter-ctl" value="${fromVal}" /></div>
-        <div><label class="dash-filter-label">To</label><input type="date" id="_customDateTo" class="dash-filter-ctl" value="${toVal}" /></div>
+    <div class="modal-box" style="max-width:360px;width:95%;">
+      <h3 class="sm-section-heading" style="margin-bottom:16px;">Custom Date Range</h3>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <label style="font-size:12px;font-weight:600;color:#374151;min-width:36px;">From</label>
+          <input type="date" id="_customDateFrom" class="dash-filter-ctl" style="flex:1;" value="${fromVal}" />
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <label style="font-size:12px;font-weight:600;color:#374151;min-width:36px;">To</label>
+          <input type="date" id="_customDateTo" class="dash-filter-ctl" style="flex:1;" value="${toVal}" />
+        </div>
       </div>
-      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
+      <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end;">
         <button class="button secondary" id="_customDateCancel">Cancel</button>
         <button class="button" id="_customDateApply">Apply</button>
       </div>
@@ -806,11 +812,11 @@ async function filterAndRenderLeads(resetPage = true) {
               <td class="ta-center" data-label="Project" style="font-size:11px;padding:6px 4px;">${escape(projectMap[l.project_id] || '-')}</td>
               <td class="ta-center" data-label="Status" style="padding:6px 3px;">${buildStatusControl(l)}</td>
               <td class="ta-center" data-label="Manager" style="font-size:11px;padding:6px 4px;"><span class="leads-cell-text leads-cell-text-center">${escape(l.sales_manager_name || '—')}</span></td>
-              <td class="ta-center leads-note-col" data-label="Latest Note" style="padding:6px 4px;">
+              <td class="leads-note-col" data-label="Latest Note" style="padding:6px 4px;">
                 <div class="leads-note-cell">
                   ${l.latest_note
                     ? `<span title="${escape(l.latest_note)}" class="leads-note-preview">${escape(l.latest_note)}</span>`
-                    : `<span class="leads-note-preview leads-note-empty">—</span>`}
+                    : `<span class="leads-note-preview leads-note-empty"></span>`}
                   <button onclick="openLeadInlineNoteEditor(${l.id})" class="leads-icon-action" title="Edit latest note">✎</button>
                 </div>
               </td>

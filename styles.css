@@ -1120,15 +1120,16 @@ a:focus-visible {
 }
 
 .leads-note-cell {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
   align-items: center;
   gap: 4px;
-  max-width: 100%;
 }
 
 .leads-note-preview {
-  display: inline-block;
-  max-width: 120px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
