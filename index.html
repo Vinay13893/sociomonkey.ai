@@ -30,7 +30,7 @@
   <link rel="stylesheet" href="src/shared/design-system/tables.css?v=20260529a" />
   <link rel="stylesheet" href="src/shared/design-system/cards.css?v=20260529a" />
   <link rel="stylesheet" href="src/shared/design-system/navigation.css?v=20260529a" />
-  <link rel="stylesheet" href="styles.css?v=20260602reports2" />
+  <link rel="stylesheet" href="styles.css?v=20260603ist1" />
 </head>
 <body>
   <!-- Platform orchestration layer (shown when user.role === 'platform_owner') -->
@@ -61,6 +61,8 @@
       <nav class="sm-sidebar-nav" id="sidebarNav"></nav>
       <!-- Footer: user info + powered-by -->
       <div class="sm-sidebar-footer">
+        <!-- Notification bell (hidden until logged in; shown by initNotifBell()) -->
+        <div id="notifBellWrapper" style="display:none;"></div>
         <p id="userDisplay" class="sm-sidebar-user"></p>
         <div class="sm-sidebar-copy">Powered by sociomonkey.ai</div>
       </div>
@@ -99,15 +101,16 @@
   <script src="src/tenant-context/tenant-context.js?v=20260530ux3"></script>
 
   <!-- ── Shared Utilities ─────────────────────────────────────────── -->
-  <script src="src/shared/utils/helpers.js?v=20260602c"></script>
+  <script src="src/shared/utils/helpers.js?v=20260603ist1"></script>
   <script src="src/shared/utils/dom-guard.js?v=20260602n"></script>
   <script src="src/shared/services/api.js?v=20260531hotfix2"></script>
+  <script src="src/shared/ui/notifications.js?v=20260603notif1"></script>
 
   <!-- ── Tenant Auth ──────────────────────────────────────────────── -->
   <script src="src/tenant/auth/login.js?v=20260531passworddefault1"></script>
 
   <!-- ── Shared Layout & Router ───────────────────────────────────── -->
-  <script src="src/shared/layouts/sidebar.js?v=20260531phaseA1"></script>
+  <script src="src/shared/layouts/sidebar.js?v=20260603ist1"></script>
   <script src="src/router/router.js?v=20260531phaseA1"></script>
 
   <!-- ── Products / CRM ───────────────────────────────────────────── -->
@@ -126,7 +129,7 @@
   <script src="src/products/lms/lms.js?v=20260603b"></script>
 
   <!-- ── Tenant Dashboard ─────────────────────────────────────────── -->
-  <script src="src/tenant/dashboard/activity-logs.js?v=20260531phaseC1"></script>
+  <script src="src/tenant/dashboard/activity-logs.js?v=20260603ist1"></script>
   <script src="src/tenant/dashboard/profile.js?v=20260602m"></script>
 
   <!-- ── Legacy Platform Embedded Tab (LMS sidebar) ───────────────── -->

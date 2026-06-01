@@ -60,6 +60,20 @@ function escape(text) {
   return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
+// ── IST date/time formatter ───────────────────────────────────────────────
+function _fmtIST(isoStr) {
+  if (!isoStr) return '—'
+  try {
+    return new Date(isoStr).toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: true
+    }) + ' IST'
+  } catch (e) {
+    return isoStr
+  }
+}
+
 // ── Confirm Dialog ─────────────────────────────────────────────────────────
 function confirmDialog(message, confirmLabel, confirmColor) {
   return new Promise(function (resolve) {

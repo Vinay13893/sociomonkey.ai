@@ -122,6 +122,7 @@ function _buildSidebar() {
 
       _sidebarBuilt = false
       mobileNavInitialized = false
+      if (typeof destroyNotifBell === 'function') destroyNotifBell()
       authClearSession()
       clearTenantContext()
       // Force public login route to avoid retaining tenant shell/branding.
@@ -140,6 +141,9 @@ function _buildSidebar() {
     })
   }
   _PERF.end('_buildSidebar')
+
+  // Init notification bell after sidebar is built
+  if (typeof initNotifBell === 'function') initNotifBell()
 }
 
 function _syncNavActive() {

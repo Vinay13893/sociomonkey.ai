@@ -333,6 +333,12 @@ function getNavItems() {
   if (user.role === 'superadmin') {
     items.push({ key: 'activitylogs', label: '📋 Activity Logs' })
   }
+  if (user.role === 'sales_manager') {
+    items.push({ key: 'activitylogs', label: '📋 Activity Logs' })
+  }
+  if (user.role === 'team_member') {
+    items.push({ key: 'activitylogs', label: '📋 My Activity' })
+  }
   
   items.push({ key: 'profile', label: '⚙️ My Profile' })
   

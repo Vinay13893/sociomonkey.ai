@@ -8,16 +8,20 @@ async function renderActivityLogs() {
   var myId = ++_activityLogsRenderId
   const content = document.getElementById('content')
   if (!content) return
+
+  const isManager  = user && user.role === 'sales_manager'
+  const isMember   = user && user.role === 'team_member'
+  const pageTitle  = isMember ? 'My Activity' : 'Activity Logs'
+  const showUserFilter = !isMember
+
   content.innerHTML = `
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-        <h2 style="margin:0;">Activity Logs</h2>
+        <h2 style="margin:0;">${pageTitle}</h2>
         <button class="button" onclick="downloadActivityLogs()" style="font-size:13px;padding:8px 16px;">⬇ Download Excel</button>
       </div>
-      <div style="display:flex;gap:10px;margin:0 0 20px;">
-        <select id="filterUser" class="select" style="width:200px;">
-          <option value="">All Users</option>
-        </select>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 20px;">
+        ${showUserFilter ? `<select id="filterUser" class="select" style="width:200px;"><option value="">All Users</option></select>` : ''}
         <select id="filterAction" class="select" style="width:200px;">
           <option value="">All Actions</option>
           <option value="login">Login</option>
@@ -56,17 +60,26 @@ async function renderActivityLogs() {
       <div id="logsContainer"></div>
     </div>
   `
-  
-  await loadActivityLogs()
-  await loadUsers()
-  if (myId !== _activityLogsRenderId) return
 
-  const userSelect = document.getElementById('filterUser')
-  if (!userSelect) return
-  userSelect.innerHTML = '<option value="">All Users</option>' +
-    users.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
-  
-  document.getElementById('filterUser').addEventListener('change', filterAndRenderLogs)
+  await loadActivityLogs()
+
+  if (showUserFilter) {
+    await loadUsers()
+    if (myId !== _activityLogsRenderId) return
+    const userSelect = document.getElementById('filterUser')
+    if (userSelect) {
+      // Sales managers only see their own team in the dropdown
+      const visibleUsers = isManager
+        ? users.filter(u => u.id === user.id || u.manager_id === user.id)
+        : users
+      userSelect.innerHTML = '<option value="">All Users</option>' +
+        visibleUsers.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
+      userSelect.addEventListener('change', filterAndRenderLogs)
+    }
+  } else {
+    if (myId !== _activityLogsRenderId) return
+  }
+
   document.getElementById('filterAction').addEventListener('change', filterAndRenderLogs)
   document.getElementById('filterModule').addEventListener('change', filterAndRenderLogs)
   document.getElementById('filterSortOrder').addEventListener('change', async function () {
@@ -184,7 +197,7 @@ function filterAndRenderLogs() {
               <td>${escape(l.module)}</td>
               <td>${l.resource_id || '-'}</td>
               <td>${escape(changeSummary(l))}</td>
-              <td>${new Date(l.created_at).toLocaleString()}</td>
+              <td style="white-space:nowrap;">${_fmtIST(l.created_at)}</td>
             </tr>
           `).join('')}
         </tbody>
