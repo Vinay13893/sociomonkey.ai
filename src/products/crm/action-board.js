@@ -98,9 +98,6 @@ function _abOpenStatusModal(leadId, preferredStatus) {
         closeModal()
         showToast('Lead status updated.', 'success')
         await _abRefreshPreservingState()
-        if (await confirmDialog('Add Note?', 'Yes', '#4f46e5')) {
-          _abQuickNote(id)
-        }
       } catch (err) {
         showToast((err && err.message) || 'Failed to update status.', 'error')
       }
@@ -1049,9 +1046,6 @@ function _abWirePagination(root) {
         })
         showToast('Lead status updated.', 'success')
         await _abRefreshPreservingState()
-        if (await confirmDialog('Add Note?', 'Yes', '#4f46e5')) {
-          _abQuickNote(id)
-        }
       } catch (err) {
         showToast((err && err.message) || 'Failed to update status.', 'error')
       } finally {
@@ -1314,9 +1308,6 @@ async function _abSubmitNote(leadId) {
     showToast('Note saved.', 'success')
     if (overlay) overlay.remove()
     await _abRefreshPreservingState()
-    if (await confirmDialog('Update Lead Status?', 'Yes', '#4f46e5')) {
-      _abOpenStatusModal(leadId)
-    }
   } catch {
     showToast('Failed to save note.', 'error')
   }
