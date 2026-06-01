@@ -3,7 +3,7 @@
 
 var _reportsRenderId = 0
 
-async function renderReports(dateFrom = '', dateTo = '') {
+async function renderReports(dateFrom = '', dateTo = '', projectFilter = '') {
   var myId = ++_reportsRenderId
   const content = document.getElementById('content')
   if (!content) return
@@ -80,51 +80,39 @@ async function renderReports(dateFrom = '', dateTo = '') {
 
   content.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:16px;">
-      <div class="card" style="padding:20px 24px;">
-          <div class="sm-page-header" style="margin-bottom:18px;">
-            <div>
-              <h2 class="sm-page-title">📊 Reports & Analytics</h2>
+      <div class="card" style="padding:14px 20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <h2 class="sm-page-title" style="margin:0;">📊 Reports & Analytics</h2>
             <div style="margin-top:4px;display:flex;align-items:center;gap:8px;">
               <span style="font-size:12px;color:#64748b;">Period:</span>
               <span style="font-size:12px;font-weight:600;color:${activeFilter ? '#2563eb' : '#64748b'};background:${activeFilter ? '#eff6ff' : '#f1f5f9'};padding:2px 10px;border-radius:20px;border:1px solid ${activeFilter ? '#bfdbfe' : '#e2e8f0'};">${filterLabel}</span>
             </div>
           </div>
-          <button class="sm-btn sm-btn-primary" onclick="downloadLeadReport()">⬇ Export Excel</button>
-        </div>
-        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;">
-          <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:0.08em;margin-bottom:12px;text-transform:uppercase;">🗓 Filter by Date Range</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
-            <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:130px;">
-              <label class="sm-label">FROM</label>
-              <input type="date" id="reportDateFrom" class="input" style="font-size:13px;padding:8px 10px;" value="${dateFrom}" />
-            </div>
-            <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:130px;">
-              <label class="sm-label">TO</label>
-              <input type="date" id="reportDateTo" class="input" style="font-size:13px;padding:8px 10px;" value="${dateTo}" />
-            </div>
-            <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:130px;">
-              <label class="sm-label">MONTH QUICK SELECT</label>
-              <select id="reportMonth" class="select" style="font-size:13px;padding:8px 10px;">
-                <option value="">— Select Month —</option>
-                ${monthOptions}
-              </select>
-            </div>
-            <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:160px;">
-              <label class="sm-label">TEAM RANGE</label>
-              <select id="reportTeamRange" class="select" style="font-size:13px;padding:8px 10px;">
-                <option value="">Custom</option>
-                <option value="today">Today</option>
-                <option value="yesterday">Yesterday</option>
-                <option value="last_week">Last Week</option>
-                <option value="last_30_days">Last 30 Days</option>
-                <option value="this_month">This Month</option>
-                <option value="last_month">Last Month</option>
-              </select>
-            </div>
-            <div style="display:flex;gap:8px;align-items:flex-end;padding-bottom:1px;">
-              <button id="applyReportFilter" class="sm-btn sm-btn-primary">Apply</button>
-              <button id="clearReportFilter" class="sm-btn sm-btn-secondary">✕ Clear</button>
-            </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <input type="date" id="reportDateFrom" class="input" style="font-size:12px;padding:6px 8px;width:130px;" value="${dateFrom}" />
+            <span style="font-size:12px;color:#94a3b8;">→</span>
+            <input type="date" id="reportDateTo" class="input" style="font-size:12px;padding:6px 8px;width:130px;" value="${dateTo}" />
+            <select id="reportMonth" class="select" style="font-size:12px;padding:6px 8px;width:130px;">
+              <option value="">Month…</option>
+              ${monthOptions}
+            </select>
+            <select id="reportTeamRange" class="select" style="font-size:12px;padding:6px 8px;width:120px;">
+              <option value="">Quick select…</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="last_week">Last Week</option>
+              <option value="last_30_days">Last 30 Days</option>
+              <option value="this_month">This Month</option>
+              <option value="last_month">Last Month</option>
+            </select>
+            <select id="reportProject" class="select" style="font-size:12px;padding:6px 8px;width:140px;">
+              <option value="">All Projects</option>
+              ${(typeof projects !== 'undefined' ? projects : []).map(p => `<option value="${p.id}"${projectFilter == p.id ? ' selected' : ''}>${escape(p.name)}</option>`).join('')}
+            </select>
+            <button id="applyReportFilter" class="sm-btn sm-btn-primary" style="font-size:12px;padding:6px 14px;">Apply</button>
+            <button id="clearReportFilter" class="sm-btn sm-btn-secondary" style="font-size:12px;padding:6px 10px;">✕</button>
+            <button class="sm-btn sm-btn-primary" onclick="downloadLeadReport()" style="font-size:12px;padding:6px 14px;background:#0f172a;">⬇ Export</button>
           </div>
         </div>
       </div>
@@ -171,7 +159,8 @@ async function renderReports(dateFrom = '', dateTo = '') {
   document.getElementById('applyReportFilter').addEventListener('click', () => {
     const from = document.getElementById('reportDateFrom').value
     const to   = document.getElementById('reportDateTo').value
-    renderReports(from, to)
+    const proj = document.getElementById('reportProject')?.value || ''
+    renderReports(from, to, proj)
   })
   document.getElementById('clearReportFilter').addEventListener('click', () => renderReports())
 
@@ -180,6 +169,7 @@ async function renderReports(dateFrom = '', dateTo = '') {
   const params = new URLSearchParams()
   if (dateFrom) params.set('date_from', dateFrom)
   if (dateTo)   params.set('date_to',   dateTo)
+  if (projectFilter) params.set('project_id', projectFilter)
   const qs = params.toString() ? '?' + params.toString() : ''
   const teamRange = document.getElementById('reportTeamRange')?.value || ''
   if (teamRange) params.set('range', teamRange)
@@ -218,32 +208,36 @@ async function renderReports(dateFrom = '', dateTo = '') {
       return '<div style="color:#94a3b8;padding:12px 0;font-size:13px;">No comparison data</div>'
     }
     const labels = {
-      leads_added: 'Leads Added',
-      calls_done: 'Calls Done',
-      follow_ups: 'Follow Ups',
-      site_visits: 'Site Visits',
-      closures: 'Closures',
-      conversion_pct: 'Conversion %',
+      leads_added:  'Leads Added',
+      calls_done:   'Calls Done (Unique)',
+      follow_ups:   'Follow Ups',
+      lost:         'Lost',
+      site_visits:  'Site Visits',
+      negotiations: 'Negotiations',
+      closures:     'Closures',
     }
-    const keys = ['leads_added', 'calls_done', 'follow_ups', 'site_visits', 'closures', 'conversion_pct']
+    const keys = ['leads_added', 'calls_done', 'follow_ups', 'lost', 'site_visits', 'negotiations', 'closures']
     const rows = keys.map(k => {
       const curr = Number(block.current[k] || 0)
       const prev = Number(block.previous[k] || 0)
       const delta = curr - prev
-      const deltaText = `${delta > 0 ? '+' : ''}${k === 'conversion_pct' ? delta.toFixed(2) : delta}`
-      const color = delta > 0 ? '#059669' : delta < 0 ? '#dc2626' : '#64748b'
+      const deltaText = `${delta > 0 ? '+' : ''}${delta}`
+      const isLost = k === 'lost'
+      const color = isLost
+        ? (delta < 0 ? '#059669' : delta > 0 ? '#dc2626' : '#64748b')
+        : (delta > 0 ? '#059669' : delta < 0 ? '#dc2626' : '#64748b')
       return `
         <tr>
           <td style="font-weight:600;">${labels[k]}</td>
-          <td style="text-align:center;">${k === 'conversion_pct' ? curr.toFixed(2) + '%' : curr}</td>
-          <td style="text-align:center;">${k === 'conversion_pct' ? prev.toFixed(2) + '%' : prev}</td>
-          <td style="text-align:center;font-weight:700;color:${color};">${deltaText}${k === 'conversion_pct' ? '%' : ''}</td>
+          <td style="text-align:center;">${curr}</td>
+          <td style="text-align:center;">${prev}</td>
+          <td style="text-align:center;font-weight:700;color:${color};">${deltaText}</td>
         </tr>`
     }).join('')
 
     return `
       <div class="table-scroll">
-        <table class="table" style="margin:0;min-width:520px;">
+        <table class="table" style="margin:0;min-width:420px;">
           <thead>
             <tr>
               <th>Metric</th>
@@ -540,15 +534,6 @@ async function renderReports(dateFrom = '', dateTo = '') {
       </div>
     </div>
 
-    <!-- Team performance -->
-    <div class="card" style="margin:0;">
-      <h3 class="analytics-section-title">Team Performance</h3>
-      <div style="margin-top:14px;">
-        ${teamGroupsHTML}
-        ${unassignedHTML}
-      </div>
-    </div>
-
     <!-- WoW / MoM comparison -->
     <div class="rpt-two-col">
       <div class="card" style="margin:0;">
@@ -558,6 +543,18 @@ async function renderReports(dateFrom = '', dateTo = '') {
       <div class="card" style="margin:0;">
         <h3 class="analytics-section-title">Month-on-Month Comparison</h3>
         ${renderComparisonTable(comparison.month)}
+      </div>
+    </div>
+
+    <!-- Team performance -->
+    <div class="card" style="margin:0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+        <h3 class="analytics-section-title" style="margin:0;">Team Performance</h3>
+        <button onclick="downloadLeadReport()" class="sm-btn sm-btn-secondary" style="font-size:12px;padding:6px 14px;">⬇ Download Report</button>
+      </div>
+      <div>
+        ${teamGroupsHTML}
+        ${unassignedHTML}
       </div>
     </div>
   `
