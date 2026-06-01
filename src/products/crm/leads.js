@@ -1991,12 +1991,13 @@ async function viewLeadDetails(leadId) {
                     }
                     if (item.type === 'callback') {
                       const cb = item.data
-                      const isPast   = new Date(cb.callback_datetime) < new Date()
-                      const isDone   = cb.status === 'completed'
-                      const isMissed = cb.status === 'missed' || (isPast && cb.status === 'pending')
-                      const dotColor = isDone ? '#10b981' : isMissed ? '#ef4444' : '#0369a1'
-                      const lbl      = isDone ? 'Callback Completed' : isMissed ? 'Callback Missed' : 'Callback Scheduled'
-                      const lblColor = isDone ? '#065f46' : isMissed ? '#991b1b' : '#1e40af'
+                      const isPast    = new Date(cb.callback_datetime) < new Date()
+                      const isDone    = cb.status === 'completed'
+                      const isCancelled = cb.status === 'cancelled'
+                      const isMissed  = cb.status === 'missed' || (isPast && cb.status === 'pending')
+                      const dotColor  = isDone ? '#10b981' : isCancelled ? '#94a3b8' : isMissed ? '#ef4444' : '#0369a1'
+                      const lbl       = isDone ? 'Callback Completed' : isCancelled ? 'Callback Cancelled' : isMissed ? 'Callback Missed' : 'Callback Scheduled'
+                      const lblColor  = isDone ? '#065f46' : isCancelled ? '#64748b' : isMissed ? '#991b1b' : '#1e40af'
                       return `
                       <div style="position:relative;padding:0 0 20px;">
                         <div style="position:absolute;left:-25px;top:4px;width:10px;height:10px;border-radius:50%;background:${dotColor};border:2px solid #fff;box-shadow:0 0 0 2px ${dotColor};"></div>
