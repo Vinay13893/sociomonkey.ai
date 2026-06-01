@@ -284,7 +284,7 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
           <label class="dash-filter-label">Viewing Board Of</label>
           <select id="abViewAsFilter" class="dash-filter-ctl">
             <option value="">My Board</option>
-            ${users.filter(function(u) { return u.id !== user.id }).map(function(u) {
+            ${users.filter(function(u) { return u.id !== user.id && u.role !== 'superadmin' }).map(function(u) {
               return `<option value="${u.id}" ${_abViewAs === u.id ? 'selected' : ''}>${escape(u.name)}</option>`
             }).join('')}
           </select>
@@ -585,7 +585,8 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
           ${callBtn}
           <button onclick="_abOpenLead(${c.lead_id})" style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#4f46e5;cursor:pointer;white-space:nowrap;">${compact ? '<i class="fa-solid fa-folder-open"></i>' : 'Open Lead'}</button>
           ${_abReadOnly ? '' : `<button onclick="_abQuickNote(${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#64748b;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-pen-to-square" style="margin-right:4px;font-size:10px;"></i>Note</button>
-          <button onclick="markCallbackDone(${c.id}, ${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #d1fae5;border-radius:6px;padding:5px 10px;color:#059669;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-check" style="margin-right:4px;font-size:10px;"></i>Done</button>`}
+          <button onclick="markCallbackDone(${c.id}, ${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #d1fae5;border-radius:6px;padding:5px 10px;color:#059669;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-check" style="margin-right:4px;font-size:10px;"></i>Done</button>
+          <button onclick="_abCancelCallback(${c.id}, ${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #fee2e2;border-radius:6px;padding:5px 10px;color:#dc2626;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-xmark" style="margin-right:4px;font-size:10px;"></i>Cancel</button>`}
         </div>
       </div>`
   }
@@ -1233,20 +1234,8 @@ function _abOpenCallOutcomeModal(leadId, phone, leadName, alternatePhone) {
 
         closeModal()
         showToast('Call outcome saved.', 'success')
-
-        if (typeof window.viewLeadDetails === 'function') {
-          try {
-            await window.viewLeadDetails(id)
-            setTimeout(function () {
-              var statusSelect = document.getElementById('newStatus')
-              if (statusSelect) {
-                statusSelect.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                statusSelect.focus()
-              }
-            }, 150)
-          } catch (_) {
-            // Save already succeeded; avoid surfacing this as an outcome failure.
-          }
+        if (typeof _abRefreshPreservingState === 'function') {
+          _abRefreshPreservingState()
         }
       } catch (err) {
         showToast((err && err.message) || 'Failed to save call outcome.', 'error')
@@ -1353,5 +1342,27 @@ function _abCallCallback(leadId) {
     openCallbackModal(leadId, { source: 'action_board' })
   } else {
     showToast('Callback scheduler is loading...', 'info')
+  }
+}
+
+async function _abCancelCallback(callbackId, leadId) {
+  if (!await confirmDialog('Cancel this callback?', 'Yes, Cancel It')) return
+  if (typeof openCallbackClosureModal !== 'function') {
+    showToast('Cannot open cancellation form.', 'error')
+    return
+  }
+  const closureNote = await openCallbackClosureModal('cancel')
+  if (!closureNote) return
+  try {
+    await _apiRequest(`/leads/callbacks/${callbackId}`, {
+      method: 'DELETE',
+      headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+      body: JSON.stringify({ closure_note: closureNote }),
+      retries: 0,
+    })
+    showToast('Callback cancelled.', 'success')
+    await _abRefreshPreservingState()
+  } catch (err) {
+    showToast((err && err.payload && err.payload.error) || (err && err.message) || 'Failed to cancel callback.', 'error')
   }
 }

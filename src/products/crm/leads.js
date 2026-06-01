@@ -1158,39 +1158,90 @@ async function openLeadCallbackScheduler(leadId) {
     retries: 0,
   }).catch(function () { return { callbacks: [] } })
   var pending = (callbackPayload.callbacks || []).find(function (c) { return c.status === 'pending' }) || null
-  var defaultValue = ''
+
+  // Smart default: use existing future callback date, otherwise tomorrow 10:00
+  var defaultDate = ''
+  var defaultTime = '10:00'
+  var prefillNote = ''
   if (pending && pending.callback_datetime) {
-    // callback_datetime is returned as IST ISO string (e.g. "2026-06-01T15:40:00+05:30")
-    // slicing to 16 chars gives the local IST value for datetime-local input
-    defaultValue = pending.callback_datetime.slice(0, 16)
+    var pendingDt = new Date(pending.callback_datetime)
+    if (pendingDt > new Date()) {
+      // Callback is in the future — pre-fill with its date/time
+      defaultDate = pending.callback_datetime.slice(0, 10)
+      defaultTime = pending.callback_datetime.slice(11, 16)
+    }
+    prefillNote = pending.notes || ''
+  }
+  if (!defaultDate) {
+    var tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    defaultDate = tomorrow.toISOString().split('T')[0]
   }
 
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
   overlay.innerHTML = `
-    <div class="modal-box" style="max-width:460px;width:95%;">
-      <h3 class="sm-section-heading" style="margin-bottom:10px;">${pending ? 'Reschedule Callback' : 'Schedule Callback'}</h3>
-      <label class="sm-label" style="display:block;margin-bottom:6px;">Date & Time</label>
-      <input id="leadCallbackDateTime" type="datetime-local" class="input" value="${defaultValue}" style="width:100%;" />
-      <label class="sm-label" style="display:block;margin:10px 0 6px;">Note</label>
-      <textarea id="leadCallbackNote" class="textarea" rows="3" style="width:100%;">${escape((pending && pending.notes) || '')}</textarea>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-        <button class="button secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-        <button class="button" id="leadCallbackSaveBtn">${pending ? 'Save Changes' : 'Schedule'}</button>
-      </div>
+    <div class="modal-box" style="max-width:480px;width:100%;">
+      <button class="modal-close" id="lcsCloseBtn">&times;</button>
+      <h3 class="sm-section-heading" style="margin:0 0 20px;">${pending ? '🔁 Reschedule Callback' : '📞 Schedule Callback'}</h3>
+      <form id="lcsForm" style="display:flex;flex-direction:column;gap:14px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Date *</label>
+            <input class="input" id="lcsDate" type="date" value="${defaultDate}" required style="font-size:13px;" />
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Time *</label>
+            <input class="input" id="lcsTime" type="time" value="${defaultTime}" required style="font-size:13px;" />
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button type="button" class="button secondary" id="lcsQ9" style="font-size:12px;padding:5px 10px;">9:00 AM</button>
+          <button type="button" class="button secondary" id="lcsQ10" style="font-size:12px;padding:5px 10px;">10:00 AM</button>
+          <button type="button" class="button secondary" id="lcsQ12" style="font-size:12px;padding:5px 10px;">12:00 PM</button>
+          <button type="button" class="button secondary" id="lcsQ3" style="font-size:12px;padding:5px 10px;">3:00 PM</button>
+          <button type="button" class="button secondary" id="lcsQ5" style="font-size:12px;padding:5px 10px;">5:00 PM</button>
+          <button type="button" class="button secondary" id="lcsQ7" style="font-size:12px;padding:5px 10px;">7:00 PM</button>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Note (optional)</label>
+          <textarea class="input" id="lcsNote" rows="2" placeholder="What is this callback about?" style="font-size:13px;resize:vertical;">${escape(prefillNote)}</textarea>
+        </div>
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:12px;color:#1e40af;">
+          🔔 Reminders will be sent <strong>10 minutes before</strong> and <strong>at the time</strong> of the callback.
+        </div>
+        <div style="display:flex;gap:10px;margin-top:4px;">
+          <button type="submit" class="button" style="flex:1;font-size:14px;padding:10px;">${pending ? 'Save Changes' : 'Schedule Callback'}</button>
+          <button type="button" class="button secondary" id="lcsCancelBtn" style="flex:1;font-size:14px;padding:10px;">Cancel</button>
+        </div>
+      </form>
     </div>`
   document.body.appendChild(overlay)
+
+  var closeBtn = overlay.querySelector('#lcsCloseBtn')
+  var cancelBtn = overlay.querySelector('#lcsCancelBtn')
+  if (closeBtn) closeBtn.addEventListener('click', function () { overlay.remove() })
+  if (cancelBtn) cancelBtn.addEventListener('click', function () { overlay.remove() })
   overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.remove() })
 
-  var saveBtn = overlay.querySelector('#leadCallbackSaveBtn')
-  if (saveBtn) saveBtn.addEventListener('click', async function () {
-    var dtValue = (overlay.querySelector('#leadCallbackDateTime') || {}).value || ''
-    if (!dtValue) {
+  // Quick-time buttons
+  var timeInput = overlay.querySelector('#lcsTime')
+  var quickTimes = { lcsQ9: '09:00', lcsQ10: '10:00', lcsQ12: '12:00', lcsQ3: '15:00', lcsQ5: '17:00', lcsQ7: '19:00' }
+  Object.keys(quickTimes).forEach(function (btnId) {
+    var btn = overlay.querySelector('#' + btnId)
+    if (btn) btn.addEventListener('click', function () { if (timeInput) timeInput.value = quickTimes[btnId] })
+  })
+
+  overlay.querySelector('#lcsForm').addEventListener('submit', async function (e) {
+    e.preventDefault()
+    var cbDate = (overlay.querySelector('#lcsDate') || {}).value || ''
+    var cbTime = (overlay.querySelector('#lcsTime') || {}).value || ''
+    if (!cbDate || !cbTime) {
       showToast('Please select callback date and time.', 'warning')
       return
     }
-    var note = ((overlay.querySelector('#leadCallbackNote') || {}).value || '').trim()
-    var payload = { callback_datetime: new Date(dtValue).toISOString(), notes: note }
+    var note = ((overlay.querySelector('#lcsNote') || {}).value || '').trim()
+    var payload = { callback_datetime: cbDate + 'T' + cbTime + ':00', notes: note }
     try {
       if (pending) {
         await _apiRequest(`/leads/callbacks/${pending.id}`, {
@@ -2589,14 +2640,11 @@ function openCallbackModal(leadId, options) {
       })
       close()
       await loadLeads(true)
-      if (typeof window.viewLeadDetails === 'function') {
-        try {
-          await window.viewLeadDetails(leadId)
-        } catch (_) {
-          if (typeof renderActionBoard === 'function' && window._ACTIVE_ROUTE === 'action_board') {
-            renderActionBoard(window._abDateFrom || '', window._abDateTo || '', window._abRange || 'today')
-          }
-        }
+      if (window._ACTIVE_ROUTE === 'action_board') {
+        if (typeof _abRefreshPreservingState === 'function') _abRefreshPreservingState()
+        else if (typeof renderActionBoard === 'function') renderActionBoard(window._abDateFrom || '', window._abDateTo || '', window._abRange || 'today')
+      } else if (typeof window.viewLeadDetails === 'function') {
+        try { await window.viewLeadDetails(leadId) } catch (_) {}
       }
       if (typeof modalOptions.onSaved === 'function') modalOptions.onSaved()
       showToast('Callback scheduled.', 'success')
@@ -2616,7 +2664,11 @@ async function markCallbackDone(callbackId, leadId) {
       retries: 0,
     })
     await loadLeads(true)
-    viewLeadDetails(leadId)
+    if (window._ACTIVE_ROUTE === 'action_board') {
+      if (typeof _abRefreshPreservingState === 'function') _abRefreshPreservingState()
+    } else {
+      viewLeadDetails(leadId)
+    }
     showToast('Callback marked as completed.', 'success')
   } catch (err) { showToast((err.payload && err.payload.error) || err.message, 'error') }
 }
@@ -2634,7 +2686,11 @@ async function deleteCallback(callbackId, leadId) {
       retries: 0,
     })
     await loadLeads(true)
-    viewLeadDetails(leadId)
+    if (window._ACTIVE_ROUTE === 'action_board') {
+      if (typeof _abRefreshPreservingState === 'function') _abRefreshPreservingState()
+    } else {
+      viewLeadDetails(leadId)
+    }
     showToast('Callback cancelled.', 'success')
   } catch (err) { showToast((err.payload && err.payload.error) || err.message, 'error') }
 }
