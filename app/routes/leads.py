@@ -386,6 +386,16 @@ def update_lead(lead_id):
         old_project = old_data.get('project_name') or old_data.get('project_id') or '—'
         new_project = lead.project.name if lead.project else (lead.project_id or '—')
         changes.append(f"project {old_project} → {new_project}")
+    if old_data.get('source') != lead.source:
+        changes.append(f"source {old_data.get('source') or '—'} → {lead.source or '—'}")
+    if old_data.get('name') != lead.name:
+        changes.append(f"name {old_data.get('name') or '—'} → {lead.name or '—'}")
+    if old_data.get('email') != lead.email:
+        changes.append(f"email {old_data.get('email') or '—'} → {lead.email or '—'}")
+    budget_old = f"{old_data.get('budget_min') or '—'}–{old_data.get('budget_max') or '—'}"
+    budget_new = f"{lead.budget_min or '—'}–{lead.budget_max or '—'}"
+    if budget_old != budget_new:
+        changes.append(f"budget {budget_old} → {budget_new}")
 
     db.session.commit()
 
