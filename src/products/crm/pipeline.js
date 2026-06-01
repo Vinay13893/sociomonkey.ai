@@ -198,7 +198,7 @@ function applyPipelineFilters() {
           </div>
         </div>
         <div class="pipeline-col-body" data-stage="${safeStage}" ondragover="handlePipelineDragOver(event, '${safeStage}')" ondragleave="handlePipelineDragLeave(event, '${safeStage}')" ondrop="handlePipelineDrop(event, '${safeStage}')">
-          ${pageItems.map(lead => {
+          ${pageItems.map((lead, i) => {
             const mgrName = (() => {
               const u = users.find(u => u.id === lead.assigned_to)
               if (!u) return null
@@ -210,6 +210,7 @@ function applyPipelineFilters() {
             return `
             <div class="pipeline-card${pendingClass}" style="border-left:3px solid ${color};" onclick="viewLeadDetails(${lead.id})" draggable="${canDrag ? 'true' : 'false'}" ondragstart="handlePipelineDragStart(event, ${lead.id}, '${safeLeadStage}')" ondragend="handlePipelineDragEnd(event)">
               <div class="pipeline-card-topline">
+                <span style="font-size:10px;font-weight:700;color:#94a3b8;flex-shrink:0;min-width:18px;">${start + i + 1}</span>
                 <span class="pipeline-card-name">${escape(lead.name)}</span>
                 <span class="pipeline-card-status-chip" style="background:${color}1a;color:${color};border-color:${color}55;" onclick="event.stopPropagation()">
                   <select class="pipeline-card-status-select" data-lead-id="${lead.id}" data-current-stage="${stage}" onclick="event.stopPropagation()" style="color:${color};">

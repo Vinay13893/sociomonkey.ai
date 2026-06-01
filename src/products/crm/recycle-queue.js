@@ -215,7 +215,7 @@ async function _rqLoad() {
         <button onclick="_rqSetPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''} style="font-size:12px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:${page >= totalPages ? '#cbd5e1' : '#334155'};cursor:${page >= totalPages ? 'default' : 'pointer'};">Next</button>
       </div>
     </div>
-    ${leads.map(l => _rqLeadRow(l)).join('')}
+    ${leads.map((l, i) => _rqLeadRow(l, (_rqPage - 1) * _rqPageSize + i + 1)).join('')}
   `
 }
 
@@ -238,13 +238,14 @@ function _rqSetPageSize(size) {
 
 // ── Lead row ──────────────────────────────────────────────────────────────
 
-function _rqLeadRow(l) {
+function _rqLeadRow(l, serialNum) {
   const sc = (typeof STATUS_COLORS !== 'undefined' ? STATUS_COLORS : {})[l.status] || { bg: '#f1f5f9', color: '#475569', label: l.status }
   const staleDate = l.updated_at ? new Date(l.updated_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }) : '—'
   const prevCount = (l.previous_assignee_ids || []).length
 
   return `
     <div id="rqRow_${l.id}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;transition:background .15s;">
+      <span style="font-size:11px;font-weight:700;color:#94a3b8;min-width:22px;text-align:right;flex-shrink:0;">${serialNum}</span>
       <input type="checkbox" id="rqChk_${l.id}" onchange="_rqToggle(${l.id})" style="width:16px;height:16px;cursor:pointer;flex-shrink:0;" />
       <div style="width:38px;height:38px;border-radius:50%;background:#6366f1;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;">
         ${escape((l.name||'?')[0]).toUpperCase()}

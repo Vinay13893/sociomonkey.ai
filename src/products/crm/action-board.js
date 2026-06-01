@@ -733,7 +733,7 @@ function _abNormalizeActionRow(section, item) {
   }
 }
 
-function _abRenderActionRow(section, item) {
+function _abRenderActionRow(section, item, serialNum) {
   var row = _abNormalizeActionRow(section, item)
   if (!row.leadId) return ''
   var callPhoneArg = JSON.stringify(row.phone || '')
@@ -741,6 +741,7 @@ function _abRenderActionRow(section, item) {
   var notePreview = _abNotePreview(row.latestNote)
   return `
     <tr class="ab-action-row ab-lead-card" data-lead-id="${row.leadId}" data-phone="${escape(row.phone || '')}" tabindex="0">
+      <td style="color:#94a3b8;font-size:11px;font-weight:700;text-align:center;">${serialNum != null ? serialNum : ''}</td>
       <td>
         <div class="ab-action-name-cell">
           <button type="button" class="ab-action-name-btn" onclick="_abOpenLead(${row.leadId})">${escape(row.name)}</button>
@@ -782,13 +783,13 @@ function _abRenderWorkspace() {
   _abActiveSectionKey = active.key
   var isMobile = (window.innerWidth || 0) <= 768
   var filteredItems = _abFilterSectionItems(active)
-  var renderedRows = filteredItems.map(function (item) { return _abRenderActionRow(active, item) }).filter(Boolean)
-  var renderedCards = filteredItems.map(function (item) { return active.renderItem(item) }).filter(Boolean)
   var paging = active.paging || null
+  var startIndex = paging && typeof paging.start === 'number' ? paging.start : (filteredItems.length ? 1 : 0)
+  var renderedRows = filteredItems.map(function (item, i) { return _abRenderActionRow(active, item, startIndex + i) }).filter(Boolean)
+  var renderedCards = filteredItems.map(function (item) { return active.renderItem(item) }).filter(Boolean)
   var totalPages = paging && paging.page_size ? Math.max(1, Math.ceil((paging.total || 0) / paging.page_size)) : 1
   var recordCount = paging && typeof paging.total === 'number' ? paging.total : filteredItems.length
   var searchApplied = !!((_abSearchQuery || '').trim())
-  var startIndex = paging && typeof paging.start === 'number' ? paging.start : (filteredItems.length ? 1 : 0)
   var endIndex = paging && typeof paging.end === 'number' ? paging.end : filteredItems.length
   var totalCount = paging && typeof paging.total === 'number' ? paging.total : filteredItems.length
   var searchMeta = searchApplied
@@ -825,16 +826,18 @@ function _abRenderWorkspace() {
                 ? `<div class="ab-table-wrap">
                     <table class="ab-action-table">
                       <colgroup>
-                        <col style="width:17%;" />
-                        <col style="width:12%;" />
-                        <col style="width:15%;" />
-                        <col style="width:12%;" />
-                        <col style="width:16%;" />
-                        <col style="width:12%;" />
-                        <col style="width:16%;" />
+                        <col style="width:38px;" />
+                        <col style="width:16%" />
+                        <col style="width:11%" />
+                        <col style="width:14%" />
+                        <col style="width:11%" />
+                        <col style="width:16%" />
+                        <col style="width:12%" />
+                        <col style="width:16%" />
                       </colgroup>
                       <thead>
                         <tr>
+                          <th style="color:#94a3b8;font-size:11px;">#</th>
                           <th>Name</th>
                           <th>Phone</th>
                           <th>Status</th>

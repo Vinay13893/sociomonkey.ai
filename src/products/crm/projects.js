@@ -58,6 +58,7 @@ async function renderProjects() {
       <table class="table">
         <thead>
           <tr>
+            <th style="width:36px;color:#94a3b8;font-size:11px;">#</th>
             <th>Name</th>
             <th>Location</th>
             <th>Developer</th>
@@ -69,8 +70,9 @@ async function renderProjects() {
           </tr>
         </thead>
         <tbody>
-          ${projects.map(p => `
+          ${projects.map((p, i) => `
             <tr>
+              <td style="color:#94a3b8;font-size:11px;font-weight:700;text-align:center;">${i + 1}</td>
               <td><strong>${escape(p.name)}</strong></td>
               <td>${escape(p.location || '-')}</td>
               <td>${escape(p.developer || '-')}</td>

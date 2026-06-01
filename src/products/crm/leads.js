@@ -696,6 +696,7 @@ async function filterAndRenderLeads(resetPage = true) {
         </colgroup>
         <thead>
           <tr>
+            <th style="width:36px;color:#94a3b8;font-size:11px;">#</th>
             <th style="width:36px;"><input type="checkbox" id="selectAllLeads" ${allChecked ? 'checked' : ''} onchange="toggleSelectAllLeads(this.checked)" style="cursor:pointer;width:16px;height:16px;"></th>
             <th class="ta-center">Name</th>
             <th class="ta-center">Phone</th>
@@ -708,8 +709,9 @@ async function filterAndRenderLeads(resetPage = true) {
           </tr>
         </thead>
         <tbody>
-          ${paginated.map(l => `
+          ${paginated.map((l, i) => `
             <tr class="${selectedLeads.has(l.id) ? 'lead-row-selected' : ''}">
+              <td class="ta-center" data-label="#" style="color:#94a3b8;font-size:11px;font-weight:700;">${pageStart + i + 1}</td>
               <td data-label="Select"><input type="checkbox" class="lead-checkbox" data-id="${l.id}" ${selectedLeads.has(l.id) ? 'checked' : ''} onchange="toggleSelectLead(${l.id}, this.checked)" style="cursor:pointer;width:16px;height:16px;"></td>
               <td class="ta-center" data-label="Name">
                 <button class="lead-name-link" onclick="viewLeadDetails(${l.id})"
