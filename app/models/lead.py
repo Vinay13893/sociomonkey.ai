@@ -46,7 +46,7 @@ class Lead(db.Model):
             pending = [c for c in self.callbacks if c.status == 'pending' and c.callback_datetime > datetime.utcnow()]
             if pending:
                 pending.sort(key=lambda c: c.callback_datetime)
-                next_callback = pending[0].callback_datetime.isoformat()
+                next_callback = to_ist_str(pending[0].callback_datetime)
 
         return {
             'id': self.id,
