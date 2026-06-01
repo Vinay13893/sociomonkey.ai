@@ -927,6 +927,22 @@ def dashboard_stats():
 def action_board():
     """Return all data needed for the Daily Action Board for the current user."""
     user = request.current_user
+
+    # ── view_as: manager/admin can view another user's board ─────────────────
+    view_as_id = request.args.get('view_as', type=int)
+    viewing_user = user  # default: own board
+    if view_as_id and view_as_id != user.id:
+        if user.role not in ('superadmin', 'sales_manager'):
+            return jsonify({'error': 'Permission denied'}), 403
+        target = User.query.filter_by(id=view_as_id, tenant_id=user.tenant_id).first()
+        if not target:
+            return jsonify({'error': 'User not found'}), 404
+        if user.role == 'sales_manager':
+            # Manager can only view their own direct reports
+            team_ids = [tm.id for tm in user.team_members]
+            if target.id not in team_ids:
+                return jsonify({'error': 'Permission denied'}), 403
+        viewing_user = target
     try:
         page_size = max(5, min(24, int(request.args.get('page_size', 6))))
     except (TypeError, ValueError):
@@ -957,7 +973,7 @@ def action_board():
             range_start = today_start
             range_end = today_end
 
-    visible = get_user_visible_leads(user)
+    visible = get_user_visible_leads(viewing_user)
 
     if range_requested:
         lead_scope = visible.filter(
@@ -973,18 +989,18 @@ def action_board():
 
     # ── Callback queries (scoped by role) ────────────────────────────────────
     cb_base = CallbackReminder.query.filter(
-        CallbackReminder.tenant_id == user.tenant_id,
+        CallbackReminder.tenant_id == viewing_user.tenant_id,
         CallbackReminder.status == 'pending',
     )
-    if user.role == 'team_member':
-        cb_base = cb_base.filter(CallbackReminder.assigned_user_id == user.id)
-    elif user.role == 'sales_manager':
-        team_ids = [u.id for u in User.query.filter_by(manager_id=user.id).all()]
-        team_ids.append(user.id)
+    if viewing_user.role == 'team_member':
+        cb_base = cb_base.filter(CallbackReminder.assigned_user_id == viewing_user.id)
+    elif viewing_user.role == 'sales_manager':
+        team_ids = [u.id for u in User.query.filter_by(manager_id=viewing_user.id).all()]
+        team_ids.append(viewing_user.id)
         cb_base = cb_base.filter(
             db.or_(
                 CallbackReminder.assigned_user_id.in_(team_ids),
-                CallbackReminder.manager_id == user.id,
+                CallbackReminder.manager_id == viewing_user.id,
             )
         )
 
@@ -1172,10 +1188,265 @@ def action_board():
 
 
 # ---------------------------------------------------------------------------
+# Assign / Reassign
+# ---------------------------------------------------------------------------
+
+ALL_LEAD_STATUSES = [
+    'new', 'no_answer', 'follow_up', 'callback_scheduled', 'interested',
+    'site_visit_planned', 'site_visit_done', 'negotiation', 'booking_done',
+    'not_interested', 'lost', 'junk',
+]
+
+
+def _assignable_users(user):
+    """Return list of users this actor can assign leads to."""
+    if user.role == 'superadmin':
+        return User.query.filter(
+            User.tenant_id == user.tenant_id,
+            User.is_active == True,
+            User.role.in_(['superadmin', 'sales_manager', 'team_member']),
+        ).all()
+    elif user.role == 'sales_manager':
+        team = list(user.team_members)
+        team.append(user)  # can assign to self
+        return team
+    return []
+
+
+@leads_bp.route('/assign-reassign/unassigned', methods=['GET'])
+@require_role('superadmin', 'sales_manager')
+def ar_unassigned():
+    """Leads with no assignee."""
+    user = request.current_user
+    q = Lead.query.filter(
+        Lead.tenant_id == user.tenant_id,
+        Lead.is_active == True,
+        Lead.assigned_to == None,
+    )
+    if user.role == 'sales_manager':
+        # Only unassigned leads visible to this manager's scope (by sales_manager_id)
+        q = q.filter(
+            db.or_(
+                Lead.sales_manager_id == user.id,
+                Lead.sales_manager_id == None,
+            )
+        )
+    page = max(1, int(request.args.get('page', 1)))
+    per_page = min(50, max(10, int(request.args.get('per_page', 25))))
+    total = q.count()
+    leads = q.order_by(Lead.created_at.asc()).offset((page - 1) * per_page).limit(per_page).all()
+    assignable = _assignable_users(user)
+    return jsonify({
+        'leads': [l.to_dict() for l in leads],
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'assignable_users': [{'id': u.id, 'name': u.name, 'role': u.role} for u in assignable],
+    }), 200
+
+
+@leads_bp.route('/assign-reassign/stale', methods=['GET'])
+@require_role('superadmin', 'sales_manager')
+def ar_stale():
+    """Leads not updated in N days."""
+    user = request.current_user
+    try:
+        days = max(1, min(15, int(request.args.get('days', 5))))
+    except (TypeError, ValueError):
+        days = 5
+    status_filter = request.args.get('status', '').strip()
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    if user.role == 'superadmin':
+        q = Lead.query.filter(
+            Lead.tenant_id == user.tenant_id,
+            Lead.is_active == True,
+            Lead.updated_at <= cutoff,
+            Lead.assigned_to != None,
+        )
+    else:
+        team_ids = [tm.id for tm in user.team_members]
+        team_ids.append(user.id)
+        q = Lead.query.filter(
+            Lead.tenant_id == user.tenant_id,
+            Lead.is_active == True,
+            Lead.updated_at <= cutoff,
+            Lead.assigned_to.in_(team_ids),
+        )
+
+    if status_filter and status_filter in ALL_LEAD_STATUSES:
+        q = q.filter(Lead.status == status_filter)
+
+    page = max(1, int(request.args.get('page', 1)))
+    per_page = min(50, max(10, int(request.args.get('per_page', 25))))
+    total = q.count()
+    leads = q.order_by(Lead.updated_at.asc()).offset((page - 1) * per_page).limit(per_page).all()
+    assignable = _assignable_users(user)
+    return jsonify({
+        'leads': [l.to_dict() for l in leads],
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'days': days,
+        'assignable_users': [{'id': u.id, 'name': u.name, 'role': u.role} for u in assignable],
+    }), 200
+
+
+@leads_bp.route('/assign-reassign/workload', methods=['GET'])
+@require_role('superadmin', 'sales_manager')
+def ar_workload():
+    """Per-member active lead counts."""
+    user = request.current_user
+    if user.role == 'superadmin':
+        members = User.query.filter(
+            User.tenant_id == user.tenant_id,
+            User.is_active == True,
+            User.role.in_(['sales_manager', 'team_member']),
+        ).all()
+    else:
+        members = list(user.team_members)
+        members.append(user)
+
+    NON_ACTIVE = ['lost', 'junk', 'booking_done', 'not_interested']
+    result = []
+    for m in members:
+        total = Lead.query.filter(Lead.tenant_id == user.tenant_id, Lead.is_active == True, Lead.assigned_to == m.id).count()
+        active = Lead.query.filter(
+            Lead.tenant_id == user.tenant_id,
+            Lead.is_active == True,
+            Lead.assigned_to == m.id,
+            Lead.status.notin_(NON_ACTIVE),
+        ).count()
+        overdue_cb = CallbackReminder.query.filter(
+            CallbackReminder.tenant_id == user.tenant_id,
+            CallbackReminder.assigned_user_id == m.id,
+            CallbackReminder.status == 'pending',
+            CallbackReminder.callback_datetime < datetime.utcnow(),
+        ).count()
+        result.append({
+            'id': m.id, 'name': m.name, 'role': m.role,
+            'total_leads': total, 'active_leads': active,
+            'overdue_callbacks': overdue_cb,
+        })
+    result.sort(key=lambda x: x['active_leads'], reverse=True)
+    assignable = _assignable_users(user)
+    return jsonify({
+        'members': result,
+        'assignable_users': [{'id': u.id, 'name': u.name, 'role': u.role} for u in assignable],
+    }), 200
+
+
+@leads_bp.route('/assign-reassign/bulk-assign', methods=['POST'])
+@require_role('superadmin', 'sales_manager')
+def ar_bulk_assign():
+    """Bulk assign or reassign leads to a target user."""
+    user = request.current_user
+    data = request.get_json() or {}
+    lead_ids = [int(x) for x in (data.get('lead_ids') or []) if str(x).isdigit()]
+    target_id = data.get('target_user_id')
+    if not lead_ids:
+        return jsonify({'error': 'lead_ids required'}), 400
+    if not target_id:
+        return jsonify({'error': 'target_user_id required'}), 400
+
+    target = User.query.filter_by(id=int(target_id), tenant_id=user.tenant_id, is_active=True).first()
+    if not target:
+        return jsonify({'error': 'Target user not found'}), 404
+
+    # Permission check
+    if user.role == 'sales_manager':
+        allowed_ids = [tm.id for tm in user.team_members] + [user.id]
+        if target.id not in allowed_ids:
+            return jsonify({'error': 'Cannot assign to users outside your team'}), 403
+
+    assigned = 0
+    for lid in lead_ids:
+        lead = Lead.query.filter_by(id=lid, tenant_id=user.tenant_id, is_active=True).first()
+        if not lead:
+            continue
+        # Manager scope check
+        if user.role == 'sales_manager':
+            allowed_lead_ids = [tm.id for tm in user.team_members] + [user.id, None]
+            if lead.assigned_to not in allowed_lead_ids:
+                continue
+        old_assignee = lead.assigned_to
+        lead.assigned_to = target.id
+        db.session.add(LeadAssignmentHistory(
+            lead_id=lead.id,
+            assigned_from=old_assignee,
+            assigned_to=target.id,
+            assigned_by=user.id,
+            reason=data.get('reason', 'Bulk assign/reassign'),
+        ))
+        log_activity(user.id, 'assign_lead', 'leads', lead.id, 'Lead',
+            description=f'Bulk assigned lead {lead.name} to {target.name}')
+        assigned += 1
+
+    db.session.commit()
+    return jsonify({'assigned': assigned, 'total_requested': len(lead_ids)}), 200
+
+
+@leads_bp.route('/assign-reassign/workload-move', methods=['POST'])
+@require_role('superadmin', 'sales_manager')
+def ar_workload_move():
+    """Move N active leads from one member to another."""
+    user = request.current_user
+    data = request.get_json() or {}
+    from_id = data.get('from_user_id')
+    to_id = data.get('to_user_id')
+    try:
+        count = max(1, min(100, int(data.get('count', 10))))
+    except (TypeError, ValueError):
+        count = 10
+
+    if not from_id or not to_id:
+        return jsonify({'error': 'from_user_id and to_user_id required'}), 400
+
+    from_user = User.query.filter_by(id=int(from_id), tenant_id=user.tenant_id, is_active=True).first()
+    to_user = User.query.filter_by(id=int(to_id), tenant_id=user.tenant_id, is_active=True).first()
+    if not from_user or not to_user:
+        return jsonify({'error': 'User not found'}), 404
+
+    if user.role == 'sales_manager':
+        allowed_ids = [tm.id for tm in user.team_members] + [user.id]
+        if from_user.id not in allowed_ids or to_user.id not in allowed_ids:
+            return jsonify({'error': 'Users outside your team'}), 403
+
+    NON_ACTIVE = ['lost', 'junk', 'booking_done', 'not_interested']
+    leads = Lead.query.filter(
+        Lead.tenant_id == user.tenant_id,
+        Lead.is_active == True,
+        Lead.assigned_to == from_user.id,
+        Lead.status.notin_(NON_ACTIVE),
+    ).order_by(Lead.updated_at.asc()).limit(count).all()
+
+    moved = 0
+    for lead in leads:
+        lead.assigned_to = to_user.id
+        db.session.add(LeadAssignmentHistory(
+            lead_id=lead.id,
+            assigned_from=from_user.id,
+            assigned_to=to_user.id,
+            assigned_by=user.id,
+            reason='Workload rebalance',
+        ))
+        log_activity(user.id, 'assign_lead', 'leads', lead.id, 'Lead',
+            description=f'Workload move: {lead.name} from {from_user.name} to {to_user.name}')
+        moved += 1
+
+    db.session.commit()
+    return jsonify({'moved': moved}), 200
+
+
+# ---------------------------------------------------------------------------
 # Lead Recycle Queue
 # ---------------------------------------------------------------------------
 
-RECYCLE_STATUSES = ['no_answer', 'not_interested', 'follow_up', 'callback_scheduled', 'lost']
+RECYCLE_STATUSES = [
+    'new', 'no_answer', 'follow_up', 'callback_scheduled', 'interested',
+    'site_visit_planned', 'site_visit_done', 'negotiation', 'booking_done',
+    'not_interested', 'lost', 'junk',
+]
 
 
 @leads_bp.route('/recycle-queue', methods=['GET'])
