@@ -1733,6 +1733,7 @@ async function viewLeadDetails(leadId) {
     ...statusHistory.map(h => ({ type:'status', ts: new Date(h.changed_at), data: h })),
     ...assignmentHistory.map(a => ({ type:'assign', ts: new Date(a.assigned_at), data: a })),
     ...callActivities.map(a => ({ type:'activity', ts: new Date(a.created_at), data: a })),
+    ...callbacks.map(cb => ({ type:'callback', ts: new Date(cb.callback_datetime), data: cb })),
   ].sort((a,b) => b.ts - a.ts)
 
   const upcomingCallbacks = callbacks.filter(c => c.status === 'pending')
@@ -1775,19 +1776,19 @@ async function viewLeadDetails(leadId) {
       </div>
 
       <!-- LEAD HERO CARD -->
-      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px 28px;margin-bottom:20px;box-shadow:0 2px 8px rgba(2,6,23,.06);display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:18px 24px;margin-bottom:20px;box-shadow:0 2px 8px rgba(2,6,23,.06);display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
         <!-- Avatar + basics -->
-        <div style="display:flex;align-items:center;gap:20px;flex-shrink:0;">
-          <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,${sc},${sc}99);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;flex-shrink:0;box-shadow:0 4px 12px ${sc}44;">
+        <div style="display:flex;align-items:center;gap:16px;flex-shrink:0;">
+          <div style="width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,${sc},${sc}99);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#fff;flex-shrink:0;box-shadow:0 4px 12px ${sc}44;">
             ${escape(L.name).charAt(0).toUpperCase()}
           </div>
           <div>
-            <div style="font-size:22px;font-weight:800;color:#0f172a;">${escape(L.name)}</div>
-            <div style="font-size:13px;color:#64748b;margin-top:2px;">${escape(L.phone || '—')} ${L.alternate_phone ? '· Alt ' + escape(L.alternate_phone) : ''} ${L.email ? '· ' + escape(L.email) : ''}</div>
+            <div style="font-size:20px;font-weight:800;color:#0f172a;">${escape(L.name)}</div>
+            <div style="font-size:12px;color:#64748b;margin-top:2px;">${escape(L.phone || '—')} ${L.alternate_phone ? '· Alt ' + escape(L.alternate_phone) : ''} ${L.email ? '· ' + escape(L.email) : ''}</div>
           </div>
         </div>
-        <!-- Meta chips -->
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;flex:1;justify-content:flex-end;">
+        <!-- Meta chips grid -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;flex:1;">
           ${[
             { label:'Source',        val: L.source || '—',                          icon:'📌' },
             { label:'Project',       val: projectMap[L.project_id] || '—',          icon:'🏢' },
@@ -1797,222 +1798,144 @@ async function viewLeadDetails(leadId) {
             { label:'Created',       val: fmtDate(L.created_at),                    icon:'📅' },
             { label:'Last Updated',  val: fmtDate(L.updated_at),                    icon:'🔄' },
           ].map(c => `
-            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:8px 14px;min-width:110px;">
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:7px 12px;">
               <div style="font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:.06em;text-transform:uppercase;">${c.icon} ${c.label}</div>
-              <div style="font-size:13px;font-weight:600;color:#1e293b;margin-top:3px;white-space:nowrap;">${c.val}</div>
+              <div style="font-size:12px;font-weight:600;color:#1e293b;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.val}</div>
             </div>
           `).join('')}
-          <!-- Upcoming callbacks chip -->
           ${upcomingCallbacks.length ? `
-            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:8px 14px;min-width:110px;">
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:7px 12px;">
               <div style="font-size:10px;font-weight:700;color:#3b82f6;letter-spacing:.06em;text-transform:uppercase;">🔔 Next Callback</div>
-              <div style="font-size:12px;font-weight:700;color:#1e40af;margin-top:3px;">${fmtDT(upcomingCallbacks[0].callback_datetime)}</div>
+              <div style="font-size:12px;font-weight:700;color:#1e40af;margin-top:2px;">${fmtDT(upcomingCallbacks[0].callback_datetime)}</div>
             </div>
           ` : ''}
         </div>
       </div>
 
-      <!-- MAIN GRID -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px;">
+      <!-- MAIN SIDEBAR GRID -->
+      <div class="ld-sidebar-grid">
 
-        <!-- SECTION 1: Customer Info + Actions -->
-        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(2,6,23,.05);">
-          <div style="padding:14px 20px;border-bottom:1px solid #f1f5f9;background:#f8fafc;">
-            <h3 class="sm-card-heading">👤 Customer Information</h3>
+        <!-- LEFT SIDEBAR -->
+        <div style="display:flex;flex-direction:column;gap:16px;">
+
+          <!-- Customer Information -->
+          <div class="ld-card">
+            <div class="ld-card-hd">👤 Customer Information</div>
+            <div class="ld-card-bd">
+              ${[
+                ['Full Name',        escape(L.name)],
+                ['Phone',            escape(L.phone || '—')],
+                ['Alternate Phone',  escape(L.alternate_phone || '—')],
+                ['Email',            L.email ? `<a href="mailto:${escape(L.email)}" style="color:#2563eb;">${escape(L.email)}</a>` : '—'],
+                ['City / Area',      escape((L.city) || '—')],
+                ['Budget',           budgetStr],
+                ['Project',          escape(projectMap[L.project_id] || '—')],
+                ['Source',           escape(L.source || '—')],
+              ].map(([k,v]) => `
+                <div class="ld-field">
+                  <span class="ld-field-k">${k}</span>
+                  <span class="ld-field-v">${v}</span>
+                </div>
+              `).join('')}
+            </div>
           </div>
-          <div style="padding:16px 20px;display:flex;flex-direction:column;gap:10px;">
-            ${[
-              ['Full Name',     escape(L.name)],
-              ['Phone',         escape(L.phone || '—')],
-              ['Alternate Phone', escape(L.alternate_phone || '—')],
-              ['Email',         L.email ? `<a href="mailto:${escape(L.email)}" style="color:#2563eb;">${escape(L.email)}</a>` : '—'],
-              ['City / Area',   escape((L.city) || '—')],
-              ['Budget',        budgetStr],
-              ['Project',       escape(projectMap[L.project_id] || '—')],
-              ['Source',        escape(L.source || '—')],
-            ].map(([k,v]) => `
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid #f8fafc;">
-                <span style="font-size:12px;font-weight:600;color:#94a3b8;flex-shrink:0;">${k}</span>
-                <span style="font-size:13px;color:#1e293b;text-align:right;">${v}</span>
+
+          <!-- Assignment -->
+          <div class="ld-card">
+            <div class="ld-card-hd">👥 Assignment</div>
+            <div class="ld-card-bd">
+              ${[
+                ['Sales Manager', escape(L.sales_manager_name || '—')],
+                ['Assigned To',   escape(L.assigned_to_name || 'Unassigned')],
+                ['Next Callback', upcomingCallbacks.length ? fmtDT(upcomingCallbacks[0].callback_datetime) : '—'],
+              ].map(([k,v]) => `
+                <div class="ld-field">
+                  <span class="ld-field-k">${k}</span>
+                  <span class="ld-field-v">${v}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          ${user.role !== 'team_member' ? `
+          <!-- Quick Actions -->
+          <div class="ld-card">
+            <div class="ld-card-hd">⚡ Quick Actions</div>
+            <div class="ld-card-bd" style="display:flex;flex-direction:column;gap:14px;">
+              <div>
+                <span class="ld-action-label">Update Status</span>
+                <form id="updateStatusForm" style="display:flex;gap:8px;">
+                  <select id="newStatus" class="select" style="flex:1;font-size:13px;">
+                    ${['new','no_answer','follow_up','callback_scheduled','interested','site_visit_planned','site_visit_done','negotiation','booking_done','not_interested','lost','junk'].map(s=>
+                      `<option value="${s}" ${L.status===s?'selected':''}>${statusLabel(s)}</option>`).join('')}
+                  </select>
+                  <button type="submit" class="button" style="font-size:12px;padding:7px 14px;white-space:nowrap;">Update</button>
+                </form>
               </div>
-            `).join('')}
-          </div>
-        </div>
-
-        <!-- SECTION 2: Lead Journey / Quick Actions -->
-        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(2,6,23,.05);">
-          <div style="padding:14px 20px;border-bottom:1px solid #f1f5f9;background:#f8fafc;">
-            <h3 class="sm-card-heading">📈 Lead Journey & Actions</h3>
-          </div>
-          <div style="padding:16px 20px;display:flex;flex-direction:column;gap:14px;">
-
-            ${user.role !== 'team_member' ? `
-            <div>
-              <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:6px;">Update Status</label>
-              <form id="updateStatusForm" style="display:flex;gap:8px;">
-                <select id="newStatus" class="select" style="flex:1;font-size:13px;">
-                  ${['new','no_answer','follow_up','callback_scheduled','interested','site_visit_planned','site_visit_done','negotiation','booking_done','not_interested','lost','junk'].map(s=>
-                    `<option value="${s}" ${L.status===s?'selected':''}>${statusLabel(s)}</option>`).join('')}
-                </select>
-                <button type="submit" class="button" style="font-size:12px;padding:7px 14px;white-space:nowrap;">Update</button>
-              </form>
-            </div>
-            <div>
-              <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:6px;">Update Project</label>
-              <form id="updateProjectForm" style="display:flex;gap:8px;">
-                <select id="newProject" class="select" style="flex:1;font-size:13px;">
-                  <option value="">— No Project —</option>
-                  ${projects.map(p=>`<option value="${p.id}" ${L.project_id===p.id?'selected':''}>${escape(p.name)}</option>`).join('')}
-                </select>
-                <button type="submit" class="button" style="font-size:12px;padding:7px 14px;white-space:nowrap;">Update</button>
-              </form>
-            </div>
-            <div>
-              <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:6px;">Update Source</label>
-              <form id="updateSourceForm" style="display:flex;gap:8px;">
-                <select id="newSource" class="select" style="flex:1;font-size:13px;">
-                  <option value="">— Select Source —</option>
-                  ${['Website','Referral','Walk-in','Meta','Google','Email Campaign','Direct','Other','G1','G2','G3','TP'].map(s=>
-                    `<option value="${s}" ${L.source===s?'selected':''}>${s}</option>`).join('')}
-                </select>
-                <button type="submit" class="button" style="font-size:12px;padding:7px 14px;white-space:nowrap;">Update</button>
-              </form>
-            </div>` : ''}
-
-            ${user.role === 'sales_manager' || user.role === 'superadmin' ? `
-            <div>
-              <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:6px;">Assign Lead</label>
-              <form id="assignForm" style="display:flex;flex-direction:column;gap:8px;">
-                ${user.role === 'superadmin' ? `
-                <select id="assignToManager" class="select" style="font-size:13px;">
-                  <option value="">— Filter by Sales Manager —</option>
-                  ${assignableManagers.map(u=>`<option value="${u.id}">${escape(u.name)}</option>`).join('')}
-                </select>` : ''}
-                <div style="display:flex;gap:8px;">
-                  <select id="assignTo" class="select" style="flex:1;font-size:13px;"></select>
-                  <button type="submit" class="button" style="font-size:12px;padding:7px 14px;white-space:nowrap;">Assign</button>
-                </div>
-              </form>
-            </div>` : ''}
-
-          </div>
-        </div>
-
-        <!-- SECTION 3: Callbacks -->
-        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(2,6,23,.05);">
-          <div style="padding:14px 20px;border-bottom:1px solid #f1f5f9;background:#f8fafc;display:flex;justify-content:space-between;align-items:center;">
-            <h3 class="sm-card-heading">📞 Scheduled Callbacks</h3>
-            <button id="addCallbackInline"
-              style="background:#0369a1;color:#fff;border:none;border-radius:7px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;">
-              + Schedule
-            </button>
-          </div>
-          <div id="callbacksPanel" style="padding:16px 20px;max-height:340px;overflow-y:auto;">
-            ${callbacks.length === 0
-              ? `<div style="text-align:center;padding:24px 0;color:#94a3b8;font-size:13px;">No callbacks scheduled.<br><span style="font-size:12px;">Use "+ Schedule" to add one.</span></div>`
-              : callbacks.map(cb => {
-                  const isPast    = new Date(cb.callback_datetime) < new Date()
-                  const isDone    = cb.status === 'completed'
-                  const isMissed  = cb.status === 'missed' || (isPast && cb.status === 'pending')
-                  const dotColor  = isDone ? '#10b981' : isMissed ? '#ef4444' : '#0369a1'
-                  const badgeBg   = isDone ? '#f0fdf4' : isMissed ? '#fef2f2' : '#eff6ff'
-                  const badgeTxt  = isDone ? '#065f46' : isMissed ? '#991b1b' : '#1e40af'
-                  const statusTxt = isDone ? 'Completed' : isMissed ? 'Missed' : 'Upcoming'
-                  return `
-                  <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;align-items:flex-start;">
-                    <div style="width:10px;height:10px;border-radius:50%;background:${dotColor};flex-shrink:0;margin-top:4px;"></div>
-                    <div style="flex:1;">
-                      <div style="font-size:13px;font-weight:600;color:#0f172a;">${fmtDT(cb.callback_datetime)}</div>
-                      ${cb.notes ? `<div style="font-size:12px;color:#64748b;margin-top:2px;">${escape(cb.notes)}</div>` : ''}
-                      <div style="display:flex;gap:6px;align-items:center;margin-top:5px;">
-                        <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:${badgeBg};color:${badgeTxt};">${statusTxt}</span>
-                        ${!isDone && !isMissed ? `<button onclick="markCallbackDone(${cb.id},${leadId})" style="font-size:11px;padding:2px 8px;border:1px solid #86efac;border-radius:12px;background:#f0fdf4;color:#065f46;cursor:pointer;">✓ Done</button>` : ''}
-                        <button onclick="deleteCallback(${cb.id},${leadId})" style="font-size:11px;padding:2px 8px;border:1px solid #fca5a5;border-radius:12px;background:#fef2f2;color:#991b1b;cursor:pointer;">Cancel</button>
-                      </div>
-                    </div>
-                  </div>`
-              }).join('')
-            }
-          </div>
-        </div>
-
-        <!-- SECTION 4: Status History -->
-        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(2,6,23,.05);">
-          <div style="padding:14px 20px;border-bottom:1px solid #f1f5f9;background:#f8fafc;">
-            <h3 class="sm-card-heading">🔄 Status History</h3>
-          </div>
-          <div style="padding:16px 20px;max-height:300px;overflow-y:auto;">
-            ${statusHistory.length === 0
-              ? `<div style="color:#94a3b8;font-size:13px;text-align:center;padding:20px 0;">No status changes yet.</div>`
-              : statusHistory.map((h,i) => `
-                <div style="display:flex;gap:12px;padding:8px 0;${i < statusHistory.length-1 ? 'border-bottom:1px solid #f8fafc;' : ''}">
-                  <div style="width:8px;height:8px;border-radius:50%;background:${STATUS_COLORS[h.new_status]||'#94a3b8'};flex-shrink:0;margin-top:5px;"></div>
-                  <div>
-                    <div style="font-size:13px;font-weight:600;color:#1e293b;">
-                      <span style="color:#94a3b8;">${statusLabel(h.old_status)}</span>
-                      <span style="color:#cbd5e1;"> → </span>
-                      <span style="color:${STATUS_COLORS[h.new_status]||'#64748b'};">${statusLabel(h.new_status)}</span>
-                    </div>
-                    <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${escape(h.changed_by_name||'Unknown')} · ${fmtDate(h.changed_at)}</div>
+              <div>
+                <span class="ld-action-label">Update Project</span>
+                <form id="updateProjectForm" style="display:flex;gap:8px;">
+                  <select id="newProject" class="select" style="flex:1;font-size:13px;">
+                    <option value="">— No Project —</option>
+                    ${projects.map(p=>`<option value="${p.id}" ${L.project_id===p.id?'selected':''}>${escape(p.name)}</option>`).join('')}
+                  </select>
+                  <button type="submit" class="button" style="font-size:12px;padding:7px 14px;white-space:nowrap;">Update</button>
+                </form>
+              </div>
+              <div>
+                <span class="ld-action-label">Update Source</span>
+                <form id="updateSourceForm" style="display:flex;gap:8px;">
+                  <select id="newSource" class="select" style="flex:1;font-size:13px;">
+                    <option value="">— Select Source —</option>
+                    ${['Website','Referral','Walk-in','Meta','Google','Email Campaign','Direct','Other','G1','G2','G3','TP'].map(s=>
+                      `<option value="${s}" ${L.source===s?'selected':''}>${s}</option>`).join('')}
+                  </select>
+                  <button type="submit" class="button" style="font-size:12px;padding:7px 14px;white-space:nowrap;">Update</button>
+                </form>
+              </div>
+              ${user.role === 'sales_manager' || user.role === 'superadmin' ? `
+              <div>
+                <span class="ld-action-label">Assign Lead</span>
+                <form id="assignForm" style="display:flex;flex-direction:column;gap:8px;">
+                  ${user.role === 'superadmin' ? `
+                  <select id="assignToManager" class="select" style="font-size:13px;">
+                    <option value="">— Filter by Sales Manager —</option>
+                    ${assignableManagers.map(u=>`<option value="${u.id}">${escape(u.name)}</option>`).join('')}
+                  </select>` : ''}
+                  <div style="display:flex;gap:8px;">
+                    <select id="assignTo" class="select" style="flex:1;font-size:13px;"></select>
+                    <button type="submit" class="button" style="font-size:12px;padding:7px 14px;white-space:nowrap;">Assign</button>
                   </div>
-                </div>
-              `).join('')}
+                </form>
+              </div>` : ''}
+            </div>
           </div>
-        </div>
+          ` : ''}
 
-        <!-- SECTION 5: Assignment History -->
-        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(2,6,23,.05);">
-          <div style="padding:14px 20px;border-bottom:1px solid #f1f5f9;background:#f8fafc;">
-            <h3 class="sm-card-heading">👥 Assignment History</h3>
-          </div>
-          <div style="padding:16px 20px;max-height:300px;overflow-y:auto;">
-            ${assignmentHistory.length === 0
-              ? `<div style="color:#94a3b8;font-size:13px;text-align:center;padding:20px 0;">No assignments yet.</div>`
-              : assignmentHistory.map((a,i) => `
-                <div style="display:flex;gap:12px;padding:8px 0;${i < assignmentHistory.length-1 ? 'border-bottom:1px solid #f8fafc;' : ''}">
-                  <div style="width:8px;height:8px;border-radius:50%;background:#8b5cf6;flex-shrink:0;margin-top:5px;"></div>
-                  <div>
-                    <div style="font-size:13px;font-weight:600;color:#1e293b;">
-                      <span style="color:#94a3b8;">${escape(a.assigned_from_name||'Unassigned')}</span>
-                      <span style="color:#cbd5e1;"> → </span>
-                      <span>${escape(a.assigned_to_name||'Unassigned')}</span>
-                    </div>
-                    <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${escape(a.assigned_by_name||'?')} · ${fmtDate(a.assigned_at)}</div>
-                    ${a.reason ? `<div style="font-size:11px;color:#64748b;margin-top:2px;font-style:italic;">${escape(a.reason)}</div>` : ''}
-                  </div>
-                </div>
-              `).join('')}
-          </div>
-        </div>
+        </div><!-- /LEFT SIDEBAR -->
 
-      </div><!-- end main grid -->
+        <!-- RIGHT MAIN -->
+        <div style="display:flex;flex-direction:column;gap:16px;min-width:0;">
 
-      <!-- TIMELINE SECTION (full width) -->
-      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(2,6,23,.05);margin-top:20px;">
-        <div style="padding:14px 20px;border-bottom:1px solid #f1f5f9;background:#f8fafc;display:flex;justify-content:space-between;align-items:center;">
-          <h3 class="sm-card-heading" style="margin-bottom:12px;">🕒 Notes & Activity Timeline</h3>
-        </div>
-        <div style="padding:10px 20px 0;color:#64748b;font-size:13px;line-height:1.5;">
-          ${L.phone ? `<strong style="color:#334155;">Primary:</strong> ${escape(L.phone)}` : ''}${L.alternate_phone ? `${L.phone ? ' · ' : ''}<strong style="color:#334155;">Alternate:</strong> ${escape(L.alternate_phone)}` : ''}
-        </div>
-        <div style="padding:20px 28px;display:grid;grid-template-columns:1fr 340px;gap:28px;flex-wrap:wrap;" id="timelineGrid">
-
-          <!-- Timeline -->
-          <div style="position:relative;">
-            <!-- Add note form -->
-            <form id="addNoteForm" style="display:flex;gap:10px;margin-bottom:24px;align-items:flex-end;">
-              <textarea id="noteText" class="input"
-                style="flex:1;height:72px;resize:vertical;font-size:13px;border-radius:10px;"
-                placeholder="Add a note, call log, or follow-up update…"></textarea>
-              <button type="submit" class="button" style="padding:9px 18px;font-size:13px;white-space:nowrap;border-radius:10px;align-self:flex-end;">
-                Add Note
-              </button>
-            </form>
-            <!-- Timeline list -->
-            <div style="border-left:2px solid #e2e8f0;padding-left:20px;display:flex;flex-direction:column;gap:0;">
-              ${timelineItems.length === 0
-                ? `<div style="color:#94a3b8;font-size:13px;padding:16px 0;">No activity yet.</div>`
-                : timelineItems.map(item => {
+          <!-- Activity Timeline -->
+          <div class="ld-card">
+            <div class="ld-card-hd">
+              <span>🕒 Activity Timeline</span>
+              <span style="background:#e2e8f0;border-radius:12px;padding:2px 10px;font-size:12px;font-weight:700;color:#475569;">${timelineItems.length}</span>
+            </div>
+            <div class="ld-card-bd">
+              <!-- Add note form -->
+              <form id="addNoteForm" style="display:flex;gap:10px;margin-bottom:20px;align-items:flex-end;">
+                <textarea id="noteText" class="input" placeholder="Write a note or call summary…" rows="2"
+                  style="flex:1;font-size:13px;resize:vertical;"></textarea>
+                <button type="submit" class="button" style="font-size:12px;padding:9px 16px;white-space:nowrap;align-self:flex-end;">+ Note</button>
+              </form>
+              <!-- Timeline -->
+              <div style="position:relative;padding-left:24px;">
+                <div style="position:absolute;left:4px;top:0;bottom:0;width:2px;background:#e2e8f0;border-radius:2px;"></div>
+                ${timelineItems.length === 0
+                  ? `<div style="color:#94a3b8;font-size:13px;text-align:center;padding:20px 0;">No activity yet.</div>`
+                  : timelineItems.map(item => {
                     if (item.type === 'note') {
                       const n = item.data
                       return `
@@ -2066,28 +1989,121 @@ async function viewLeadDetails(leadId) {
                         </div>
                       </div>`
                     }
+                    if (item.type === 'callback') {
+                      const cb = item.data
+                      const isPast   = new Date(cb.callback_datetime) < new Date()
+                      const isDone   = cb.status === 'completed'
+                      const isMissed = cb.status === 'missed' || (isPast && cb.status === 'pending')
+                      const dotColor = isDone ? '#10b981' : isMissed ? '#ef4444' : '#0369a1'
+                      const lbl      = isDone ? 'Callback Completed' : isMissed ? 'Callback Missed' : 'Callback Scheduled'
+                      const lblColor = isDone ? '#065f46' : isMissed ? '#991b1b' : '#1e40af'
+                      return `
+                      <div style="position:relative;padding:0 0 20px;">
+                        <div style="position:absolute;left:-25px;top:4px;width:10px;height:10px;border-radius:50%;background:${dotColor};border:2px solid #fff;box-shadow:0 0 0 2px ${dotColor};"></div>
+                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                          <span style="font-size:13px;font-weight:600;color:${lblColor};">🔔 ${lbl}${cb.notes ? ': ' + escape(cb.notes) : ''}</span>
+                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${fmtDT(cb.callback_datetime)}</span>
+                        </div>
+                      </div>`
+                    }
                     return ''
                   }).join('')
+                }
+              </div>
+            </div>
+          </div>
+
+          <!-- Scheduled Callbacks -->
+          <div class="ld-card">
+            <div class="ld-card-hd">
+              <span>📞 Scheduled Callbacks</span>
+              <button id="addCallbackInline"
+                style="background:#0369a1;color:#fff;border:none;border-radius:7px;padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer;">
+                + Schedule
+              </button>
+            </div>
+            <div id="callbacksPanel" style="padding:16px 18px;max-height:340px;overflow-y:auto;">
+              ${callbacks.length === 0
+                ? `<div style="text-align:center;padding:24px 0;color:#94a3b8;font-size:13px;">No callbacks scheduled.<br><span style="font-size:12px;">Use "+ Schedule" to add one.</span></div>`
+                : callbacks.map(cb => {
+                    const isPast    = new Date(cb.callback_datetime) < new Date()
+                    const isDone    = cb.status === 'completed'
+                    const isMissed  = cb.status === 'missed' || (isPast && cb.status === 'pending')
+                    const dotColor  = isDone ? '#10b981' : isMissed ? '#ef4444' : '#0369a1'
+                    const badgeBg   = isDone ? '#f0fdf4' : isMissed ? '#fef2f2' : '#eff6ff'
+                    const badgeTxt  = isDone ? '#065f46' : isMissed ? '#991b1b' : '#1e40af'
+                    const statusTxt = isDone ? 'Completed' : isMissed ? 'Missed' : 'Upcoming'
+                    return `
+                    <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;align-items:flex-start;">
+                      <div style="width:10px;height:10px;border-radius:50%;background:${dotColor};flex-shrink:0;margin-top:4px;"></div>
+                      <div style="flex:1;">
+                        <div style="font-size:13px;font-weight:600;color:#0f172a;">${fmtDT(cb.callback_datetime)}</div>
+                        ${cb.notes ? `<div style="font-size:12px;color:#64748b;margin-top:2px;">${escape(cb.notes)}</div>` : ''}
+                        <div style="display:flex;gap:6px;align-items:center;margin-top:5px;">
+                          <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:${badgeBg};color:${badgeTxt};">${statusTxt}</span>
+                          ${!isDone && !isMissed ? `<button onclick="markCallbackDone(${cb.id},${leadId})" style="font-size:11px;padding:2px 8px;border:1px solid #86efac;border-radius:12px;background:#f0fdf4;color:#065f46;cursor:pointer;">✓ Done</button>` : ''}
+                          <button onclick="deleteCallback(${cb.id},${leadId})" style="font-size:11px;padding:2px 8px;border:1px solid #fca5a5;border-radius:12px;background:#fef2f2;color:#991b1b;cursor:pointer;">Cancel</button>
+                        </div>
+                      </div>
+                    </div>`
+                }).join('')
               }
             </div>
           </div>
 
-          <!-- Upcoming callbacks sidebar -->
-          <div>
-            <div style="font-size:12px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;margin-bottom:12px;">🔔 Upcoming Callbacks</div>
-            ${upcomingCallbacks.length === 0
-              ? `<div style="font-size:13px;color:#94a3b8;padding:16px 0;">None scheduled.</div>`
-              : upcomingCallbacks.map(cb => `
-                <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 14px;margin-bottom:10px;">
-                  <div style="font-size:13px;font-weight:700;color:#1e40af;">${fmtDT(cb.callback_datetime)}</div>
-                  ${cb.notes ? `<div style="font-size:12px;color:#1e40af;opacity:.8;margin-top:3px;">${escape(cb.notes)}</div>` : ''}
-                  <div style="font-size:11px;color:#64748b;margin-top:4px;">For: ${escape(cb.assigned_user_name||'—')}</div>
-                </div>
-              `).join('')}
-          </div>
+          <!-- Status + Assignment History row -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
 
-        </div>
-      </div>
+            <!-- Status History -->
+            <div class="ld-card">
+              <div class="ld-card-hd">🔄 Status History</div>
+              <div style="padding:14px 18px;max-height:280px;overflow-y:auto;">
+                ${statusHistory.length === 0
+                  ? `<div style="color:#94a3b8;font-size:13px;text-align:center;padding:20px 0;">No status changes yet.</div>`
+                  : statusHistory.map((h,i) => `
+                    <div style="display:flex;gap:10px;padding:7px 0;${i < statusHistory.length-1 ? 'border-bottom:1px solid #f8fafc;' : ''}">
+                      <div style="width:8px;height:8px;border-radius:50%;background:${STATUS_COLORS[h.new_status]||'#94a3b8'};flex-shrink:0;margin-top:4px;"></div>
+                      <div>
+                        <div style="font-size:12px;font-weight:600;color:#1e293b;">
+                          <span style="color:#94a3b8;">${statusLabel(h.old_status)}</span>
+                          <span style="color:#cbd5e1;"> → </span>
+                          <span style="color:${STATUS_COLORS[h.new_status]||'#64748b'};">${statusLabel(h.new_status)}</span>
+                        </div>
+                        <div style="font-size:11px;color:#94a3b8;margin-top:1px;">${escape(h.changed_by_name||'Unknown')} · ${fmtDate(h.changed_at)}</div>
+                      </div>
+                    </div>
+                  `).join('')}
+              </div>
+            </div>
+
+            <!-- Assignment History -->
+            <div class="ld-card">
+              <div class="ld-card-hd">👥 Assignment History</div>
+              <div style="padding:14px 18px;max-height:280px;overflow-y:auto;">
+                ${assignmentHistory.length === 0
+                  ? `<div style="color:#94a3b8;font-size:13px;text-align:center;padding:20px 0;">No assignments yet.</div>`
+                  : assignmentHistory.map((a,i) => `
+                    <div style="display:flex;gap:10px;padding:7px 0;${i < assignmentHistory.length-1 ? 'border-bottom:1px solid #f8fafc;' : ''}">
+                      <div style="width:8px;height:8px;border-radius:50%;background:#8b5cf6;flex-shrink:0;margin-top:4px;"></div>
+                      <div>
+                        <div style="font-size:12px;font-weight:600;color:#1e293b;">
+                          <span style="color:#94a3b8;">${escape(a.assigned_from_name||'Unassigned')}</span>
+                          <span style="color:#cbd5e1;"> → </span>
+                          <span>${escape(a.assigned_to_name||'Unassigned')}</span>
+                        </div>
+                        <div style="font-size:11px;color:#94a3b8;margin-top:1px;">${escape(a.assigned_by_name||'?')} · ${fmtDate(a.assigned_at)}</div>
+                        ${a.reason ? `<div style="font-size:11px;color:#64748b;margin-top:2px;font-style:italic;">${escape(a.reason)}</div>` : ''}
+                      </div>
+                    </div>
+                  `).join('')}
+              </div>
+            </div>
+
+          </div><!-- /status+assign history row -->
+
+        </div><!-- /RIGHT MAIN -->
+
+      </div><!-- /ld-sidebar-grid -->
 
     </div>
   `
@@ -2282,6 +2298,7 @@ window.viewLeadDetails = viewLeadDetails
 function openLeadEditForm(lead) {
   const overlay = document.createElement('div')
   const canEditPrimaryPhone = user && (user.role === 'superadmin' || user.role === 'platform_owner')
+  const canEditAltPhone = (user && (user.role === 'superadmin' || user.role === 'platform_owner')) || !lead.alternate_phone
   overlay.className = 'modal-overlay'
   overlay.innerHTML = `
     <div class="modal-box" style="max-width:520px;width:100%;">
@@ -2304,7 +2321,8 @@ function openLeadEditForm(lead) {
           </div>
           <div>
             <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Alternate Number</label>
-            <input class="input" id="editAlternatePhone" value="${escape(lead.alternate_phone||'')}" placeholder="Alternate Number" style="font-size:13px;" />
+            <input class="input" id="editAlternatePhone" value="${escape(lead.alternate_phone||'')}" placeholder="Alternate Number" style="font-size:13px;${!canEditAltPhone ? 'background:#f8fafc;color:#64748b;' : ''}" ${!canEditAltPhone ? 'readonly' : ''} />
+            ${!canEditAltPhone ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Alternate number cannot be changed once set.</div>' : ''}
           </div>
           <div>
             <label style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;">Source</label>

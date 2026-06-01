@@ -1171,6 +1171,68 @@ a:focus-visible {
   gap: 4px;
 }
 
+/* Lead Detail Card layout */
+.ld-sidebar-grid {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.ld-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(2,6,23,.05);
+}
+.ld-card-hd {
+  padding: 12px 18px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+.ld-card-bd {
+  padding: 16px 18px;
+}
+.ld-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid #f8fafc;
+}
+.ld-field:last-child { border-bottom: none; }
+.ld-field-k {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+.ld-field-v {
+  font-size: 12.5px;
+  color: #1e293b;
+  text-align: right;
+}
+.ld-action-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: 6px;
+}
+@media (max-width: 900px) {
+  .ld-sidebar-grid { grid-template-columns: 1fr; }
+}
+
+
 .leads-callback-value {
   font-size: 12px;
   font-weight: 700;
