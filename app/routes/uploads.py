@@ -765,7 +765,12 @@ def bulk_update_apply():
             cb_dt_str = row.get('callback_dt')
             if cb_dt_str:
                 try:
-                    cb_dt = datetime.fromisoformat(cb_dt_str)
+                    from app.utils.time_utils import IST
+                    from datetime import timezone
+                    _parsed = datetime.fromisoformat(cb_dt_str)
+                    if _parsed.tzinfo is None:
+                        _parsed = _parsed.replace(tzinfo=IST)
+                    cb_dt = _parsed.astimezone(timezone.utc).replace(tzinfo=None)
                     db.session.add(CallbackReminder(
                         lead_id=lead.id,
                         tenant_id=user.tenant_id,
