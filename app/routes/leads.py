@@ -1566,6 +1566,18 @@ def create_callback(lead_id):
         created_by=user.id,
     )
     db.session.add(cb)
+
+    # Auto-update lead status to callback_scheduled
+    old_status = lead.status
+    if old_status != 'callback_scheduled':
+        lead.status = 'callback_scheduled'
+        db.session.add(StatusHistory(
+            lead_id=lead_id,
+            old_status=old_status,
+            new_status='callback_scheduled',
+            changed_by=user.id,
+        ))
+
     db.session.commit()
 
     log_activity(
