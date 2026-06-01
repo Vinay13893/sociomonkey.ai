@@ -1,7 +1,7 @@
 // ============================================================================
 // NOTIFICATION BELL
 // A lightweight in-app notification bell that polls the backend every 60s.
-// Rendered into #notifBellWrapper injected into the sidebar footer.
+// Rendered as a floating FAB in the bottom-right corner of the viewport.
 // ============================================================================
 
 var _notifPollTimer  = null
@@ -48,9 +48,8 @@ function _renderBell() {
   wrapper.innerHTML = `
     <div class="notif-bell-container">
       <button id="notifBellBtn" class="notif-bell-btn" aria-label="Notifications" title="Notifications">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" stroke="none">
+          <path d="M12 2a7 7 0 0 0-7 7c0 4.1-1.8 6.3-2.7 7.3-.3.4-.3.9 0 1.3.3.3.7.4 1.1.4h5.1a2.5 2.5 0 0 0 4.9 0H18.6c.4 0 .8-.1 1.1-.4.3-.4.3-.9 0-1.3C18.8 15.3 17 13.1 17 9a7 7 0 0 0-5-6.7V2z"/>
         </svg>
         ${badgeHTML}
       </button>

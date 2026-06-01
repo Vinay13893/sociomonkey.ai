@@ -245,8 +245,8 @@ function _rqLeadRow(l, serialNum) {
 
   return `
     <div id="rqRow_${l.id}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;transition:background .15s;">
-      <span style="font-size:11px;font-weight:700;color:#94a3b8;min-width:22px;text-align:right;flex-shrink:0;">${serialNum}</span>
       <input type="checkbox" id="rqChk_${l.id}" onchange="_rqToggle(${l.id})" style="width:16px;height:16px;cursor:pointer;flex-shrink:0;" />
+      <span style="font-size:11px;font-weight:700;color:#94a3b8;min-width:22px;text-align:right;flex-shrink:0;">${serialNum}</span>
       <div style="width:38px;height:38px;border-radius:50%;background:#6366f1;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;">
         ${escape((l.name||'?')[0]).toUpperCase()}
       </div>
