@@ -45,6 +45,12 @@ async function renderReports(dateFrom = '', dateTo = '', projectFilter = '') {
       y.setDate(y.getDate() - 1)
       return { from: _fmtLocalInputDate(y), to: _fmtLocalInputDate(y) }
     }
+    if (key === 'this_week') {
+      const start = new Date(today)
+      const dow = start.getDay() || 7
+      start.setDate(start.getDate() - dow + 1)
+      return { from: _fmtLocalInputDate(start), to: _fmtLocalInputDate(today) }
+    }
     if (key === 'last_week') {
       const thisWeekStart = new Date(today)
       thisWeekStart.setDate(thisWeekStart.getDate() - thisWeekStart.getDay() + 1)
@@ -89,30 +95,39 @@ async function renderReports(dateFrom = '', dateTo = '', projectFilter = '') {
               <span style="font-size:12px;font-weight:600;color:${activeFilter ? '#2563eb' : '#64748b'};background:${activeFilter ? '#eff6ff' : '#f1f5f9'};padding:2px 10px;border-radius:20px;border:1px solid ${activeFilter ? '#bfdbfe' : '#e2e8f0'};">${filterLabel}</span>
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <input type="date" id="reportDateFrom" class="input" style="font-size:12px;padding:6px 8px;width:130px;" value="${dateFrom}" />
-            <span style="font-size:12px;color:#94a3b8;">→</span>
-            <input type="date" id="reportDateTo" class="input" style="font-size:12px;padding:6px 8px;width:130px;" value="${dateTo}" />
-            <select id="reportMonth" class="select" style="font-size:12px;padding:6px 8px;width:130px;">
-              <option value="">Month…</option>
-              ${monthOptions}
-            </select>
-            <select id="reportTeamRange" class="select" style="font-size:12px;padding:6px 8px;width:120px;">
-              <option value="">Quick select…</option>
-              <option value="today">Today</option>
-              <option value="yesterday">Yesterday</option>
-              <option value="last_week">Last Week</option>
-              <option value="last_30_days">Last 30 Days</option>
-              <option value="this_month">This Month</option>
-              <option value="last_month">Last Month</option>
-            </select>
-            <select id="reportProject" class="select" style="font-size:12px;padding:6px 8px;width:140px;">
-              <option value="">All Projects</option>
-              ${(typeof projects !== 'undefined' ? projects : []).map(p => `<option value="${p.id}"${projectFilter == p.id ? ' selected' : ''}>${escape(p.name)}</option>`).join('')}
-            </select>
-            <button id="applyReportFilter" class="sm-btn sm-btn-primary" style="font-size:12px;padding:6px 14px;">Apply</button>
-            <button id="clearReportFilter" class="sm-btn sm-btn-secondary" style="font-size:12px;padding:6px 10px;">✕</button>
-            <button class="sm-btn sm-btn-primary" onclick="downloadLeadReport()" style="font-size:12px;padding:6px 14px;background:#0f172a;">⬇ Export</button>
+          <div class="dash-filters" style="flex-wrap:wrap;">
+            <div class="dash-filter-group">
+              <select id="reportRangePreset" class="dash-filter-ctl">
+                <option value="" ${!dateFrom && !dateTo ? 'selected' : ''}>All Time</option>
+                <option value="today">Today</option>
+                <option value="this_week">This Week</option>
+                <option value="this_month">This Month</option>
+                <option value="last_30_days">Last 30 Days</option>
+                <option value="last_month">Last Month</option>
+                <option value="custom" ${dateFrom || dateTo ? 'selected' : ''}>Custom Date</option>
+              </select>
+            </div>
+            <div id="reportCustomRange" style="display:${dateFrom || dateTo ? 'flex' : 'none'};gap:8px;align-items:center;">
+              <div class="dash-filter-group">
+                <input type="date" id="reportDateFrom" class="dash-filter-ctl" value="${dateFrom}" />
+              </div>
+              <span style="color:#94a3b8;font-size:12px;">→</span>
+              <div class="dash-filter-group">
+                <input type="date" id="reportDateTo" class="dash-filter-ctl" value="${dateTo}" />
+              </div>
+            </div>
+            <div class="dash-filter-group">
+              <select id="reportProject" class="dash-filter-ctl" style="min-width:140px;">
+                <option value="">All Projects</option>
+                ${(typeof projects !== 'undefined' ? projects : []).map(p => `<option value="${p.id}"${projectFilter == p.id ? ' selected' : ''}>${escape(p.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="dash-filter-group">
+              <button id="applyReportFilter" class="dash-refresh-btn">↻ Apply</button>
+            </div>
+            <div class="dash-filter-group">
+              <button onclick="downloadLeadReport()" class="dash-refresh-btn" style="background:#0f172a;border-color:#0f172a;">⬇ Download Report</button>
+            </div>
           </div>
         </div>
       </div>
@@ -120,49 +135,29 @@ async function renderReports(dateFrom = '', dateTo = '', projectFilter = '') {
     </div>
   `
 
-  document.getElementById('reportMonth').addEventListener('change', e => {
-    const m = e.target.value
-    if (m !== '') {
-      const monthIdx = parseInt(m, 10)
-      const yr = _selectedYear()
-      const start = new Date(yr, monthIdx, 1)
-      const end = new Date(yr, monthIdx + 1, 0)
-      document.getElementById('reportDateFrom').value = _fmtLocalInputDate(start)
-      document.getElementById('reportDateTo').value   = _fmtLocalInputDate(end)
-      document.getElementById('reportTeamRange').value = ''
+  document.getElementById('reportRangePreset').addEventListener('change', e => {
+    const key = e.target.value
+    const customRange = document.getElementById('reportCustomRange')
+    if (key === 'custom') {
+      customRange.style.display = 'flex'
+    } else {
+      customRange.style.display = 'none'
+      if (key) {
+        const range = _formatRangeFromPreset(key)
+        document.getElementById('reportDateFrom').value = range.from
+        document.getElementById('reportDateTo').value = range.to
+      } else {
+        document.getElementById('reportDateFrom').value = ''
+        document.getElementById('reportDateTo').value = ''
+      }
     }
   })
-
-  document.getElementById('reportTeamRange').addEventListener('change', e => {
-    const key = (e.target.value || '').trim()
-    if (!key) return
-    const range = _formatRangeFromPreset(key)
-    document.getElementById('reportDateFrom').value = range.from
-    document.getElementById('reportDateTo').value = range.to
-    document.getElementById('reportMonth').value = ''
-  })
-
-  ;(function syncMonthPickerFromRange() {
-    const monthEl = document.getElementById('reportMonth')
-    const from = _parseYmd(dateFrom)
-    const to = _parseYmd(dateTo)
-    if (!monthEl || !from || !to) return
-    const sameYear = from.getFullYear() === to.getFullYear()
-    const sameMonth = from.getMonth() === to.getMonth()
-    const isStartOfMonth = from.getDate() === 1
-    const lastDay = new Date(to.getFullYear(), to.getMonth() + 1, 0).getDate()
-    const isEndOfMonth = to.getDate() === lastDay
-    if (sameYear && sameMonth && isStartOfMonth && isEndOfMonth) {
-      monthEl.value = String(from.getMonth())
-    }
-  })()
   document.getElementById('applyReportFilter').addEventListener('click', () => {
     const from = document.getElementById('reportDateFrom').value
     const to   = document.getElementById('reportDateTo').value
     const proj = document.getElementById('reportProject')?.value || ''
     renderReports(from, to, proj)
   })
-  document.getElementById('clearReportFilter').addEventListener('click', () => renderReports())
 
   // Fetch lead report + team report in parallel
   const headers = _apiAuthHeaders()
@@ -171,8 +166,6 @@ async function renderReports(dateFrom = '', dateTo = '', projectFilter = '') {
   if (dateTo)   params.set('date_to',   dateTo)
   if (projectFilter) params.set('project_id', projectFilter)
   const qs = params.toString() ? '?' + params.toString() : ''
-  const teamRange = document.getElementById('reportTeamRange')?.value || ''
-  if (teamRange) params.set('range', teamRange)
   const [leadsRes, teamRes, compareRes] = await Promise.all([
     fetch(`${API_BASE}/reports/leads${qs}`, { headers }),
     fetch(`${API_BASE}/reports/team${qs}`,  { headers }),
@@ -464,6 +457,30 @@ async function renderReports(dateFrom = '', dateTo = '', projectFilter = '') {
   const hotRate  = total > 0 ? ((hotLeads / total) * 100).toFixed(1) : '0.0'
   const warmRate = total > 0 ? ((warmLeads / total) * 100).toFixed(1) : '0.0'
 
+  // Helper — reusable for initial render + team filter re-fetch
+  function _buildTeamHTML(groups, unassigned) {
+    const gHtml = groups.length === 0
+      ? '<div style="color:#94a3b8;padding:12px 0;font-size:13px;">No team data available</div>'
+      : groups.map((g, i) => managerGroupHTML(g, i)).join('')
+    const uHtml = unassigned.length === 0 ? '' : `
+      <div style="margin-bottom:20px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+        <div style="background:#f8fafc;border-bottom:2px solid #e2e8f0;padding:12px 16px;display:flex;align-items:center;gap:10px;">
+          <div style="width:36px;height:36px;border-radius:50%;background:#94a3b8;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;flex-shrink:0;">?</div>
+          <div>
+            <div style="font-size:14px;font-weight:700;color:#475569;">Unassigned Members</div>
+            <div style="font-size:12px;color:#94a3b8;">${unassigned.length} member${unassigned.length !== 1 ? 's' : ''} without a sales manager</div>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="table rpt-team-table" style="margin:0;min-width:580px;">
+            <thead>${TABLE_HEADERS}</thead>
+            <tbody>${unassigned.map(m => personRow(m, false, '#94a3b8')).join('')}</tbody>
+          </table>
+        </div>
+      </div>`
+    return gHtml + uHtml
+  }
+
   if (myId !== _reportsRenderId) return
   var reportContainer = document.getElementById('reportContainer')
   if (!reportContainer) return
@@ -550,24 +567,111 @@ async function renderReports(dateFrom = '', dateTo = '', projectFilter = '') {
     <div class="card" style="margin:0;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
         <h3 class="analytics-section-title" style="margin:0;">Team Performance</h3>
-        <button onclick="downloadLeadReport()" class="sm-btn sm-btn-secondary" style="font-size:12px;padding:6px 14px;">⬇ Download Report</button>
+        <div class="dash-filters" style="flex-wrap:wrap;box-shadow:none;border-color:#f1f5f9;padding:8px 12px;gap:8px;">
+          <div class="dash-filter-group">
+            <select id="teamRangePreset" class="dash-filter-ctl">
+              <option value="">All Time</option>
+              <option value="today">Today</option>
+              <option value="this_week">This Week</option>
+              <option value="this_month">This Month</option>
+              <option value="last_30_days">Last 30 Days</option>
+              <option value="last_month">Last Month</option>
+              <option value="custom">Custom Date</option>
+            </select>
+          </div>
+          <div id="teamCustomRange" style="display:none;gap:8px;align-items:center;">
+            <div class="dash-filter-group">
+              <input type="date" id="teamDateFrom" class="dash-filter-ctl" />
+            </div>
+            <span style="color:#94a3b8;font-size:12px;">→</span>
+            <div class="dash-filter-group">
+              <input type="date" id="teamDateTo" class="dash-filter-ctl" />
+            </div>
+          </div>
+          <div class="dash-filter-group">
+            <select id="teamProject" class="dash-filter-ctl" style="min-width:130px;">
+              <option value="">All Projects</option>
+              ${(typeof projects !== 'undefined' ? projects : []).map(p => `<option value="${p.id}">${escape(p.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="dash-filter-group">
+            <button id="applyTeamFilter" class="dash-refresh-btn">↻ Apply</button>
+          </div>
+          <div class="dash-filter-group">
+            <button id="downloadTeamReport" class="dash-refresh-btn" style="background:#0f172a;border-color:#0f172a;">⬇ Download</button>
+          </div>
+        </div>
       </div>
-      <div>
-        ${teamGroupsHTML}
-        ${unassignedHTML}
+      <div id="teamPerfContent">
+        ${_buildTeamHTML(teamGroups, unassignedMembers)}
       </div>
     </div>
   `
+
+  // ── Team filter event listeners ───────────────────────────────────────────
+  document.getElementById('teamRangePreset').addEventListener('change', e => {
+    const key = e.target.value
+    const cr = document.getElementById('teamCustomRange')
+    if (key === 'custom') {
+      cr.style.display = 'flex'
+    } else {
+      cr.style.display = 'none'
+      if (key) {
+        const range = _formatRangeFromPreset(key)
+        document.getElementById('teamDateFrom').value = range.from
+        document.getElementById('teamDateTo').value = range.to
+      } else {
+        document.getElementById('teamDateFrom').value = ''
+        document.getElementById('teamDateTo').value = ''
+      }
+    }
+  })
+
+  document.getElementById('applyTeamFilter').addEventListener('click', async () => {
+    const tFrom = document.getElementById('teamDateFrom')?.value || ''
+    const tTo   = document.getElementById('teamDateTo')?.value || ''
+    const tProj = document.getElementById('teamProject')?.value || ''
+    const tParams = new URLSearchParams()
+    if (tFrom) tParams.set('date_from', tFrom)
+    if (tTo)   tParams.set('date_to', tTo)
+    if (tProj) tParams.set('project_id', tProj)
+    const tQs = tParams.toString() ? '?' + tParams.toString() : ''
+    const teamContent = document.getElementById('teamPerfContent')
+    if (teamContent) teamContent.innerHTML = '<div style="padding:24px;text-align:center;color:#94a3b8;font-size:13px;">Loading…</div>'
+    try {
+      const tRes = await fetch(`${API_BASE}/reports/team${tQs}`, { headers: _apiAuthHeaders() })
+      const tData = await tRes.json()
+      if (teamContent) teamContent.innerHTML = _buildTeamHTML(tData.team_groups || [], tData.unassigned_members || [])
+    } catch (err) {
+      if (teamContent) teamContent.innerHTML = '<div style="padding:12px;color:#ef4444;">Failed to load team data</div>'
+    }
+  })
+
+  document.getElementById('downloadTeamReport').addEventListener('click', async () => {
+    const tFrom = document.getElementById('teamDateFrom')?.value || ''
+    const tTo   = document.getElementById('teamDateTo')?.value || ''
+    const p = new URLSearchParams()
+    if (tFrom) p.set('date_from', tFrom)
+    if (tTo)   p.set('date_to', tTo)
+    const qs = p.toString() ? '?' + p.toString() : ''
+    const res = await fetch(`${API_BASE}/reports/management/download${qs}`, { headers: _apiAuthHeaders() })
+    if (!res.ok) { showToast('Export failed', 'error'); return }
+    const blob = await res.blob()
+    const url  = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'team_report.xlsx'
+    a.click()
+    URL.revokeObjectURL(url)
+  })
 }
 
 async function downloadLeadReport() {
   const params = new URLSearchParams()
   const from = document.getElementById('reportDateFrom')?.value || ''
   const to = document.getElementById('reportDateTo')?.value || ''
-  const range = document.getElementById('reportTeamRange')?.value || ''
   if (from) params.set('date_from', from)
   if (to) params.set('date_to', to)
-  if (range) params.set('range', range)
   const qs = params.toString() ? '?' + params.toString() : ''
   const a = document.createElement('a')
   const res = await fetch(`${API_BASE}/reports/management/download${qs}`, {
