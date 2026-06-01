@@ -1160,9 +1160,9 @@ async function openLeadCallbackScheduler(leadId) {
   var pending = (callbackPayload.callbacks || []).find(function (c) { return c.status === 'pending' }) || null
   var defaultValue = ''
   if (pending && pending.callback_datetime) {
-    var d = new Date(pending.callback_datetime)
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
-    defaultValue = d.toISOString().slice(0, 16)
+    // callback_datetime is returned as IST ISO string (e.g. "2026-06-01T15:40:00+05:30")
+    // slicing to 16 chars gives the local IST value for datetime-local input
+    defaultValue = pending.callback_datetime.slice(0, 16)
   }
 
   const overlay = document.createElement('div')
