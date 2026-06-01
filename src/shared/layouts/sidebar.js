@@ -198,6 +198,12 @@ function getNavItems() {
   if (user.role === 'superadmin' && isTenantFeatureEnabled('activity_logs')) {
     items.push({ key: 'activitylogs', label: '📋 Activity Logs' })
   }
+  if (user.role === 'sales_manager') {
+    items.push({ key: 'activitylogs', label: '📋 Activity Logs' })
+  }
+  if (user.role === 'team_member') {
+    items.push({ key: 'activitylogs', label: '📋 My Activity' })
+  }
   if ((user.role === 'superadmin' || user.role === 'sales_manager') && isTenantFeatureEnabled('reports')) {
     items.push({ key: 'reports', label: '📊 Reports' })
   }
