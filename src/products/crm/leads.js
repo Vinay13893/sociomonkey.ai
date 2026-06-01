@@ -684,20 +684,21 @@ async function filterAndRenderLeads(resetPage = true) {
     <div class="leads-table-wrap">
       <table class="table leads-table">
         <colgroup>
-          <col style="width:36px;">
-          <col style="width:190px;">
-          <col style="width:110px;">
-          <col style="width:86px;">
+          <col style="width:32px;">
+          <col style="width:28px;">
+          <col style="width:160px;">
+          <col style="width:108px;">
+          <col style="width:72px;">
+          <col style="width:100px;">
+          <col style="width:130px;">
           <col style="width:120px;">
-          <col style="width:150px;">
-          <col style="width:120px;">
-          <col style="width:210px;">
-          <col style="width:170px;">
+          <col style="width:160px;">
+          <col style="width:130px;">
         </colgroup>
         <thead>
           <tr>
-            <th style="width:36px;color:#94a3b8;font-size:11px;">#</th>
-            <th style="width:36px;"><input type="checkbox" id="selectAllLeads" ${allChecked ? 'checked' : ''} onchange="toggleSelectAllLeads(this.checked)" style="cursor:pointer;width:16px;height:16px;"></th>
+            <th style="width:32px;"><input type="checkbox" id="selectAllLeads" ${allChecked ? 'checked' : ''} onchange="toggleSelectAllLeads(this.checked)" style="cursor:pointer;width:14px;height:14px;"></th>
+            <th style="width:28px;color:#94a3b8;font-size:10px;">#</th>
             <th class="ta-center">Name</th>
             <th class="ta-center">Phone</th>
             <th class="ta-center">Source</th>
@@ -711,25 +712,25 @@ async function filterAndRenderLeads(resetPage = true) {
         <tbody>
           ${paginated.map((l, i) => `
             <tr class="${selectedLeads.has(l.id) ? 'lead-row-selected' : ''}">
-              <td class="ta-center" data-label="#" style="color:#94a3b8;font-size:11px;font-weight:700;">${pageStart + i + 1}</td>
-              <td data-label="Select"><input type="checkbox" class="lead-checkbox" data-id="${l.id}" ${selectedLeads.has(l.id) ? 'checked' : ''} onchange="toggleSelectLead(${l.id}, this.checked)" style="cursor:pointer;width:16px;height:16px;"></td>
-              <td class="ta-center" data-label="Name">
+              <td data-label="Select" style="padding:0 4px;"><input type="checkbox" class="lead-checkbox" data-id="${l.id}" ${selectedLeads.has(l.id) ? 'checked' : ''} onchange="toggleSelectLead(${l.id}, this.checked)" style="cursor:pointer;width:14px;height:14px;"></td>
+              <td class="ta-center" data-label="#" style="color:#94a3b8;font-size:10px;font-weight:700;padding:0 2px;">${pageStart + i + 1}</td>
+              <td class="ta-center" data-label="Name" style="padding:6px 4px;">
                 <button class="lead-name-link" onclick="viewLeadDetails(${l.id})"
                   title="Open lead details"
-                  style="background:none;border:none;padding:0;font-size:12px;font-weight:700;color:#1e40af;cursor:pointer;text-decoration:none;transition:color .15s;display:block;margin:0 auto;"
+                  style="background:none;border:none;padding:0;font-size:11px;font-weight:700;color:#1e40af;cursor:pointer;text-decoration:none;transition:color .15s;display:block;margin:0 auto;"
                   onmouseover="this.style.color='#1d4ed8';this.style.textDecorationColor='#1d4ed8'"
                   onmouseout="this.style.color='#1e40af';this.style.textDecorationColor='rgba(30,64,175,.35)'"
                   >${escape(l.name)}</button>
                 <span class="leads-name-sub">${_leadAgeOldLabel(l.created_at)}</span>
               </td>
-              <td class="ta-center" data-label="Phone">
+              <td class="ta-center" data-label="Phone" style="padding:6px 4px;">
                 <button class="leads-phone-link" onclick='_abStartCallFlow(${l.id}, ${JSON.stringify(l.phone || '')}, ${JSON.stringify(l.name || 'Lead')})' title="Call lead">${escape(l.phone || '—')}</button>
               </td>
-              <td class="ta-center" data-label="Source"><span class="leads-source-badge">${escape(_sourceBadgeLabel(l.source))}</span></td>
-              <td class="ta-center" data-label="Project">${escape(projectMap[l.project_id] || '-')}</td>
-              <td class="ta-center" data-label="Status">${buildStatusControl(l)}</td>
-              <td class="ta-center" data-label="Manager"><span class="leads-cell-text leads-cell-text-center">${escape(l.sales_manager_name || '—')}</span></td>
-              <td class="ta-center leads-note-col" data-label="Latest Note">
+              <td class="ta-center" data-label="Source" style="padding:6px 3px;"><span class="leads-source-badge">${escape(_sourceBadgeLabel(l.source))}</span></td>
+              <td class="ta-center" data-label="Project" style="font-size:11px;padding:6px 4px;">${escape(projectMap[l.project_id] || '-')}</td>
+              <td class="ta-center" data-label="Status" style="padding:6px 3px;">${buildStatusControl(l)}</td>
+              <td class="ta-center" data-label="Manager" style="font-size:11px;padding:6px 4px;"><span class="leads-cell-text leads-cell-text-center">${escape(l.sales_manager_name || '—')}</span></td>
+              <td class="ta-center leads-note-col" data-label="Latest Note" style="padding:6px 4px;">
                 <div class="leads-note-cell">
                   ${l.latest_note
                     ? `<span title="${escape(l.latest_note)}" class="leads-note-preview">${escape(l.latest_note)}</span>`

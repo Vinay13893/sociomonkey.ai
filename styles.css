@@ -995,8 +995,8 @@ a:focus-visible {
 
 .leads-table th,
 .leads-table td {
-  padding: 10px 8px;
-  font-size: 12px;
+  padding: 7px 5px;
+  font-size: 11px;
   vertical-align: middle;
   text-align: center;
 }
@@ -1006,14 +1006,14 @@ a:focus-visible {
   top: 0;
   z-index: 2;
   background: #f8fafc;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
   color: #64748b;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   white-space: nowrap;
-  padding-top: 13px;
-  padding-bottom: 13px;
+  padding-top: 10px;
+  padding-bottom: 10px;
   border-bottom: 1px solid #e2e8f0;
 }
 
@@ -1046,7 +1046,7 @@ a:focus-visible {
   border: none;
   background: transparent;
   color: #0f4c81;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
   text-decoration: underline;
@@ -1057,12 +1057,12 @@ a:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 46px;
-  padding: 2px 8px;
+  min-width: 36px;
+  padding: 2px 5px;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
   background: #f8fafc;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   color: #334155;
 }
@@ -1108,7 +1108,7 @@ a:focus-visible {
 }
 
 .leads-note-col {
-  width: 220px;
+  width: 170px;
 }
 
 .leads-note-cell {
@@ -1121,11 +1121,11 @@ a:focus-visible {
 
 .leads-note-preview {
   display: inline-block;
-  max-width: 150px;
+  max-width: 120px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.25;
   color: #475569;
   cursor: help;
@@ -1169,7 +1169,7 @@ a:focus-visible {
 }
 
 .leads-actions-col {
-  width: 170px;
+  width: 128px;
 }
 
 .leads-actions-cell {
@@ -1184,16 +1184,16 @@ a:focus-visible {
 }
 
 .leads-row-action-btn {
-  height: 28px;
-  padding: 0 8px;
-  font-size: 11px;
+  height: 26px;
+  padding: 0 5px;
+  font-size: 10px;
 }
 
 .leads-row-icon-btn {
-  width: 29px;
-  min-width: 29px;
+  width: 26px;
+  min-width: 26px;
   padding: 0;
-  border-radius: 7px;
+  border-radius: 6px;
 }
 
 .leads-row-action-icon {
