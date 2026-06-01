@@ -1603,7 +1603,8 @@ def complete_callback(callback_id):
     if not closure_note:
         return jsonify({'error': 'closure_note is required to close a callback'}), 400
 
-    closed_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    from app.utils.time_utils import now_ist
+    closed_at = now_ist().strftime('%d %b %Y %H:%M IST')
     actor = user.name or user.email or f'User {user.id}'
     closure_entry = f'[COMPLETED by {actor} at {closed_at}] {closure_note}'
     cb.notes = f'{cb.notes}\n{closure_entry}'.strip() if cb.notes else closure_entry
@@ -1684,7 +1685,8 @@ def delete_callback(callback_id):
         if not closure_note:
             return jsonify({'error': 'closure_note is required to cancel a pending callback'}), 400
 
-        closed_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        from app.utils.time_utils import now_ist
+        closed_at = now_ist().strftime('%d %b %Y %H:%M IST')
         actor = user.name or user.email or f'User {user.id}'
         closure_entry = f'[CANCELLED by {actor} at {closed_at}] {closure_note}'
         cb.notes = f'{cb.notes}\n{closure_entry}'.strip() if cb.notes else closure_entry
