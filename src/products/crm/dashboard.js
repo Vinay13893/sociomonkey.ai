@@ -105,9 +105,9 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
         <div class="dash-filters">
           <div class="dash-filter-group">
             <select id="dashRangeFilter" class="dash-filter-ctl">
-              <option value="">All Time</option>
+              <option value="" selected>All Time</option>
               <option value="today">Today</option>
-              <option value="this_week" selected>This Week</option>
+              <option value="this_week">This Week</option>
               <option value="this_month">This Month</option>
               <option value="last_30_days">Last 30 Days</option>
               <option value="custom">Custom Date</option>
@@ -173,7 +173,7 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
     const rangeSel   = document.getElementById('dashRangeFilter')
 
   // ── Stats: stale-while-revalidate — show cached data instantly, refresh in background ──
-    var _statsKey = '_ds_' + (platformTenantSlug || 'def') + '_week'
+    var _statsKey = '_ds_' + (platformTenantSlug || 'def') + '_all'
     var _cachedStats = null
     try {
       var _sc = sessionStorage.getItem(_statsKey)
@@ -184,11 +184,11 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
     if (!_statsPromise) {
     _PERF.mark('stats-api')
     _dashboardPerfTrace = (typeof _perfStartRequest === 'function')
-      ? _perfStartRequest('dashboard_stats', '/leads/dashboard/stats?range=this_week', 'GET')
+      ? _perfStartRequest('dashboard_stats', '/leads/dashboard/stats', 'GET')
       : null
     if (typeof _perfMarkSent === 'function') _perfMarkSent(_dashboardPerfTrace)
     _statsPromise = _dashboardFetchJsonWithTimeout(
-      API_BASE + '/leads/dashboard/stats?range=this_week',
+      API_BASE + '/leads/dashboard/stats',
       { headers: _apiAuthHeaders() },
       15000
     ).then(function(r) {
@@ -206,7 +206,7 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
        if (typeof _perfLog === 'function') {
          _perfLog('dashboard_stats', 'request_error', {
            traceId: _dashboardPerfTrace && _dashboardPerfTrace.id,
-           path: '/leads/dashboard/stats?range=this_week',
+           path: '/leads/dashboard/stats',
            method: 'GET',
          })
        }
@@ -507,7 +507,7 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
         if (typeof _perfReadResponse === 'function') _perfReadResponse(requestTrace, res)
         if (!res.ok) throw new Error('Dashboard API failed with status ' + res.status)
         data = await res.json()
-        if (!projectVal && (rangeVal === 'this_week' || !rangeVal)) {
+        if (!projectVal && !rangeVal) {
           try { sessionStorage.setItem(_statsKey, JSON.stringify(data)) } catch (_e) {}
         }
       } catch (err) {
