@@ -48,8 +48,17 @@ function _renderBell() {
   wrapper.innerHTML = `
     <div class="notif-bell-container">
       <button id="notifBellBtn" class="notif-bell-btn" aria-label="Notifications" title="Notifications">
-        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" stroke="none">
-          <path d="M12 2a7 7 0 0 0-7 7c0 4.1-1.8 6.3-2.7 7.3-.3.4-.3.9 0 1.3.3.3.7.4 1.1.4h5.1a2.5 2.5 0 0 0 4.9 0H18.6c.4 0 .8-.1 1.1-.4.3-.4.3-.9 0-1.3C18.8 15.3 17 13.1 17 9a7 7 0 0 0-5-6.7V2z"/>
+        <svg viewBox="0 0 32 34" width="26" height="26" xmlns="http://www.w3.org/2000/svg">
+          <!-- Bell body: red -->
+          <path d="M16 3 C10.5 3 6 7.5 6 13 C6 19.5 3 22 2.5 23 L29.5 23 C29 22 26 19.5 26 13 C26 7.5 21.5 3 16 3 Z" fill="#ef4444" stroke="#1e1b4b" stroke-width="1.6" stroke-linejoin="round"/>
+          <!-- Shine on bell -->
+          <path d="M9.5 9.5 Q10.5 7 13 6" fill="none" stroke="rgba(255,255,255,0.65)" stroke-width="1.6" stroke-linecap="round"/>
+          <!-- Bell rim: yellow-orange -->
+          <rect x="2" y="22.2" width="28" height="3" rx="1.5" fill="#fbbf24" stroke="#1e1b4b" stroke-width="1.4"/>
+          <!-- Clapper: yellow -->
+          <circle cx="16" cy="28.5" r="2.2" fill="#fbbf24" stroke="#1e1b4b" stroke-width="1.4"/>
+          <!-- Hook at top -->
+          <path d="M14.2 3.5 Q16 1.5 17.8 3.5" fill="none" stroke="#1e1b4b" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
         ${badgeHTML}
       </button>
