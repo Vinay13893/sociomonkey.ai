@@ -72,9 +72,10 @@ def _period_metrics(user, start_dt: datetime, end_dt: datetime):
             'leads_added': 0,
             'calls_done': 0,
             'follow_ups': 0,
+            'lost': 0,
             'site_visits': 0,
+            'negotiations': 0,
             'closures': 0,
-            'conversion_pct': 0,
         }
 
     leads_added = Lead.query.filter(
@@ -83,25 +84,40 @@ def _period_metrics(user, start_dt: datetime, end_dt: datetime):
         Lead.created_at < end_dt,
     ).count()
 
-    calls_done = ActivityLog.query.filter(
+    # Unique leads that had at least one call in the period
+    calls_done = db.session.query(ActivityLog.resource_id).filter(
         ActivityLog.module == 'leads',
         ActivityLog.resource_id.in_(visible_ids),
         ActivityLog.action.like('call_%'),
         ActivityLog.action != 'call_initiated',
         ActivityLog.created_at >= start_dt,
         ActivityLog.created_at < end_dt,
-    ).count()
+    ).distinct().count()
 
     follow_ups = StatusHistory.query.join(Lead, Lead.id == StatusHistory.lead_id).filter(
         Lead.id.in_(visible_ids),
-        StatusHistory.new_status == 'follow_up',
+        StatusHistory.new_status.in_(['follow_up', 'callback_scheduled', 'interested', 'site_visit_planned']),
+        StatusHistory.changed_at >= start_dt,
+        StatusHistory.changed_at < end_dt,
+    ).count()
+
+    lost = StatusHistory.query.join(Lead, Lead.id == StatusHistory.lead_id).filter(
+        Lead.id.in_(visible_ids),
+        StatusHistory.new_status.in_(['not_interested', 'lost', 'junk']),
         StatusHistory.changed_at >= start_dt,
         StatusHistory.changed_at < end_dt,
     ).count()
 
     site_visits = StatusHistory.query.join(Lead, Lead.id == StatusHistory.lead_id).filter(
         Lead.id.in_(visible_ids),
-        StatusHistory.new_status.in_(['site_visit_planned', 'site_visit_done']),
+        StatusHistory.new_status == 'site_visit_done',
+        StatusHistory.changed_at >= start_dt,
+        StatusHistory.changed_at < end_dt,
+    ).count()
+
+    negotiations = StatusHistory.query.join(Lead, Lead.id == StatusHistory.lead_id).filter(
+        Lead.id.in_(visible_ids),
+        StatusHistory.new_status == 'negotiation',
         StatusHistory.changed_at >= start_dt,
         StatusHistory.changed_at < end_dt,
     ).count()
@@ -113,14 +129,14 @@ def _period_metrics(user, start_dt: datetime, end_dt: datetime):
         StatusHistory.changed_at < end_dt,
     ).count()
 
-    conversion_pct = round((closures / leads_added) * 100, 2) if leads_added else 0
     return {
         'leads_added': leads_added,
         'calls_done': calls_done,
         'follow_ups': follow_ups,
+        'lost': lost,
         'site_visits': site_visits,
+        'negotiations': negotiations,
         'closures': closures,
-        'conversion_pct': conversion_pct,
     }
 
 
@@ -546,14 +562,14 @@ def download_management_report():
         }
 
     wb = openpyxl.Workbook()
-    ws_team = wb.active
-    ws_team.title = 'Team Performance'
-    ws_mgr = wb.create_sheet('Manager Performance')
-    ws_status = wb.create_sheet('Lead Status Breakdown')
-    ws_conv = wb.create_sheet('Conversion Metrics')
+    ws_combined = wb.active
+    ws_combined.title = 'Manager & Team Performance'
+    ws_mgr_summary = wb.create_sheet('Manager Summary')
 
     header_fill = PatternFill('solid', fgColor='1E3A5F')
     header_font = Font(color='FFFFFF', bold=True, size=11)
+    manager_fill_colors = ['E8EAF6', 'E3F2FD', 'E8F5E9', 'FFF8E1', 'FCE4EC', 'EDE7F6', 'E0F7FA']
+    total_fill = PatternFill('solid', fgColor='F1F5F9')
 
     def _write_sheet_header(ws, title, headers):
         ws['A1'] = title
@@ -569,89 +585,106 @@ def download_management_report():
             c.alignment = Alignment(horizontal='center', vertical='center')
         return head_row + 1
 
-    # Team sheet
-    team_headers = ['Name', 'Role', 'Total Leads', 'Interested', 'Site Visit Planned', 'Site Visit Done', 'Negotiation', 'Closures', 'Conversion %']
-    r = _write_sheet_header(ws_team, 'Team Performance', team_headers)
-    for tm in team_users:
-        s = _row_stats(leads_by_assignee.get(tm.id, []))
-        values = [tm.name, 'team_member', s['total'], s['interested'], s['site_visit_planned'], s['site_visit_done'], s['negotiation'], s['closures'], s['conversion_pct']]
-        for i, v in enumerate(values, 1):
-            ws_team.cell(row=r, column=i, value=v)
-        r += 1
+    perf_headers = ['Name', 'Role', 'All Leads', 'Interested', 'Site Visit Planned',
+                    'Site Visit Done', 'Negotiation', 'Booking Done', 'Warm Leads', 'Hot Leads']
 
-    # Manager sheet (manager own + team members)
-    mgr_headers = ['Manager', 'Total Leads', 'Interested', 'Site Visit Planned', 'Site Visit Done', 'Negotiation', 'Closures', 'Conversion %']
-    r = _write_sheet_header(ws_mgr, 'Manager Performance', mgr_headers)
-    for mgr in manager_users:
+    # ── Sheet 1: Manager & Team combined (like the panel) ──────────────────
+    r = _write_sheet_header(ws_combined, 'Manager & Team Performance', perf_headers)
+
+    for color_idx, mgr in enumerate(manager_users):
         mgr_leads = list(leads_by_assignee.get(mgr.id, []))
-        member_ids = [u.id for u in team_users if u.manager_id == mgr.id]
-        for uid in member_ids:
+        member_ids_for_mgr = [u.id for u in team_users if u.manager_id == mgr.id]
+        for uid in member_ids_for_mgr:
             mgr_leads.extend(leads_by_assignee.get(uid, []))
-        s = _row_stats(mgr_leads)
-        values = [mgr.name, s['total'], s['interested'], s['site_visit_planned'], s['site_visit_done'], s['negotiation'], s['closures'], s['conversion_pct']]
-        for i, v in enumerate(values, 1):
-            ws_mgr.cell(row=r, column=i, value=v)
+
+        mgr_fill = PatternFill('solid', fgColor=manager_fill_colors[color_idx % len(manager_fill_colors)])
+        mgr_font = Font(bold=True, size=11)
+
+        # Manager row
+        ms = _row_stats(list(leads_by_assignee.get(mgr.id, [])))
+        warm_m = ms['interested'] + ms['site_visit_planned']
+        hot_m = ms['site_visit_done'] + ms['negotiation']
+        row_vals = [f'⭐ {mgr.name}', 'Sales Manager', ms['total'], ms['interested'],
+                    ms['site_visit_planned'], ms['site_visit_done'], ms['negotiation'],
+                    ms['closures'], warm_m, hot_m]
+        for col, v in enumerate(row_vals, 1):
+            c = ws_combined.cell(row=r, column=col, value=v)
+            c.fill = mgr_fill
+            c.font = mgr_font
+            c.alignment = Alignment(vertical='center')
         r += 1
 
-    # Status breakdown sheet
-    status_headers = ['Status', 'Count', 'Percent']
-    r = _write_sheet_header(ws_status, 'Lead Status Breakdown', status_headers)
-    status_counts = {}
-    for lead in leads:
-        key = lead.status or 'unknown'
-        status_counts[key] = status_counts.get(key, 0) + 1
-    total = len(leads)
-    for status, count in sorted(status_counts.items(), key=lambda item: item[0]):
-        pct = round((count / total) * 100, 2) if total else 0
-        ws_status.cell(row=r, column=1, value=status)
-        ws_status.cell(row=r, column=2, value=count)
-        ws_status.cell(row=r, column=3, value=pct)
-        r += 1
+        # Team member rows
+        for tm in [u for u in team_users if u.manager_id == mgr.id]:
+            ts = _row_stats(leads_by_assignee.get(tm.id, []))
+            warm_t = ts['interested'] + ts['site_visit_planned']
+            hot_t = ts['site_visit_done'] + ts['negotiation']
+            row_vals = [f'  ↳ {tm.name}', 'Team Member', ts['total'], ts['interested'],
+                        ts['site_visit_planned'], ts['site_visit_done'], ts['negotiation'],
+                        ts['closures'], warm_t, hot_t]
+            for col, v in enumerate(row_vals, 1):
+                ws_combined.cell(row=r, column=col, value=v)
+            r += 1
 
-    # Conversion sheet (includes WoW and MoM)
-    conv_headers = ['Metric', 'Value']
-    r = _write_sheet_header(ws_conv, 'Conversion Metrics', conv_headers)
-    stats = _row_stats(leads)
-    base_rows = [
-        ('Total Leads', stats['total']),
-        ('Interested', stats['interested']),
-        ('Site Visit Planned', stats['site_visit_planned']),
-        ('Site Visit Done', stats['site_visit_done']),
-        ('Negotiation', stats['negotiation']),
-        ('Closures', stats['closures']),
-        ('Conversion %', stats['conversion_pct']),
-    ]
-    for key, val in base_rows:
-        ws_conv.cell(row=r, column=1, value=key)
-        ws_conv.cell(row=r, column=2, value=val)
+        # Team Total row
+        ts_agg = _row_stats(mgr_leads)
+        warm_agg = ts_agg['interested'] + ts_agg['site_visit_planned']
+        hot_agg = ts_agg['site_visit_done'] + ts_agg['negotiation']
+        total_vals = ['∑ Team Total', '', ts_agg['total'], ts_agg['interested'],
+                      ts_agg['site_visit_planned'], ts_agg['site_visit_done'], ts_agg['negotiation'],
+                      ts_agg['closures'], warm_agg, hot_agg]
+        for col, v in enumerate(total_vals, 1):
+            c = ws_combined.cell(row=r, column=col, value=v)
+            c.fill = total_fill
+            c.font = Font(bold=True)
         r += 1
+        r += 1  # blank row between groups
 
-    comparison = _build_comparison_payload(user)
-    r += 1
-    ws_conv.cell(row=r, column=1, value='Week-on-Week (This Week vs Last Week)').font = Font(bold=True)
-    r += 1
-    for metric in ['leads_added', 'calls_done', 'follow_ups', 'site_visits', 'closures', 'conversion_pct']:
-        ws_conv.cell(row=r, column=1, value=f'{metric} (This Week)')
-        ws_conv.cell(row=r, column=2, value=comparison['week']['current'][metric])
-        r += 1
-        ws_conv.cell(row=r, column=1, value=f'{metric} (Last Week)')
-        ws_conv.cell(row=r, column=2, value=comparison['week']['previous'][metric])
-        r += 1
+    # Unassigned members
+    unassigned_tms = [u for u in team_users if not any(u.manager_id == mgr.id for mgr in manager_users)]
+    if unassigned_tms:
+        for tm in unassigned_tms:
+            ts = _row_stats(leads_by_assignee.get(tm.id, []))
+            warm_t = ts['interested'] + ts['site_visit_planned']
+            hot_t = ts['site_visit_done'] + ts['negotiation']
+            row_vals = [f'  ↳ {tm.name}', 'Unassigned', ts['total'], ts['interested'],
+                        ts['site_visit_planned'], ts['site_visit_done'], ts['negotiation'],
+                        ts['closures'], warm_t, hot_t]
+            for col, v in enumerate(row_vals, 1):
+                ws_combined.cell(row=r, column=col, value=v)
+            r += 1
 
-    r += 1
-    ws_conv.cell(row=r, column=1, value='Month-on-Month (This Month vs Last Month)').font = Font(bold=True)
-    r += 1
-    for metric in ['leads_added', 'calls_done', 'follow_ups', 'site_visits', 'closures', 'conversion_pct']:
-        ws_conv.cell(row=r, column=1, value=f'{metric} (This Month)')
-        ws_conv.cell(row=r, column=2, value=comparison['month']['current'][metric])
-        r += 1
-        ws_conv.cell(row=r, column=1, value=f'{metric} (Last Month)')
-        ws_conv.cell(row=r, column=2, value=comparison['month']['previous'][metric])
-        r += 1
+    # ── Sheet 2: Manager Summary ───────────────────────────────────────────
+    sum_headers = ['Manager', 'Team Members', 'All Leads', 'Interested', 'Site Visit Planned',
+                   'Site Visit Done', 'Negotiation', 'Booking Done', 'Warm Leads', 'Hot Leads', 'Warm Rate %', 'Hot Rate %']
+    r2 = _write_sheet_header(ws_mgr_summary, 'Manager Summary', sum_headers)
 
-    for ws in [ws_team, ws_mgr, ws_status, ws_conv]:
-        for col in range(1, 10):
-            ws.column_dimensions[get_column_letter(col)].width = 24
+    for color_idx, mgr in enumerate(manager_users):
+        all_mgr_leads = list(leads_by_assignee.get(mgr.id, []))
+        member_list = [u for u in team_users if u.manager_id == mgr.id]
+        for uid in [u.id for u in member_list]:
+            all_mgr_leads.extend(leads_by_assignee.get(uid, []))
+        s = _row_stats(all_mgr_leads)
+        warm = s['interested'] + s['site_visit_planned']
+        hot = s['site_visit_done'] + s['negotiation']
+        warm_rate = round((warm / s['total']) * 100, 1) if s['total'] else 0
+        hot_rate = round((hot / s['total']) * 100, 1) if s['total'] else 0
+        vals = [mgr.name, len(member_list), s['total'], s['interested'],
+                s['site_visit_planned'], s['site_visit_done'], s['negotiation'],
+                s['closures'], warm, hot, warm_rate, hot_rate]
+        mgr_fill = PatternFill('solid', fgColor=manager_fill_colors[color_idx % len(manager_fill_colors)])
+        for col, v in enumerate(vals, 1):
+            c = ws_mgr_summary.cell(row=r2, column=col, value=v)
+            c.fill = mgr_fill
+        r2 += 1
+
+    # Column widths
+    for ws in [ws_combined, ws_mgr_summary]:
+        col_widths = [28, 16, 12, 12, 20, 18, 14, 14, 13, 11, 12, 12]
+        for i, w in enumerate(col_widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = 'A6'
+        ws.auto_filter.ref = f'A5:{get_column_letter(len(perf_headers))}5'
 
     buf = BytesIO()
     wb.save(buf)
