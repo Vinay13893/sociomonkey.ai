@@ -386,6 +386,18 @@ async function authExtendSession() {
   }
 }
 
+// ── Authenticated fetch helper ─────────────────────────────────────────────────
+// Wraps the native fetch() with the current session's Authorization header and
+// prepends API_BASE to relative paths (paths starting with '/api').
+async function authFetch(path, options) {
+  var opts = options || {}
+  var headers = Object.assign({}, opts.headers || {}, {
+    'Authorization': 'Bearer ' + token,
+  })
+  var url = (path.indexOf('http') === 0) ? path : API_BASE + path
+  return fetch(url, Object.assign({}, opts, { headers: headers }))
+}
+
 // ── Cross-tab Sync ────────────────────────────────────────────────────────────
 
 window.addEventListener('storage', function (e) {
