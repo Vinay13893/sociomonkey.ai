@@ -200,8 +200,11 @@ function parseRoute() {
   }
 
   // Tenant product paths:  /:slug/:product  (e.g. /ganga/crm  or /ganga/lms)
+  // Guard: reject paths where the first segment is itself a known product name —
+  // e.g. /crm/lead-sources would wrongly treat 'crm' as a tenant slug.
+  const KNOWN_PRODUCTS = new Set(['crm', 'lms', 'procurement', 'wms', 'amazon', 'lead-sources'])
   const m = path.match(/^\/([^\/]+)\/([^\/]+)(?:\/([^\/]+))?$/)
-  if (m && m[1] !== 'products' && m[1] !== 'apps') {
+  if (m && m[1] !== 'products' && m[1] !== 'apps' && !KNOWN_PRODUCTS.has(m[1])) {
     const slug = m[1]
     let product = m[2]
     const tab = authCanonicalTenantTab(m[3] || 'dashboard')

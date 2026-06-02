@@ -33,9 +33,10 @@ var AUTH_TENANT_TAB_ALIASES = Object.freeze({
 })
 
 var AUTH_TENANT_TAB_ROUTE_ALIASES = Object.freeze({
-  'action-board': 'action_board',
+  'action-board':  'action_board',
   'recycle-queue': 'recycle_queue',
   'activity-logs': 'activitylogs',
+  'lead-sources':  'lead_sources',
 })
 
 function authCanonicalTenantSlug(slug) {
