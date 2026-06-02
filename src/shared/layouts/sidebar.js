@@ -207,7 +207,7 @@ function getNavItems() {
   if ((user.role === 'superadmin' || user.role === 'sales_manager') && isTenantFeatureEnabled('reports')) {
     items.push({ key: 'reports', label: '📊 Reports' })
   }
-  if (user.role === 'superadmin') {
+  if (user.role === 'superadmin' || user.role === 'platform_owner') {
     items.push({ key: 'lead_sources', label: '🔗 Lead Sources' })
   }
 

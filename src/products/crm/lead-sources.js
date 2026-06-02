@@ -57,7 +57,7 @@ let _googleWizard = {};
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 function renderLeadSources() {
-    const el = document.getElementById('main-content');
+    const el = document.getElementById('content');
     if (!el) return;
 
     el.innerHTML = `
