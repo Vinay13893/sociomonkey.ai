@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "alias": ["backend-nu-nine-20.vercel.app"],
+  "alias": ["smk-api.vercel.app"],
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
