@@ -540,7 +540,29 @@ def assign_lead(lead_id):
     old_user_name = User.query.get(old_assigned).name if old_assigned else 'Unassigned'
     log_activity(user.id, 'assign_lead', 'leads', lead_id, 'Lead',
                  description=f'Assigned lead {lead.name} from {old_user_name} to {target_user.name}')
-    
+
+    # Notify the newly assigned team member (skip self-assign)
+    if target_user.id != user.id:
+        from app.services.reminder_scheduler import push_notification as _push
+        _push(target_user.id, {
+            'type': 'lead_assigned',
+            'kind': 'info',
+            'title': 'New Lead Assigned',
+            'message': f'📋 Lead "{lead.name}" has been assigned to you by {user.name}.',
+            'lead_id': lead_id,
+            'lead_name': lead.name,
+            'source': 'lead_assignment',
+            'tenant_id': lead.tenant_id,
+        })
+        try:
+            from app.services.notification_events import enqueue_lead_reassigned
+            from app.services.notification_processor import process_notification_queue
+            enqueue_lead_reassigned(target_user, lead)
+            db.session.commit()
+            process_notification_queue(batch_size=50)
+        except Exception:
+            db.session.rollback()
+
     return jsonify({'lead': lead.to_dict(), 'assignment': assignment.to_dict()}), 200
 
 @bp.route('/leads/<int:lead_id>/status-history', methods=['GET'])

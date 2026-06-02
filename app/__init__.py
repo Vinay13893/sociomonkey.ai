@@ -195,6 +195,11 @@ def create_app(config_name: str = None) -> Flask:
     from app.routes.tenants import tenants_bp
     from app.routes.public import public_bp
     from app.routes.provisioning import provisioning_bp
+    from app.routes.push import push_bp
+    from app.routes.cron import cron_bp
+    from app.routes.whatsapp import whatsapp_bp
+    from app.routes.ingestion import ingestion_bp
+    from app.routes.lead_sources import lead_sources_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(leads_bp)
@@ -206,6 +211,11 @@ def create_app(config_name: str = None) -> Flask:
     app.register_blueprint(tenants_bp)
     app.register_blueprint(public_bp)
     app.register_blueprint(provisioning_bp)
+    app.register_blueprint(push_bp)
+    app.register_blueprint(cron_bp)
+    app.register_blueprint(whatsapp_bp)
+    app.register_blueprint(ingestion_bp)
+    app.register_blueprint(lead_sources_bp)
 
     @app.route('/api/health', methods=['GET'])
     def health_check():
@@ -235,7 +245,13 @@ def create_app(config_name: str = None) -> Flask:
         )
         from app.models.otp import OtpToken  # noqa: F401
         from app.models.tenant import Tenant  # noqa: F401
-        db.create_all()
+        from app.models.whatsapp_template import WhatsAppTemplate  # noqa: F401
+        from app.models.whatsapp_activity import WhatsAppActivity  # noqa: F401
+        from app.models.ingestion import LeadSource, IngestedLeadLog  # noqa: F401
+        try:
+            db.create_all()
+        except Exception as e:
+            app.logger.warning('db.create_all() failed (non-fatal): %s', e)
         try:
             _run_tenant_migration(app)
         except Exception as e:
@@ -277,14 +293,18 @@ def create_app(config_name: str = None) -> Flask:
     from app.routes.leads import process_queued_reshuffle_jobs
 
     def _cron_authorized(req) -> bool:
-        expected = os.environ.get('CRON_SECRET', '').strip()
-        if not expected:
+        # Vercel automatically injects 'x-vercel-cron: 1' on all cron invocations.
+        if req.headers.get('x-vercel-cron') == '1':
+            return True
+        # Strip surrounding quotes that Vercel sometimes serialises for empty string env vars
+        raw = os.environ.get('CRON_SECRET', '').strip().strip('"').strip("'")
+        if not raw:
             return True
         provided_header = (req.headers.get('X-Cron-Secret') or '').strip()
-        if provided_header == expected:
+        if provided_header == raw:
             return True
         authz = (req.headers.get('Authorization') or '').strip()
-        if authz == f'Bearer {expected}':
+        if authz == f'Bearer {raw}':
             return True
         return False
 
@@ -327,6 +347,12 @@ def create_app(config_name: str = None) -> Flask:
         if not _cron_authorized(_req):
             return jsonify({'error': 'Forbidden'}), 403
         process_pending_reminders()
+        # Drain the web push notification queue immediately after enqueuing reminders
+        try:
+            from app.services.notification_processor import process_notification_queue
+            process_notification_queue(batch_size=100)
+        except Exception:
+            pass
         return jsonify({'status': 'ok'}), 200
 
     @app.route('/api/internal/jobs/process', methods=['GET', 'POST'])

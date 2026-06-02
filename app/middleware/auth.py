@@ -35,6 +35,11 @@ def get_auth_user():
         cache['user'] = None
         return None
 
+    # Refresh tokens are NEVER valid for API auth — only for /auth/refresh body.
+    if payload.get('typ') == 'refresh':
+        cache['user'] = None
+        return None
+
     user_id = payload.get('sub')
     if user_id is None:
         cache['user'] = None

@@ -25,10 +25,23 @@ class BaseConfig:
         'pool_recycle': 300,
         'pool_pre_ping': True,
     }
-    JWT_EXPIRY_MINUTES = int(os.getenv('JWT_EXPIRY_MINUTES', 1440))  # 24 hours
+    JWT_EXPIRY_MINUTES         = int(os.getenv('JWT_EXPIRY_MINUTES', 1440))         # 24 hours
+    JWT_REFRESH_EXPIRY_MINUTES = int(os.getenv('JWT_REFRESH_EXPIRY_MINUTES', 43200)) # 30 days
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16 MB upload limit
     CORS_ORIGINS = _parse_cors_origins(os.getenv('CORS_ORIGINS', '*'))
     ENV = os.getenv('APP_ENV', os.getenv('FLASK_ENV', 'development')).lower()
+
+    # VAPID for Web Push (RFC 8292). Generate with: python -m py_vapid
+    # Store VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY as env vars on Vercel.
+    VAPID_PUBLIC_KEY   = os.getenv('VAPID_PUBLIC_KEY', '')
+    VAPID_PRIVATE_KEY  = os.getenv('VAPID_PRIVATE_KEY', '')
+    VAPID_CLAIMS_EMAIL = os.getenv('VAPID_CLAIMS_EMAIL', 'mailto:push@sociomonkey.com')
+
+    # Cron secret — set CRON_SECRET env var on Vercel, add same value to cron job auth.
+    CRON_SECRET = os.getenv('CRON_SECRET', '')
+
+    # Max push attempts before marking a subscription dead and deactivating it.
+    PUSH_MAX_ATTEMPTS = int(os.getenv('PUSH_MAX_ATTEMPTS', 3))
 
 
 def _resolve_db_url(default: str) -> str:

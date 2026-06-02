@@ -316,6 +316,16 @@ def create_lead():
             'source': 'lead_created',
             'tenant_id': lead.tenant_id,
         })
+        try:
+            from app.services.notification_events import enqueue_lead_assigned
+            from app.services.notification_processor import process_notification_queue
+            assigned_user = User.query.get(lead.assigned_to)
+            if assigned_user:
+                enqueue_lead_assigned(assigned_user, lead)
+                db.session.commit()
+                process_notification_queue(batch_size=50)
+        except Exception:
+            db.session.rollback()
 
     return jsonify({'lead': lead.to_dict()}), 201
 
@@ -569,6 +579,35 @@ def bulk_assign():
         user.id, action, 'leads', None, 'Lead',
         description=f'Bulk assigned {updated} leads to {target_name} ({assign_type})',
     )
+
+    # Notify the assignee (member bulk-assign only, skip manager-column assignments and self-assign)
+    if assign_type == 'member' and assigned_to is not None and assigned_to != user.id and updated > 0:
+        target = User.query.get(assigned_to)
+        if target:
+            push_notification(assigned_to, {
+                'type': 'lead_assigned',
+                'kind': 'info',
+                'title': 'New Leads Assigned',
+                'message': f'📋 {updated} lead{"s" if updated != 1 else ""} {"have" if updated != 1 else "has"} been assigned to you by {user.name}.',
+                'source': 'bulk_assignment',
+                'tenant_id': target.tenant_id,
+            })
+            try:
+                from app.services.notification_events import enqueue_lead_assigned
+                from app.services.notification_processor import process_notification_queue
+                # Enqueue one event summarising the bulk assignment (first lead as anchor)
+                first_lead_id = lead_ids[0] if lead_ids else None
+                first_lead = Lead.query.get(first_lead_id) if first_lead_id else None
+                if first_lead:
+                    ev = enqueue_lead_assigned(target, first_lead)
+                    # Override title/body for bulk context
+                    ev.title = 'New Leads Assigned'
+                    ev.body = f'{updated} new lead{"s" if updated != 1 else ""} assigned to you'
+                    db.session.commit()
+                    process_notification_queue(batch_size=50)
+            except Exception:
+                db.session.rollback()
+
     return jsonify({'updated': updated, 'assigned_to_name': target_name}), 200
 
 
@@ -652,6 +691,14 @@ def assign_lead(lead_id):
             'source': 'lead_assignment',
             'tenant_id': lead.tenant_id,
         })
+        try:
+            from app.services.notification_events import enqueue_lead_reassigned
+            from app.services.notification_processor import process_notification_queue
+            enqueue_lead_reassigned(target, lead)
+            db.session.commit()
+            process_notification_queue(batch_size=50)
+        except Exception:
+            db.session.rollback()
 
     return jsonify({'lead': lead.to_dict(), 'assignment': assignment.to_dict()}), 200
 
@@ -1232,7 +1279,7 @@ def ar_unassigned():
             )
         )
     page = max(1, int(request.args.get('page', 1)))
-    per_page = min(50, max(10, int(request.args.get('per_page', 25))))
+    per_page = min(500, max(10, int(request.args.get('per_page', 25))))
     total = q.count()
     leads = q.order_by(Lead.created_at.asc()).offset((page - 1) * per_page).limit(per_page).all()
     assignable = _assignable_users(user)
@@ -1251,7 +1298,7 @@ def ar_stale():
     """Leads not updated in N days."""
     user = request.current_user
     try:
-        days = max(1, min(15, int(request.args.get('days', 5))))
+        days = max(1, min(90, int(request.args.get('days', 5))))
     except (TypeError, ValueError):
         days = 5
     status_filter = request.args.get('status', '').strip()
@@ -1278,7 +1325,7 @@ def ar_stale():
         q = q.filter(Lead.status == status_filter)
 
     page = max(1, int(request.args.get('page', 1)))
-    per_page = min(50, max(10, int(request.args.get('per_page', 25))))
+    per_page = min(500, max(10, int(request.args.get('per_page', 25))))
     total = q.count()
     leads = q.order_by(Lead.updated_at.asc()).offset((page - 1) * per_page).limit(per_page).all()
     assignable = _assignable_users(user)
@@ -1317,12 +1364,12 @@ def ar_workload():
             Lead.assigned_to == m.id,
             Lead.status.notin_(NON_ACTIVE),
         ).count()
-        overdue_cb = CallbackReminder.query.filter(
+        overdue_cb = db.session.query(func.count(func.distinct(CallbackReminder.lead_id))).filter(
             CallbackReminder.tenant_id == user.tenant_id,
             CallbackReminder.assigned_user_id == m.id,
             CallbackReminder.status == 'pending',
             CallbackReminder.callback_datetime < datetime.utcnow(),
-        ).count()
+        ).scalar() or 0
         result.append({
             'id': m.id, 'name': m.name, 'role': m.role,
             'total_leads': total, 'active_leads': active,
@@ -1383,10 +1430,31 @@ def ar_bulk_assign():
         assigned += 1
 
     db.session.commit()
+
+    # Notify assignee
+    if assigned > 0 and target.id != user.id:
+        push_notification(target.id, {
+            'type': 'lead_assigned',
+            'kind': 'info',
+            'title': 'New Leads Assigned',
+            'message': f'📋 {assigned} lead{"s" if assigned != 1 else ""} {"have" if assigned != 1 else "has"} been assigned to you by {user.name}.',
+            'source': 'ar_bulk_assignment',
+            'tenant_id': target.tenant_id,
+        })
+        try:
+            from app.services.notification_events import enqueue_lead_assigned
+            from app.services.notification_processor import process_notification_queue
+            first_lead = Lead.query.filter_by(id=lead_ids[0], tenant_id=user.tenant_id).first() if lead_ids else None
+            if first_lead:
+                ev = enqueue_lead_assigned(target, first_lead)
+                ev.title = 'New Leads Assigned'
+                ev.body = f'{assigned} new lead{"s" if assigned != 1 else ""} assigned to you'
+                db.session.commit()
+                process_notification_queue(batch_size=50)
+        except Exception:
+            db.session.rollback()
+
     return jsonify({'assigned': assigned, 'total_requested': len(lead_ids)}), 200
-
-
-@leads_bp.route('/assign-reassign/workload-move', methods=['POST'])
 @require_role('superadmin', 'sales_manager')
 def ar_workload_move():
     """Move N active leads from one member to another."""
@@ -1395,7 +1463,7 @@ def ar_workload_move():
     from_id = data.get('from_user_id')
     to_id = data.get('to_user_id')
     try:
-        count = max(1, min(100, int(data.get('count', 10))))
+        count = max(1, min(500, int(data.get('count', 10))))
     except (TypeError, ValueError):
         count = 10
 
@@ -1413,12 +1481,17 @@ def ar_workload_move():
             return jsonify({'error': 'Users outside your team'}), 403
 
     NON_ACTIVE = ['lost', 'junk', 'booking_done', 'not_interested']
-    leads = Lead.query.filter(
+    status_filter = (data.get('status_filter') or '').strip()
+    leads_q = Lead.query.filter(
         Lead.tenant_id == user.tenant_id,
         Lead.is_active == True,
         Lead.assigned_to == from_user.id,
-        Lead.status.notin_(NON_ACTIVE),
-    ).order_by(Lead.updated_at.asc()).limit(count).all()
+    )
+    if status_filter:
+        leads_q = leads_q.filter(Lead.status == status_filter)
+    else:
+        leads_q = leads_q.filter(Lead.status.notin_(NON_ACTIVE))
+    leads = leads_q.order_by(Lead.updated_at.asc()).limit(count).all()
 
     moved = 0
     for lead in leads:
@@ -1435,11 +1508,30 @@ def ar_workload_move():
         moved += 1
 
     db.session.commit()
+
+    # Notify the new assignee
+    if moved > 0 and to_user.id != user.id:
+        push_notification(to_user.id, {
+            'type': 'lead_assigned',
+            'kind': 'info',
+            'title': 'Leads Transferred to You',
+            'message': f'📋 {moved} lead{"s" if moved != 1 else ""} from {from_user.name} {"have" if moved != 1 else "has"} been transferred to you by {user.name}.',
+            'source': 'workload_move',
+            'tenant_id': to_user.tenant_id,
+        })
+        try:
+            from app.services.notification_events import enqueue_lead_assigned
+            from app.services.notification_processor import process_notification_queue
+            if leads:
+                ev = enqueue_lead_assigned(to_user, leads[0])
+                ev.title = 'Leads Transferred to You'
+                ev.body = f'{moved} lead{"s" if moved != 1 else ""} transferred from {from_user.name}'
+                db.session.commit()
+                process_notification_queue(batch_size=50)
+        except Exception:
+            db.session.rollback()
+
     return jsonify({'moved': moved}), 200
-
-
-# ---------------------------------------------------------------------------
-# Lead Recycle Queue
 # ---------------------------------------------------------------------------
 
 RECYCLE_STATUSES = [
@@ -1468,7 +1560,7 @@ def recycle_queue():
         page_size = int(request.args.get('page_size', 25))
     except (TypeError, ValueError):
         page_size = 25
-    page_size = max(1, min(200, page_size))
+    page_size = max(1, min(1000, page_size))
     now = datetime.utcnow()
     today_start = datetime(now.year, now.month, now.day)
     tomorrow_start = today_start + timedelta(days=1)
@@ -1583,10 +1675,10 @@ def reshuffle_leads():
 
     if not lead_ids:
         return jsonify({'error': 'lead_ids is required'}), 400
-    if len(lead_ids) > 200:
-        return jsonify({'error': 'Max 200 leads per reshuffle'}), 400
+    if len(lead_ids) > 500:
+        return jsonify({'error': 'Max 500 leads per reshuffle'}), 400
 
-    queued = _runtime_prefers_async_jobs() or len(lead_ids) > 50 or request.args.get('async', '').strip() == '1'
+    queued = len(lead_ids) > 50 or request.args.get('async', '').strip() == '1'
 
     job = LeadReshuffleJob(
         tenant_id=user.tenant_id,

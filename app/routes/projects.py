@@ -184,6 +184,7 @@ def upload_project_asset(project_id):
         file_size=len(payload),
         file_data=payload,
         uploaded_by=user.id,
+        asset_type=request.form.get('asset_type') or None,
     )
     db.session.add(asset)
     db.session.commit()
@@ -233,3 +234,24 @@ def view_project_asset(project_id, asset_id):
         as_attachment=False,
         download_name=asset.file_name,
     )
+
+
+@projects_bp.route('/<int:project_id>/assets/<int:asset_id>', methods=['PATCH'])
+@require_auth
+def patch_project_asset(project_id, asset_id):
+    user = request.current_user
+    tid = request.current_tenant_id
+    project = Project.query.get(project_id)
+    if not _can_access_project(project, tid):
+        return jsonify({'error': 'Project not found'}), 404
+
+    asset = ProjectAsset.query.filter_by(id=asset_id, project_id=project_id, tenant_id=tid).first()
+    if not asset:
+        return jsonify({'error': 'Asset not found'}), 404
+
+    data = request.get_json() or {}
+    if 'asset_type' in data:
+        asset.asset_type = data['asset_type'] or None
+
+    db.session.commit()
+    return jsonify({'asset': asset.to_dict()}), 200

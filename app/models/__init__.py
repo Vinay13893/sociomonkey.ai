@@ -8,6 +8,7 @@ from .lead import Lead, StatusHistory, LeadNote, LeadAssignmentHistory, Callback
 from .activity import ActivityLog
 from .demo_request import DemoRequest
 from .notification import Notification
+from .push import PushSubscription, NotificationEvent
 from .job import ImportJob, ImportJobRow, ExportJob, LeadReshuffleJob
 from .otp import OtpCode, OtpToken
 
@@ -22,6 +23,7 @@ __all__ = [
     'ActivityLog',
     'DemoRequest',
     'Notification',
+    'PushSubscription', 'NotificationEvent',
     'ImportJob', 'ImportJobRow', 'ExportJob', 'LeadReshuffleJob',
     'OtpCode', 'OtpToken',
 ]

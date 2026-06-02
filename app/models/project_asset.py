@@ -15,6 +15,7 @@ class ProjectAsset(db.Model):
     file_data = db.Column(db.LargeBinary, nullable=False)
     uploaded_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    asset_type = db.Column(db.String(50), nullable=True)  # brochure|price_list|floor_plan|payment_plan|location_map|gallery_pdf|custom_pdf
 
     project = db.relationship('Project', backref='assets')
 
@@ -31,6 +32,7 @@ class ProjectAsset(db.Model):
             'file_name': self.file_name,
             'mime_type': self.mime_type,
             'file_size': self.file_size,
+            'asset_type': self.asset_type,
             'uploaded_by': self.uploaded_by,
             'uploaded_by_name': uploader_name,
             'uploaded_at': self.uploaded_at.isoformat() if self.uploaded_at else None,

@@ -9,7 +9,7 @@ from sqlalchemy import func
 from app.middleware import require_auth
 from app.models.base import db
 from app.models.user import User
-from app.utils.jwt import check_password, create_token
+from app.utils.jwt import check_password, create_token, create_refresh_token, decode_token
 from app.utils.activity import log_activity
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
@@ -20,6 +20,7 @@ def login():
     data = request.get_json() or {}
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
+    remember = bool(data.get('remember', False))
 
     if not email or not password:
         return jsonify({'error': 'Invalid credentials'}), 401
@@ -50,10 +51,16 @@ def login():
     from app.models.base import db
     db.session.commit()
 
+    # 30 days for "Keep me signed in", else default 24h
+    # Access token: always short-lived (24h). Refresh token: 30d, issued only
+    # when the user opted in to "Keep me signed in".
     token = create_token(user.id, user.role, tenant_id=user.tenant_id)
+    response = {'token': token, 'user': user.to_dict(), 'products': _get_user_products(user)}
+    if remember:
+        response['refresh_token'] = create_refresh_token(user.id, user.role, tenant_id=user.tenant_id)
     log_activity(user.id, 'login', 'auth', description=f'{user.email} logged in')
 
-    return jsonify({'token': token, 'user': user.to_dict(), 'products': _get_user_products(user)}), 200
+    return jsonify(response), 200
 
 
 @auth_bp.route('/me', methods=['GET'])
@@ -72,12 +79,37 @@ def logout():
 
 
 @auth_bp.route('/refresh', methods=['POST'])
-@require_auth
 def refresh():
-    """Issue a fresh token for the currently authenticated user."""
-    user = request.current_user
-    new_token = create_token(user.id, user.role, tenant_id=user.tenant_id)
-    return jsonify({'token': new_token, 'user': user.to_dict()}), 200
+    """Mint a new short-lived access token from a long-lived refresh token.
+
+    Accepts the refresh token in the JSON body as `refresh_token`. The refresh
+    token is required to carry `typ=refresh` and must not be expired. The user
+    must still exist and be active.
+    """
+    data = request.get_json(silent=True) or {}
+    refresh_token = (data.get('refresh_token') or '').strip()
+    if not refresh_token:
+        return jsonify({'error': 'refresh_token is required'}), 400
+
+    payload = decode_token(refresh_token)
+    if not payload or payload.get('typ') != 'refresh':
+        return jsonify({'error': 'Invalid refresh token'}), 401
+
+    user_id = payload.get('sub')
+    user = User.query.get(user_id) if user_id else None
+    if not user or not user.is_active:
+        return jsonify({'error': 'Account not found or inactive'}), 401
+
+    new_access = create_token(user.id, user.role, tenant_id=user.tenant_id)
+    # Rolling refresh: also rotate the refresh token so an active user keeps
+    # their 30-day window extending. Old refresh token stays valid until exp
+    # (no server-side blacklist in Phase M1 — acceptable for this threat model).
+    new_refresh = create_refresh_token(user.id, user.role, tenant_id=user.tenant_id)
+    return jsonify({
+        'token': new_access,
+        'refresh_token': new_refresh,
+        'user': user.to_dict(),
+    }), 200
 
 
 @auth_bp.route('/change-password', methods=['POST'])
@@ -443,6 +475,7 @@ def verify_otp():
     email       = (data.get('email')       or '').strip().lower()
     otp         = (data.get('otp')         or '').strip()
     tenant_slug = (data.get('tenant_slug') or '').strip().lower()
+    remember    = bool(data.get('remember', False))
 
     if not email or not otp:
         return jsonify({'error': 'Email and OTP are required'}), 400
@@ -506,11 +539,14 @@ def verify_otp():
     jwt_token = create_token(user.id, user.role, tenant_id=user.tenant_id)
     log_activity(user.id, 'login_otp', 'auth', description=f'{user.email} logged in via OTP')
 
-    return jsonify({
+    response = {
         'token':    jwt_token,
         'user':     user.to_dict(),
         'products': _get_user_products(user),
-    }), 200
+    }
+    if remember:
+        response['refresh_token'] = create_refresh_token(user.id, user.role, tenant_id=user.tenant_id)
+    return jsonify(response), 200
 
 
 def _get_user_products(user):

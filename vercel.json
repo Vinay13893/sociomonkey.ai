@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "alias": ["backend-nu-nine-20.vercel.app"],
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
@@ -12,8 +13,12 @@
       "schedule": "0 2 * * *"
     },
     {
+      "path": "/api/cron/drain-notifications",
+      "schedule": "0 3 * * *"
+    },
+    {
       "path": "/api/internal/jobs/process",
-      "schedule": "15 2 * * *"
+      "schedule": "0 4 * * *"
     }
   ],
   "routes": [

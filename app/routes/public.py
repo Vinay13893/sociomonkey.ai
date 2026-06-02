@@ -81,6 +81,21 @@ def get_tenant_config(slug):
     }), 200
 
 
+@public_bp.route('/push-config', methods=['GET'])
+def push_config():
+    """
+    Public — returns VAPID public key so the frontend can call
+    pushManager.subscribe({ applicationServerKey }).
+    Only exposes the PUBLIC key; the private key never leaves the server.
+    """
+    from flask import current_app
+    vapid_pub = current_app.config.get('VAPID_PUBLIC_KEY', '')
+    return jsonify({
+        'vapid_public_key': vapid_pub,
+        'enabled': bool(vapid_pub),
+    }), 200
+
+
 @public_bp.route('/demo-requests', methods=['POST'])
 def create_demo_request():
     data = request.get_json() or {}

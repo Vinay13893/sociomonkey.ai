@@ -15,9 +15,13 @@ def get_users():
     user = request.current_user
     tid  = request.current_tenant_id
     if user.role == 'superadmin':
-        users = User.query.filter_by(is_active=True, tenant_id=tid).all()
+        users = User.query.filter(
+            User.is_active == True,
+            User.tenant_id == tid,
+            User.role != 'platform_owner',
+        ).all()
     else:
-        users = [u for u in user.team_members if u.is_active and u.tenant_id == tid]
+        users = [u for u in user.team_members if u.is_active and u.tenant_id == tid and u.role != 'platform_owner']
     return jsonify({'users': [u.to_dict() for u in users]}), 200
 
 

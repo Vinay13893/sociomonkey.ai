@@ -76,8 +76,11 @@ def _deliver(callback: 'CallbackReminder', kind: str):
     Send an in-app notification.
     `kind` is '10min' or 'due'.
     """
+    from app.utils.time_utils import IST
     lead_name = callback.lead.name if callback.lead else f'Lead #{callback.lead_id}'
-    cb_time   = callback.callback_datetime.strftime('%d %b %Y %H:%M')
+    # Display callback time in IST (Gurgaon timezone)
+    cb_dt_ist = callback.callback_datetime.replace(tzinfo=__import__('datetime').timezone.utc).astimezone(IST)
+    cb_time   = cb_dt_ist.strftime('%d %b %Y %I:%M %p IST')
 
     if kind == '10min':
         title = 'Upcoming Callback'
@@ -99,6 +102,33 @@ def _deliver(callback: 'CallbackReminder', kind: str):
 
     for uid in recipients:
         push_notification(uid, dict(note))
+
+    # Phase M1: also enqueue NotificationEvent rows so a future push worker
+    # can deliver the same event off-tab via Web Push / FCM. Best-effort —
+    # any failure here must NOT break in-app delivery above.
+    try:
+        from app.models.user import User
+        from app.services.notification_events import enqueue_callback_event
+        from app.services.notification_processor import process_notification_queue
+        from app.models.base import db as _db
+        event_kind = 'due_soon' if kind == '10min' else 'due_now'
+        for uid in recipients:
+            recipient = User.query.get(uid)
+            if recipient:
+                enqueue_callback_event(recipient, callback, event_kind)
+        _db.session.commit()
+        # Best-effort immediate push dispatch so mobile OS banners are not
+        # blocked waiting for the next cron drain cycle.
+        try:
+            process_notification_queue(batch_size=100)
+        except Exception:
+            pass
+    except Exception:
+        try:
+            from app.models.base import db as _db
+            _db.session.rollback()
+        except Exception:
+            pass
 
     logger.info('[ReminderScheduler] %s notification sent for callback #%d to users %s',
                 kind, callback.id, recipients)
@@ -122,26 +152,27 @@ def _run_scheduler(app):
 def _process_reminders():
     now = datetime.utcnow()
     ten_min_from_now = now + timedelta(minutes=10)
-    grace_window = now - timedelta(minutes=5)   # don't fire "due" reminders older than 5 min
+    one_min_from_now = now + timedelta(minutes=1)
 
-    # 10-minute warning
+    # 10-minute warning (exclude the last 1 minute — those will fire as "due" instead)
     due_10 = CallbackReminder.query.filter(
         CallbackReminder.status == 'pending',
         CallbackReminder.reminder_10_sent == False,   # noqa: E712
         CallbackReminder.callback_datetime <= ten_min_from_now,
-        CallbackReminder.callback_datetime > now,
+        CallbackReminder.callback_datetime > one_min_from_now,
     ).all()
 
     for cb in due_10:
         _deliver(cb, '10min')
         cb.reminder_10_sent = True
 
-    # Due notification
+    # Due notification — fire 1 minute early so push arrives by scheduled time
+    grace_window_due = now - timedelta(minutes=4)   # 5-min window relative to 1-min-early firing
     due_now = CallbackReminder.query.filter(
         CallbackReminder.status == 'pending',
         CallbackReminder.reminder_due_sent == False,  # noqa: E712
-        CallbackReminder.callback_datetime <= now,
-        CallbackReminder.callback_datetime >= grace_window,
+        CallbackReminder.callback_datetime <= one_min_from_now,
+        CallbackReminder.callback_datetime >= grace_window_due,
     ).all()
 
     for cb in due_now:
