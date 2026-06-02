@@ -394,7 +394,11 @@ async function authFetch(path, options) {
   var headers = Object.assign({}, opts.headers || {}, {
     'Authorization': 'Bearer ' + token,
   })
-  var url = (path.indexOf('http') === 0) ? path : API_BASE + path
+  // API_BASE already ends with '/api' (e.g. https://smk-backend-api.vercel.app/api).
+  // Paths passed to authFetch include the /api prefix (e.g. /api/lead-sources).
+  // Strip the trailing /api from API_BASE to avoid doubling: /api/api/...
+  var base = API_BASE.replace(/\/api\/?$/, '')
+  var url = (path.indexOf('http') === 0) ? path : base + path
   return fetch(url, Object.assign({}, opts, { headers: headers }))
 }
 
