@@ -9,6 +9,7 @@ var _recycleSelected = new Set()
 var _rqSearchQuery = ''
 var _rqPage = 1
 var _rqPageSize = 25
+var _rqLastLoadTotal = 0
 var _rqStrategyHelpText = {
   intelligent: 'Best default. Avoids recently assigned users and rotates safely to reduce repeat follow-ups.',
   round_robin: 'Strict turn-by-turn distribution. Best when you want even assignment count regardless of workload.',
@@ -63,21 +64,13 @@ function _rqRenderShell(target, showHeader) {
           <input id="rqSearch" class="dash-filter-ctl" type="text" placeholder="Name, mobile, project, assigned user" value="${escape(_rqSearchQuery)}" />
         </div>
         <button onclick="_rqLoad()" class="button rq-filter-btn">Load Queue</button>
-        <button onclick="_rqApplySearch()" class="button secondary rq-filter-btn">Search</button>
         </div>
-        <div id="rqCustomTimeline" style="display:none;background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;padding:14px 18px;margin-top:10px;">
-          <div style="font-size:11px;font-weight:700;color:#1e40af;letter-spacing:.07em;text-transform:uppercase;margin-bottom:10px;">📅 Custom Date Range</div>
-          <div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;">
-            <div>
-              <label style="display:block;font-size:11px;font-weight:600;color:#475569;margin-bottom:4px;">FROM</label>
-              <input id="rqDateFrom" type="date" class="dash-filter-ctl" style="font-size:13px;" />
-            </div>
-            <span style="font-size:20px;color:#94a3b8;padding-bottom:6px;">→</span>
-            <div>
-              <label style="display:block;font-size:11px;font-weight:600;color:#475569;margin-bottom:4px;">TO</label>
-              <input id="rqDateTo" type="date" class="dash-filter-ctl" style="font-size:13px;" />
-            </div>
-          </div>
+        <div id="rqDateRangeRow" style="display:none;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
+          <span style="font-size:12px;font-weight:700;color:#475569;white-space:nowrap;">Date Range:</span>
+          <input id="rqDateFrom" type="date" class="dash-filter-ctl" style="font-size:13px;width:150px;" />
+          <span style="color:#94a3b8;font-size:15px;">→</span>
+          <input id="rqDateTo" type="date" class="dash-filter-ctl" style="font-size:13px;width:150px;" />
+          <button onclick="_rqLoad()" class="button secondary" style="height:34px;font-size:12px;padding:0 14px;white-space:nowrap;">Apply</button>
         </div>
       </div>
 
@@ -119,13 +112,13 @@ function _rqRenderShell(target, showHeader) {
 
   // Wire change events
   const staleModeSel = document.getElementById('rqStaleMode')
-  const customWrap = document.getElementById('rqCustomTimeline')
+  const dateRangeRow = document.getElementById('rqDateRangeRow')
   const dateFromInput = document.getElementById('rqDateFrom')
   const dateToInput = document.getElementById('rqDateTo')
-  if (staleModeSel && customWrap) {
+  if (staleModeSel) {
     staleModeSel.addEventListener('change', function () {
-      customWrap.style.display = staleModeSel.value === 'custom' ? 'block' : 'none'
-      _rqLoad()
+      if (dateRangeRow) dateRangeRow.style.display = staleModeSel.value === 'custom' ? 'flex' : 'none'
+      if (staleModeSel.value !== 'custom') _rqLoad()
     })
   }
   if (dateFromInput) dateFromInput.addEventListener('change', _rqLoad)
@@ -202,6 +195,7 @@ async function _rqLoad() {
   const total = data.total || 0
   const page = data.page || _rqPage
   const totalPages = data.total_pages || 1
+  _rqLastLoadTotal = total
   if (!leads.length) {
     listEl.innerHTML = `<div style="text-align:center;padding:60px 20px;color:#9ca3af;"><div style="font-size:36px;margin-bottom:8px;">✅</div><p>No stale leads found for the selected criteria.</p></div>`
     return
@@ -210,7 +204,10 @@ async function _rqLoad() {
   listEl.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;padding:0 4px;margin-bottom:8px;">
       <span style="font-size:13px;font-weight:600;color:#475569;">Showing ${leads.length} of ${total} stale lead${total !== 1 ? 's' : ''}</span>
-      <button onclick="_rqSelectAll()" style="font-size:12px;color:#6366f1;background:none;border:1px solid #c7d2fe;border-radius:6px;padding:4px 10px;cursor:pointer;">Select All</button>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button onclick="_rqSelectAll()" style="font-size:12px;color:#6366f1;background:none;border:1px solid #c7d2fe;border-radius:6px;padding:4px 10px;cursor:pointer;">Select Page (${leads.length})</button>
+        ${total > leads.length ? `<button onclick="_rqSelectAllPages()" id="rqSelectAllPagesBtn" style="font-size:12px;color:#059669;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:600;">Select All ${total} Leads</button>` : ''}
+      </div>
     </div>
     ${leads.map((l, i) => _rqLeadRow(l, (_rqPage - 1) * _rqPageSize + i + 1)).join('')}
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 4px 0;margin-top:8px;border-top:1px solid #e2e8f0;">
@@ -268,6 +265,7 @@ function _rqLeadRow(l, serialNum) {
       <span style="background:${sc.bg};color:${sc.color};font-size:10px;font-weight:700;padding:3px 8px;border-radius:20px;flex-shrink:0;">${sc.label}</span>
       ${prevCount > 0 ? `<span style="background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;padding:3px 8px;border-radius:20px;flex-shrink:0;" title="Previous assignees that will be excluded">🚫 ${prevCount} prev</span>` : ''}
       <button onclick="viewLeadDetails(${l.id})" style="font-size:11px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#6366f1;cursor:pointer;font-weight:600;white-space:nowrap;flex-shrink:0;">Open</button>
+      ${(l.phone || l.alternate_phone) ? `<button onclick='openWhatsAppModal(${l.id}, ${JSON.stringify(l.phone || '')}, ${JSON.stringify(l.alternate_phone || '')}, ${JSON.stringify(l.name || 'Lead')}, ${l.project_id || 'null'})' style="font-size:11px;background:#fff;border:1px solid #bbf7d0;border-radius:6px;padding:5px 10px;color:#15803d;cursor:pointer;font-weight:600;white-space:nowrap;flex-shrink:0;">💬 WA</button>` : ''}
     </div>`
 }
 
@@ -296,6 +294,49 @@ function _rqSelectAll() {
     if (row) row.style.background = '#eff6ff'
   })
   _rqUpdateBulkBar()
+}
+
+async function _rqSelectAllPages() {
+  const btn = document.getElementById('rqSelectAllPagesBtn')
+  if (btn) { btn.textContent = '⏳ Loading...'; btn.disabled = true }
+
+  const staleMode = document.getElementById('rqStaleMode')?.value || 'yesterday'
+  const dateFrom = document.getElementById('rqDateFrom')?.value || ''
+  const dateTo = document.getElementById('rqDateTo')?.value || ''
+  const statusVal = document.getElementById('rqStatus')?.value || ''
+  const searchVal = (document.getElementById('rqSearch')?.value || '').trim()
+
+  try {
+    const params = new URLSearchParams()
+    params.set('stale_mode', staleMode)
+    if (staleMode === 'custom') {
+      if (dateFrom) params.set('date_from', dateFrom)
+      if (dateTo) params.set('date_to', dateTo)
+    }
+    if (statusVal) params.set('status', statusVal)
+    if (searchVal) params.set('q', searchVal)
+    params.set('page', '1')
+    params.set('page_size', String(Math.min(_rqLastLoadTotal || 1000, 1000)))
+
+    const url = `${API_BASE}/leads/recycle-queue?${params.toString()}`
+    const res = await fetch(url, { headers: _apiAuthHeaders() })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+
+    ;(data.leads || []).forEach(l => {
+      _recycleSelected.add(l.id)
+      const chk = document.getElementById(`rqChk_${l.id}`)
+      if (chk) chk.checked = true
+      const row = document.getElementById(`rqRow_${l.id}`)
+      if (row) row.style.background = '#eff6ff'
+    })
+    _rqUpdateBulkBar()
+    showToast(`${_recycleSelected.size} leads selected across all pages.`, 'success')
+    if (btn) { btn.textContent = `✓ All ${_recycleSelected.size} Selected`; btn.disabled = true }
+  } catch (err) {
+    showToast('Failed to select all leads.', 'error')
+    if (btn) { btn.textContent = `Select All ${_rqLastLoadTotal} Leads`; btn.disabled = false }
+  }
 }
 
 function _rqClearSelection() {
@@ -335,28 +376,56 @@ async function _rqReshuffle() {
   const btn = document.querySelector('#rqBulkBar button.button')
   if (btn) { btn.textContent = '⏳ Reshuffling...'; btn.disabled = true }
 
-  let data
-  try {
-    const res = await fetch(`${API_BASE}/leads/reshuffle`, {
-      method: 'POST',
-      headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
-      body: JSON.stringify({ lead_ids: [..._recycleSelected], strategy, reason }),
-    })
-    if (!res.ok) {
-      const err = await res.json()
-      showToast(err.error || 'Reshuffle failed.', 'error')
+  // Split into batches of 50 so each batch runs synchronously on the server
+  const BATCH = 50
+  const allIds = [..._recycleSelected]
+  const batches = []
+  for (let i = 0; i < allIds.length; i += BATCH) batches.push(allIds.slice(i, i + BATCH))
+
+  let totalReshuffled = 0
+  const allAssignments = []
+
+  for (let b = 0; b < batches.length; b++) {
+    if (btn) btn.textContent = `⏳ Batch ${b + 1}/${batches.length}…`
+    try {
+      const res = await fetch(`${API_BASE}/leads/reshuffle`, {
+        method: 'POST',
+        headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+        body: JSON.stringify({ lead_ids: batches[b], strategy, reason }),
+      })
+      if (!res.ok) {
+        const errData = await res.json()
+        showToast(errData.error || 'Reshuffle failed.', 'error')
+        if (btn) { btn.textContent = '♻️ Reshuffle Selected'; btn.disabled = false }
+        return
+      }
+      let data = await res.json()
+      // If queued (large batch), call process endpoint
+      if (data.status === 'queued' && data.job && data.job.id) {
+        const processRes = await fetch(`${API_BASE}/leads/reshuffle/jobs/${data.job.id}/process`, {
+          method: 'POST',
+          headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+          body: JSON.stringify({}),
+        })
+        if (!processRes.ok) {
+          showToast(`Batch ${b + 1} processing failed. Please try again.`, 'error')
+          if (btn) { btn.textContent = '♻️ Reshuffle Selected'; btn.disabled = false }
+          return
+        }
+        data = await processRes.json()
+      }
+      totalReshuffled += (data.reshuffled || 0)
+      allAssignments.push(...(data.assignments || []))
+    } catch {
+      showToast('Network error during reshuffle.', 'error')
       if (btn) { btn.textContent = '♻️ Reshuffle Selected'; btn.disabled = false }
       return
     }
-    data = await res.json()
-  } catch {
-    showToast('Network error during reshuffle.', 'error')
-    if (btn) { btn.textContent = '♻️ Reshuffle Selected'; btn.disabled = false }
-    return
   }
 
+  if (btn) { btn.textContent = '♻️ Reshuffle Selected'; btn.disabled = false }
   // Show results modal
-  _rqShowResults(data)
+  _rqShowResults({ reshuffled: totalReshuffled, assignments: allAssignments })
   _rqClearSelection()
   // Reload the queue after a short delay
   setTimeout(_rqLoad, 800)

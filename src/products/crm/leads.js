@@ -823,6 +823,7 @@ async function filterAndRenderLeads(resetPage = true) {
               <td class="ta-center leads-actions-cell" data-label="Actions">
                 <div class="leads-row-actions">
                   <button class="sm-btn sm-btn-secondary leads-row-action-btn leads-row-icon-btn" onclick='_abStartCallFlow(${l.id}, ${JSON.stringify(l.phone || '')}, ${JSON.stringify(l.name || 'Lead')})' title="Call"><span class="leads-row-action-icon">📞</span></button>
+                  <button class="sm-btn sm-btn-secondary leads-row-action-btn leads-row-icon-btn" onclick='openWhatsAppModal(${l.id}, ${JSON.stringify(l.phone || '')}, ${JSON.stringify(l.alternate_phone || '')}, ${JSON.stringify(l.name || 'Lead')}, ${l.project_id || 'null'})' title="WhatsApp"><span class="leads-row-action-icon">💬</span></button>
                   <button class="sm-btn sm-btn-secondary leads-row-action-btn leads-row-icon-btn" onclick="openLeadCallbackScheduler(${l.id})" title="Callback Scheduler"><span class="leads-row-action-icon">📅</span></button>
                   <button class="sm-btn sm-btn-secondary leads-row-action-btn leads-row-icon-btn" onclick="openLeadInlineNoteEditor(${l.id})" title="Notes"><span class="leads-row-action-icon">📝</span></button>
                   <button class="sm-btn sm-btn-secondary leads-actions-toggle leads-row-action-btn leads-row-icon-btn leads-more-btn" data-lead-id="${l.id}" title="More"><span class="leads-row-action-icon">⋮</span></button>
@@ -1668,6 +1669,15 @@ async function viewLeadDetails(leadId) {
   window._LEAD_DETAIL_ORIGIN = originRoute
   window._ACTIVE_ROUTE = 'lead_details'
 
+  // Update browser URL to reflect the sub-page
+  if (typeof authBuildTenantTabPath === 'function' && typeof platformTenantSlug !== 'undefined' && platformTenantSlug) {
+    var _TAB_SLUGS = { action_board: 'action-board', recycle_queue: 'recycle-queue', activitylogs: 'activity-logs' }
+    var _tabSlug = _TAB_SLUGS[originRoute] || originRoute
+    var _parentPath = authBuildTenantTabPath(platformTenantSlug, currentProduct, _tabSlug)
+    window._LEAD_ORIGIN_URL = _parentPath
+    history.pushState({ leadId: leadId, origin: originRoute }, '', _parentPath + '/lead/' + leadId)
+  }
+
   async function _safeGet(path, fallback) {
     try {
       const data = await _apiRequest(path, {
@@ -2174,8 +2184,16 @@ async function viewLeadDetails(leadId) {
 
   document.getElementById('backToLeads').addEventListener('click', function () {
     const origin = (window._LEAD_DETAIL_ORIGIN || 'leads')
+    if (window._LEAD_ORIGIN_URL) {
+      history.pushState({}, '', window._LEAD_ORIGIN_URL)
+      window._LEAD_ORIGIN_URL = null
+    }
     if (origin === 'action_board' && typeof renderActionBoard === 'function') {
       renderActionBoard(window._abDateFrom || '', window._abDateTo || '', window._abRange || 'today')
+      return
+    }
+    if (origin === 'assign_reassign' && typeof renderAssignReassign === 'function') {
+      renderAssignReassign()
       return
     }
     if (origin === 'pipeline' && typeof renderPipeline === 'function') {
@@ -2345,6 +2363,10 @@ viewLeadDetails = async function (leadId) {
     if (isBlank) {
       if (origin === 'action_board' && typeof renderActionBoard === 'function') {
         await renderActionBoard(window._abDateFrom || '', window._abDateTo || '', window._abRange || 'today')
+      } else if (origin === 'assign_reassign' && typeof renderAssignReassign === 'function') {
+        await renderAssignReassign()
+      } else if (origin === 'recycle_queue' && typeof renderRecycleQueue === 'function') {
+        await renderRecycleQueue()
       } else if (typeof renderLeads === 'function') {
         await renderLeads()
       }

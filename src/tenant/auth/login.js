@@ -39,11 +39,26 @@ function renderLogin(context) {
   var tenantDataSlug = tenantSlug ? authTenantDataSlug(tenantSlug) : null
   var isDemoTenant = tenantSlug === 'demo'
 
+  // Persist tenant hint whenever tenant login UI is rendered so LMS PWA launch
+  // can recover tenant context even after Safari -> standalone transitions.
+  if (tenantSlug) {
+    try {
+      var canonicalTenant = authCanonicalTenantSlug(tenantSlug)
+      if (canonicalTenant) {
+        localStorage.setItem('lms_last_tenant_slug', canonicalTenant)
+        document.cookie = 'lms_last_tenant_slug=' + encodeURIComponent(canonicalTenant) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure'
+      }
+    } catch (_e) {}
+  }
+
   // Resolve tenant branding (tenantConfig may have been loaded by dispatch())
   var tenantLogoSrc  = (typeof tenantConfig !== 'undefined' && tenantConfig && tenantConfig.logo_url)
                        ? tenantConfig.logo_url : 'logo.jpg'
+  var _tenantFallbackBrand = tenantSlug
+    ? authCanonicalTenantSlug(tenantSlug).replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase() })
+    : 'Enterprise Lead Management'
   var tenantBrandName = (typeof tenantConfig !== 'undefined' && tenantConfig && (tenantConfig.brand_name || tenantConfig.name))
-                       ? (tenantConfig.brand_name || tenantConfig.name) : 'Enterprise Lead Management'
+                       ? (tenantConfig.brand_name || tenantConfig.name) : _tenantFallbackBrand
   var loginBg = (typeof tenantConfig !== 'undefined' && tenantConfig && tenantConfig.login_bg_color)
                        ? tenantConfig.login_bg_color : '#ffffff'
 
@@ -104,9 +119,9 @@ function renderLogin(context) {
               'autocomplete="email" />' +
             '<label style="display:flex;align-items:center;gap:8px;margin-top:10px;' +
               'font-size:13px;color:#64748b;cursor:pointer;">' +
-              '<input type="checkbox" id="rememberMeOtpCheck" ' +
+              '<input type="checkbox" id="rememberMeOtpCheck" checked ' +
                 'style="width:15px;height:15px;cursor:pointer;" />' +
-              'Remember me' +
+              'Keep me signed in' +
             '</label>' +
             '<button id="sendOtpBtn" class="button" ' +
               'style="width:100%;margin-top:14px;font-size:15px;">Send OTP</button>' +
@@ -146,9 +161,9 @@ function renderLogin(context) {
             '</div>' +
               '<label style="display:flex;align-items:center;gap:8px;margin-top:10px;' +
               'font-size:13px;color:#64748b;cursor:pointer;">' +
-              '<input type="checkbox" id="rememberMeCheck" ' +
+              '<input type="checkbox" id="rememberMeCheck" checked ' +
                 'style="width:15px;height:15px;cursor:pointer;" />' +
-              'Remember me' +
+              'Keep me signed in' +
             '</label>' +
             '<button class="button" style="width:100%;margin-top:16px;font-size:15px;">' +
               'Login</button>' +
@@ -300,7 +315,7 @@ function renderLogin(context) {
     btn.textContent = 'Verifying\u2026'
     clearError()
     try {
-      var body = { email: emailVal, otp: otpVal }
+      var body = { email: emailVal, otp: otpVal, remember: !!remember }
       if (tenantDataSlug) body.tenant_slug = tenantDataSlug
       var res  = await fetch(API_BASE + '/auth/verify-otp', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -313,7 +328,12 @@ function renderLogin(context) {
         return
       }
       clearInterval(_countdownTimer)
-      authSetSession(data.token, data.user, remember)
+      authSetSession(data.token, data.user, remember, data.refresh_token || null)
+      try {
+        if (typeof pushRequestPermission === 'function') {
+          pushRequestPermission().catch(function () {})
+        }
+      } catch (_e) {}
       if (data.products) availableProducts = data.products
       authScheduleExpiry()
       if (loginRedirectPath && loginRedirectPath !== '/login' && !loginRedirectPath.endsWith('/login')) {

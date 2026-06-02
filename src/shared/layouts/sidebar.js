@@ -183,7 +183,7 @@ function getNavItems() {
     items.push({ key: 'pipeline', label: '📈 Pipeline' })
   }
   if (user.role === 'sales_manager' || user.role === 'superadmin') {
-    items.push({ key: 'assign_reassign', label: '�️ Allocation' })
+    items.push({ key: 'assign_reassign', label: '📋 Allocation' })
   }
   if ((user.role === 'sales_manager' || user.role === 'superadmin') && isTenantFeatureEnabled('team_management')) {
     items.push({ key: 'team', label: '👨‍💼 Team' })
@@ -206,6 +206,9 @@ function getNavItems() {
   }
   if ((user.role === 'superadmin' || user.role === 'sales_manager') && isTenantFeatureEnabled('reports')) {
     items.push({ key: 'reports', label: '📊 Reports' })
+  }
+  if (user.role === 'superadmin') {
+    items.push({ key: 'lead_sources', label: '🔗 Lead Sources' })
   }
 
   items.push({ key: 'profile', label: '⚙️ My Profile' })

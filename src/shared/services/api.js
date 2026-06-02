@@ -186,7 +186,7 @@ async function _apiRequest(path, opts) {
 async function login(email, password, remember, tenantSlug) {
   let data
   try {
-    const body = { email: email, password: password }
+    const body = { email: email, password: password, remember: !!remember }
     if (tenantSlug) body.tenant_slug = tenantSlug
     data = await _apiRequest('/auth/login', {
       method: 'POST',
@@ -206,7 +206,14 @@ async function login(email, password, remember, tenantSlug) {
     return
   }
 
-  authSetSession(data.token, data.user, !!remember)
+  authSetSession(data.token, data.user, !!remember, data.refresh_token || null)
+  // iOS Web Push permission is most reliable when requested immediately after
+  // a user-initiated login action.
+  try {
+    if (typeof pushRequestPermission === 'function') {
+      pushRequestPermission().catch(function () {})
+    }
+  } catch (_e) {}
   availableProducts = data.products || []
   if (availableProducts.length > 0) {
     const hasLms = availableProducts.find(p => p.slug === 'lms')
@@ -229,7 +236,11 @@ async function login(email, password, remember, tenantSlug) {
   } else if (!loginRedirectPath || loginRedirectPath.endsWith('/login')) {
     if (authIsPlatformUser()) {
       history.replaceState({}, '', '/')
-    } else if (tenantSlug && user && user.tenant_slug) {
+    } else if (user && user.tenant_slug) {
+      // Redirect tenant users to their app regardless of which login page they
+      // used (tenant-specific or platform /login). Without this, logging in via
+      // /login leaves the URL as /login, dispatch() redirects to /, and the
+      // platform-route guard then clears the session causing a login loop.
       const preferredProduct = availableProducts.find(p => p.slug === 'lms') ? 'lms' : 'crm'
       history.replaceState({}, '', authBuildTenantAppPath(user.tenant_slug, preferredProduct))
     }

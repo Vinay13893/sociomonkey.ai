@@ -15,6 +15,19 @@
   <meta property="og:description" content="AI-powered CRM and LMS platform for modern sales teams." />
   <meta property="og:site_name" content="SocioMonkey" />
   <link rel="icon" type="image/png" href="Assets/top-banner-logo.png" />
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json?v=20260602lmspwa1" />
+  <meta name="theme-color" content="#1e3a5f" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Sociomonkey LMS" />
+  <link rel="apple-touch-icon" href="/Assets/pwa/icon-180.png" />
+  <link rel="apple-touch-icon" sizes="152x152" href="/Assets/pwa/icon-152.png" />
+  <link rel="apple-touch-icon" sizes="167x167" href="/Assets/pwa/icon-167.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/Assets/pwa/icon-180.png" />
+
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" />
   <!-- Design system: load tokens first so all vars are available to styles.css -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -96,35 +109,38 @@
   <script src="src/config/feature-flags.js?v=20260527z"></script>
   <script src="src/contexts/app-state.js?v=20260527z"></script>
   <!-- Auth Orchestration (must load after app-state, before api) -->
-  <script src="src/auth/auth-manager.js?v=20260531phaseA1"></script>
+  <script src="src/auth/auth-manager.js?v=20260602incidentfix1"></script>
   <!-- Tenant white-label engine (must load after feature-flags + auth-manager) -->
   <script src="src/tenant-context/tenant-context.js?v=20260530ux3"></script>
 
   <!-- ── Shared Utilities ─────────────────────────────────────────── -->
   <script src="src/shared/utils/helpers.js?v=20260603ist1"></script>
   <script src="src/shared/utils/dom-guard.js?v=20260602n"></script>
-  <script src="src/shared/services/api.js?v=20260531hotfix2"></script>
+  <script src="src/shared/services/api.js?v=20260602loginfix1"></script>
+  <script src="src/shared/services/push.js?v=20260602navfix1"></script>
   <script src="src/shared/ui/notifications.js?v=20260603notif1"></script>
 
   <!-- ── Tenant Auth ──────────────────────────────────────────────── -->
-  <script src="src/tenant/auth/login.js?v=20260531passworddefault1"></script>
+  <script src="src/tenant/auth/login.js?v=20260602incidentfix4"></script>
 
   <!-- ── Shared Layout & Router ───────────────────────────────────── -->
-  <script src="src/shared/layouts/sidebar.js?v=20260603ist1"></script>
-  <script src="src/router/router.js?v=20260531phaseA1"></script>
+  <script src="src/shared/layouts/sidebar.js?v=20260613alloc1"></script>
+  <script src="src/router/router.js?v=20260602loginfix1"></script>
 
   <!-- ── Products / CRM ───────────────────────────────────────────── -->
-  <script src="src/products/crm/dashboard.js?v=20260601alltimedefault1"></script>
-  <script src="src/products/crm/leads.js?v=20260612fixes1"></script>
-  <script src="src/products/crm/action-board.js?v=20260612fixes1"></script>
-  <script src="src/products/crm/pipeline.js?v=20260601serialnum1"></script>
-  <script src="src/products/crm/recycle-queue.js?v=20260609rq2"></script>
-  <script src="src/products/crm/assign-reassign.js?v=20260609ar2"></script>
-  <script src="src/products/crm/projects.js?v=20260601serialnum1"></script>
+  <script src="src/products/crm/dashboard.js?v=20260602notifux1"></script>
+  <script src="src/products/crm/whatsapp.js?v=20260614wa3"></script>
+  <script src="src/products/crm/leads.js?v=20260614wa1"></script>
+  <script src="src/products/crm/action-board.js?v=20260614wa1"></script>
+  <script src="src/products/crm/pipeline.js?v=20260614wa1"></script>
+  <script src="src/products/crm/recycle-queue.js?v=20260614wa1"></script>
+  <script src="src/products/crm/assign-reassign.js?v=20260602selectall1"></script>
+  <script src="src/products/crm/projects.js?v=20260614wa1"></script>
   <script src="src/products/crm/team.js?v=20260531responsive1"></script>
   <script src="src/products/crm/excel.js?v=20260530ux2"></script>
   <script src="src/products/crm/reports.js?v=20260602reports2"></script>
   <script src="src/products/crm/export.js?v=20260530ux2"></script>
+  <script src="src/products/crm/lead-sources.js?v=20260615meta1"></script>
 
   <!-- ── Products / LMS ───────────────────────────────────────────── -->
   <script src="src/products/lms/lms.js?v=20260603b"></script>
@@ -154,6 +170,6 @@
   <script src="src/shared/design-system/theme.js?v=20260529a"></script>
 
   <!-- ── Main Entry Point ─────────────────────────────────────────── -->
-  <script src="src/main.js?v=20260531loginlayout1"></script>
+  <script src="src/main.js?v=20260602incidentfix2"></script>
 </body>
 </html>

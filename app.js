@@ -1474,9 +1474,18 @@ function getStatusColor(status) {
 
 async function viewLeadDetails(leadId) {
   selectedLeadId = leadId
-  const lead = leads.find(l => l.id === leadId)
-  if (!lead) return
-  
+  let lead = leads.find(l => l.id === leadId)
+  if (!lead) {
+    // Lead not in local cache (e.g. opened from push notification on fresh load) — fetch directly
+    try {
+      const res = await fetch(`${API_BASE}/leads/${leadId}`, { headers: { Authorization: `Bearer ${token}` } })
+      if (!res.ok) return
+      const data = await res.json()
+      lead = data.lead
+      if (!lead) return
+    } catch (e) { return }
+  }
+
   const content = document.getElementById('content')
   
   // Load lead details, notes, and status history

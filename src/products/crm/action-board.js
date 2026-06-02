@@ -202,6 +202,11 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
   const content = document.getElementById('content')
   if (!content) { _actionBoardRenderInFlight = false; return }
 
+  // Ensure user list is populated before rendering the filter dropdown
+  if ((!users || users.length === 0) && typeof loadUsers === 'function') {
+    try { await loadUsers() } catch (_) {}
+  }
+
   if (_abUpdatedTimer) {
     clearInterval(_abUpdatedTimer)
     _abUpdatedTimer = null
@@ -284,7 +289,7 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
           <label class="dash-filter-label">Viewing Board Of</label>
           <select id="abViewAsFilter" class="dash-filter-ctl">
             <option value="">My Board</option>
-            ${users.filter(function(u) { return u.id !== user.id && u.role !== 'superadmin' }).map(function(u) {
+            ${users.filter(function(u) { return u.id !== user.id && u.role !== 'superadmin' && u.role !== 'platform_owner' }).map(function(u) {
               return `<option value="${u.id}" ${_abViewAs === u.id ? 'selected' : ''}>${escape(u.name)}</option>`
             }).join('')}
           </select>
@@ -504,6 +509,9 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
     const callBtn = phone
       ? `<button onclick='_abStartCallFlow(${l.id}, ${callPhoneArg}, ${callNameArg}, ${callAlternatePhoneArg})' style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #dbeafe;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#1d4ed8;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-phone" style="margin-right:${compact ? '0' : '4px'};font-size:10px;"></i>${compact ? '' : 'Call'}</button>`
       : ''
+    const waBtn = (phone || alternatePhone)
+      ? `<button onclick='openWhatsAppModal(${l.id}, ${callPhoneArg}, ${callAlternatePhoneArg}, ${callNameArg}, ${l.project_id || 'null'})' style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #bbf7d0;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#15803d;cursor:pointer;white-space:nowrap;"><i class="fa-brands fa-whatsapp" style="margin-right:${compact ? '0' : '4px'};font-size:10px;"></i>${compact ? '' : 'WA'}</button>`
+      : ''
     const statusControl = _abStatusControl(l.id, l.status)
     return `
       <div class="ab-lead-card ab-row-shell" data-lead-id="${l.id}" data-phone="${safePhone}" tabindex="0" style="border-left:4px solid ${priority.color};">
@@ -529,6 +537,7 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
         ${extra || ''}
         <div class="ab-row-actions">
           ${callBtn}
+          ${waBtn}
           <button onclick="_abOpenLead(${l.id})" style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#4f46e5;cursor:pointer;white-space:nowrap;">${compact ? '<i class="fa-solid fa-folder-open"></i>' : 'Open Lead'}</button>
           ${_abReadOnly ? '' : `<button onclick="_abQuickNote(${l.id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#64748b;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-pen-to-square" style="margin-right:4px;font-size:10px;"></i>Note</button>
           <button onclick="_abCallCallback(${l.id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#0369a1;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-calendar-plus" style="margin-right:4px;font-size:10px;"></i>Callback</button>`}
@@ -557,6 +566,9 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
     const callBtn = phone
       ? `<button onclick='_abStartCallFlow(${c.lead_id}, ${callPhoneArg}, ${callNameArg}, ${callAlternatePhoneArg})' style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #dbeafe;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#1d4ed8;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-phone" style="margin-right:${compact ? '0' : '4px'};font-size:10px;"></i>${compact ? '' : 'Call'}</button>`
       : ''
+    const waCallbackBtn = (phone || alternatePhone)
+      ? `<button onclick='openWhatsAppModal(${c.lead_id}, ${callPhoneArg}, ${callAlternatePhoneArg}, ${callNameArg}, null)' style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #bbf7d0;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#15803d;cursor:pointer;white-space:nowrap;"><i class="fa-brands fa-whatsapp" style="margin-right:${compact ? '0' : '4px'};font-size:10px;"></i>${compact ? '' : 'WA'}</button>`
+      : ''
     const timeStr = dt.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
     const statusText = (c.lead_status || '').replace(/_/g,' ') || 'callback'
     const statusControl = c.lead_id ? _abStatusControl(c.lead_id, c.lead_status) : ''
@@ -583,6 +595,7 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
         <div class="ab-row-status-cell">${statusControl}</div>
         <div class="ab-row-actions">
           ${callBtn}
+          ${waCallbackBtn}
           <button onclick="_abOpenLead(${c.lead_id})" style="font-size:${compact ? '10px' : '11px'};font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:${compact ? '4px 8px' : '5px 10px'};color:#4f46e5;cursor:pointer;white-space:nowrap;">${compact ? '<i class="fa-solid fa-folder-open"></i>' : 'Open Lead'}</button>
           ${_abReadOnly ? '' : `<button onclick="_abQuickNote(${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;color:#64748b;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-pen-to-square" style="margin-right:4px;font-size:10px;"></i>Note</button>
           <button onclick="markCallbackDone(${c.id}, ${c.lead_id})" style="font-size:11px;font-weight:600;background:#fff;border:1px solid #d1fae5;border-radius:6px;padding:5px 10px;color:#059669;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-check" style="margin-right:4px;font-size:10px;"></i>Done</button>
@@ -788,6 +801,7 @@ function _abRenderActionRow(section, item, serialNum) {
       <td>
         <div class="ab-action-buttons">
           ${row.phone ? `<button type="button" class="ab-row-action-btn" onclick='_abStartCallFlow(${row.leadId}, ${callPhoneArg}, ${callNameArg}, ${JSON.stringify(row.alternate_phone || row.lead_alternate_phone || '')})'><span class="ab-row-action-icon">📞</span><span class="ab-row-action-label">Call</span></button>` : ''}
+          ${(row.phone || row.alternate_phone || row.lead_alternate_phone) ? `<button type="button" class="ab-row-action-btn" onclick='openWhatsAppModal(${row.leadId}, ${callPhoneArg}, ${JSON.stringify(row.alternate_phone || row.lead_alternate_phone || '')}, ${callNameArg}, null)'><span class="ab-row-action-icon">💬</span><span class="ab-row-action-label">WA</span></button>` : ''}
           <button type="button" class="ab-row-action-btn" onclick="_abOpenNoteEditor(${row.leadId})"><span class="ab-row-action-icon">📝</span><span class="ab-row-action-label">Note</span></button>
           <button type="button" class="ab-row-action-btn" onclick="_abOpenCallbackScheduler(${row.leadId})"><span class="ab-row-action-icon">📅</span><span class="ab-row-action-label">Callback</span></button>
         </div>

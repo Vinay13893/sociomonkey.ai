@@ -102,7 +102,7 @@ async function renderAssignReassign(initialTab) {
     <div style="max-width:1200px;margin:0 auto;padding:20px 16px 60px;" id="arRoot">
       <div class="sm-page-header" style="margin-bottom:16px;">
         <div>
-          <h2 class="sm-page-title">�️ Allocation</h2>
+          <h2 class="sm-page-title">📋 Allocation</h2>
           <p class="sm-small sm-text-muted" style="margin:4px 0 0;">Distribute and rebalance leads across your team.</p>
         </div>
       </div>
@@ -221,9 +221,12 @@ function _arRenderUnassigned() {
     </div>
 
     <div style="display:flex;align-items:center;justify-content:space-between;padding:0 2px;margin-bottom:10px;">
-      <label style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:8px;cursor:pointer;">
-        <input type="checkbox" onchange="_arUSelectAll(this.checked)" id="arSelectAllUnassigned"> Select All (${leads.length})
-      </label>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <label style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" onchange="_arUSelectAll(this.checked)" id="arSelectAllUnassigned"> Select Page (${leads.length})
+        </label>
+        ${total > leads.length ? `<button onclick="_arUSelectAllPages()" id="arUSelectAllPagesBtn" style="font-size:12px;color:#059669;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:600;">Select All ${total} Leads</button>` : ''}
+      </div>
       <span style="font-size:12px;color:#94a3b8;">${total} unassigned total</span>
     </div>
 
@@ -250,6 +253,29 @@ function _arRenderUnassigned() {
 function _arUpdateAssignBtn() {
   var btn = document.getElementById('arAssignBtn')
   if (btn) btn.textContent = `Assign Selected (${_arSelectedLeads.size})`
+}
+
+async function _arUSelectAllPages() {
+  var btn = document.getElementById('arUSelectAllPagesBtn')
+  if (btn) { btn.textContent = '⏳ Loading...'; btn.disabled = true }
+  try {
+    var data = await _apiRequest('/leads/assign-reassign/unassigned?per_page=1000&page=1', {
+      headers: _apiAuthHeaders(), retries: 1, timeoutMs: 20000,
+    })
+    ;(data.leads || []).forEach(function (l) {
+      _arSelectedLeads.add(l.id)
+      var chk = document.getElementById('arUChk_' + l.id)
+      if (chk) chk.checked = true
+      var row = document.getElementById('arURow_' + l.id)
+      if (row) row.style.background = '#eff6ff'
+    })
+    _arUpdateAssignBtn()
+    showToast(`${_arSelectedLeads.size} leads selected across all pages.`, 'success')
+    if (btn) { btn.textContent = `✓ All ${_arSelectedLeads.size} Selected`; btn.disabled = true }
+  } catch (err) {
+    showToast('Failed to select all leads.', 'error')
+    if (btn) { btn.textContent = `Select All ${_arUnassignedTotal} Leads`; btn.disabled = false }
+  }
 }
 
 async function _arBulkAssignUnassigned() {
@@ -350,7 +376,11 @@ function _arRenderStale() {
   }).join('')
 
   var leadCards = leads.length === 0
-    ? `<div style="text-align:center;padding:40px;color:#9ca3af;"><div style="font-size:32px;margin-bottom:8px;">🕐</div><p>No stale leads found for this criteria.</p></div>`
+    ? `<div style="text-align:center;padding:40px 20px;color:#9ca3af;">
+        <div style="font-size:32px;margin-bottom:10px;">🕐</div>
+        <p style="margin:0 0 6px;font-size:14px;color:#475569;font-weight:600;">No stale leads found for "Not updated in ${_arStaleDays} day${_arStaleDays !== 1 ? 's' : ''}".</p>
+        <p style="margin:0;font-size:12px;color:#94a3b8;">A lead is stale when it has not been updated for ${_arStaleDays}+ consecutive days.<br>Try selecting fewer days (e.g. 3 or 5) to see recently untouched leads.</p>
+      </div>`
     : leads.map(function (l, i) {
       var sc = (typeof STATUS_COLORS !== 'undefined' ? STATUS_COLORS : {})[l.status] || { bg: '#f1f5f9', color: '#475569', label: l.status || 'new' }
       var serial = (_arStalePage - 1) * _arStalePageSize + i + 1
@@ -374,9 +404,9 @@ function _arRenderStale() {
   tabContent.innerHTML = `
     <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:14px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
       <div>
-        <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Stale Since</div>
+        <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Not Updated In</div>
         <select id="arStaleDays" class="dash-filter-ctl" style="width:auto;">
-          ${[1,2,3,4,5,7,10,14,15].map(function(d) { return `<option value="${d}" ${_arStaleDays === d ? 'selected' : ''}>${d} day${d>1?'s':''}</option>` }).join('')}
+          ${[1,2,3,5,7,10,14,15,21,30,45,60,90].map(function(d) { return `<option value="${d}" ${_arStaleDays === d ? 'selected' : ''}>${d} day${d>1?'s':''}</option>` }).join('')}
         </select>
       </div>
       <div>
@@ -395,9 +425,12 @@ function _arRenderStale() {
     </div>
 
     <div style="display:flex;align-items:center;justify-content:space-between;padding:0 2px;margin-bottom:10px;">
-      <label style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:8px;cursor:pointer;">
-        <input type="checkbox" onchange="_arSSelectAll(this.checked)" id="arSelectAllStale"> Select All (${leads.length})
-      </label>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <label style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" onchange="_arSSelectAll(this.checked)" id="arSelectAllStale"> Select Page (${leads.length})
+        </label>
+        ${total > leads.length ? `<button onclick="_arSSelectAllPages()" id="arSSelectAllPagesBtn" style="font-size:12px;color:#059669;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:600;">Select All ${total} Leads</button>` : ''}
+      </div>
       <span style="font-size:12px;color:#94a3b8;">${total} stale total</span>
     </div>
 
@@ -424,6 +457,28 @@ function _arRenderStale() {
 function _arUpdateStaleAssignBtn() {
   var btn = document.getElementById('arStaleAssignBtn')
   if (btn) btn.textContent = `Reassign Selected (${_arStaleSelectedLeads.size})`
+}
+
+async function _arSSelectAllPages() {
+  var btn = document.getElementById('arSSelectAllPagesBtn')
+  if (btn) { btn.textContent = '⏳ Loading...'; btn.disabled = true }
+  try {
+    var qs = `/leads/assign-reassign/stale?days=${_arStaleDays}&per_page=1000&page=1${_arStaleStatus ? '&status=' + encodeURIComponent(_arStaleStatus) : ''}`
+    var data = await _apiRequest(qs, { headers: _apiAuthHeaders(), retries: 1, timeoutMs: 20000 })
+    ;(data.leads || []).forEach(function (l) {
+      _arStaleSelectedLeads.add(l.id)
+      var chk = document.getElementById('arSChk_' + l.id)
+      if (chk) chk.checked = true
+      var row = document.getElementById('arSRow_' + l.id)
+      if (row) row.style.background = '#eff6ff'
+    })
+    _arUpdateStaleAssignBtn()
+    showToast(`${_arStaleSelectedLeads.size} leads selected across all pages.`, 'success')
+    if (btn) { btn.textContent = `✓ All ${_arStaleSelectedLeads.size} Selected`; btn.disabled = true }
+  } catch (err) {
+    showToast('Failed to select all leads.', 'error')
+    if (btn) { btn.textContent = `Select All ${_arStaleTotal} Leads`; btn.disabled = false }
+  }
 }
 
 async function _arBulkAssignStale() {
@@ -469,10 +524,6 @@ function _arRenderWorkload() {
   var members = _arWorkloadMembers
   var assignable = _arWorkloadAssignable
 
-  var assignableOptions = assignable.map(function (u) {
-    return `<option value="${u.id}">${escape(u.name)}</option>`
-  }).join('')
-
   if (members.length === 0) {
     tabContent.innerHTML = `<div style="text-align:center;padding:40px;color:#64748b;">No team members found.</div>`
     return
@@ -483,8 +534,12 @@ function _arRenderWorkload() {
   var cards = members.map(function (m) {
     var barPct = Math.round(((m.active_leads || 0) / maxActive) * 100)
     var barColor = barPct > 75 ? '#ef4444' : barPct > 50 ? '#f59e0b' : '#22c55e'
+    var cardAssignableOptions = assignable
+      .filter(function (u) { return u.id !== m.id })
+      .map(function (u) { return `<option value="${u.id}">${escape(u.name)}</option>` })
+      .join('')
     return `
-      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;min-width:220px;flex:1;">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
           <div>
             <div style="font-weight:700;font-size:14px;color:#0f172a;">${escape(m.name)}</div>
@@ -505,31 +560,50 @@ function _arRenderWorkload() {
         <div style="background:#f1f5f9;border-radius:4px;height:6px;margin-bottom:12px;">
           <div style="background:${barColor};height:6px;border-radius:4px;width:${barPct}%;transition:width 0.4s;"></div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <select id="arMoveTo_${m.id}" class="dash-filter-ctl" style="font-size:12px;flex:1;min-width:120px;">
-            <option value="">Move to...</option>
-            ${assignableOptions}
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <select id="arMoveStatus_${m.id}" class="dash-filter-ctl" style="font-size:12px;width:100%;">
+            <option value="">Any Active Status</option>
+            <option value="new">New</option>
+            <option value="no_answer">No Answer</option>
+            <option value="follow_up">Follow Up</option>
+            <option value="callback_scheduled">Callback Scheduled</option>
+            <option value="interested">Interested</option>
+            <option value="site_visit_planned">Site Visit Planned</option>
+            <option value="site_visit_done">Site Visit Done</option>
+            <option value="negotiation">Negotiation</option>
+            <option value="not_interested">Not Interested</option>
+            <option value="booking_done">Booking Done</option>
+            <option value="lost">Lost</option>
+            <option value="junk">Junk</option>
           </select>
-          <input id="arMoveCount_${m.id}" type="number" min="1" max="100" value="10" class="dash-filter-ctl" style="width:60px;font-size:12px;">
-          <button onclick="_arMoveLeads(${m.id})" class="button secondary" style="font-size:12px;padding:5px 10px;">Move</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <select id="arMoveTo_${m.id}" class="dash-filter-ctl" style="font-size:12px;flex:1;min-width:80px;">
+              <option value="">Move to...</option>
+              ${cardAssignableOptions}
+            </select>
+            <input id="arMoveCount_${m.id}" type="number" min="1" max="500" value="10" class="dash-filter-ctl" style="width:54px;font-size:12px;">
+          </div>
+          <button onclick="_arMoveLeads(${m.id})" class="button secondary" style="font-size:12px;padding:7px;width:100%;">Move</button>
         </div>
       </div>`
   }).join('')
 
   tabContent.innerHTML = `
     <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;">
-      <p style="font-size:13px;color:#475569;margin:0;">Move active leads from one member to another. Leads in Lost/Junk/Booking Done are excluded.</p>
+      <p style="font-size:13px;color:#475569;margin:0;">Move leads from one member to another. Use the status filter to target a specific stage.</p>
       <button onclick="_arLoadWorkload()" class="button secondary" style="font-size:12px;padding:5px 14px;"><i class="fa-solid fa-rotate"></i> Refresh</button>
     </div>
-    <div style="display:flex;gap:14px;flex-wrap:wrap;">${cards}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:14px;">${cards}</div>
   `
 }
 
 async function _arMoveLeads(fromUserId) {
   var toEl = document.getElementById('arMoveTo_' + fromUserId)
   var countEl = document.getElementById('arMoveCount_' + fromUserId)
+  var statusEl = document.getElementById('arMoveStatus_' + fromUserId)
   var toId = toEl && toEl.value ? Number(toEl.value) : null
-  var count = countEl ? Math.max(1, Math.min(100, Number(countEl.value) || 10)) : 10
+  var count = countEl ? Math.max(1, Math.min(500, Number(countEl.value) || 10)) : 10
+  var statusFilter = statusEl ? statusEl.value : ''
 
   if (!toId) { showToast('Please select a destination member.', 'warning'); return }
   if (toId === fromUserId) { showToast('Cannot move leads to the same person.', 'warning'); return }
@@ -539,16 +613,17 @@ async function _arMoveLeads(fromUserId) {
   _arWorkloadMembers.forEach(function (m) { if (m.id === fromUserId) fromName = m.name })
   _arWorkloadAssignable.forEach(function (u) { if (u.id === toId) toName = u.name })
 
-  if (!confirm(`Move ${count} lead${count !== 1 ? 's' : ''} from ${fromName} to ${toName}?`)) return
+  var statusLabel = statusFilter ? ` "${statusFilter.replace(/_/g, ' ')}"` : ''
+  if (!confirm(`Move ${count}${statusLabel} lead${count !== 1 ? 's' : ''} from ${fromName} to ${toName}?`)) return
 
   try {
     var result = await _apiRequest('/leads/assign-reassign/workload-move', {
       method: 'POST',
       headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
-      body: JSON.stringify({ from_user_id: fromUserId, to_user_id: toId, count: count }),
+      body: JSON.stringify({ from_user_id: fromUserId, to_user_id: toId, count: count, status_filter: statusFilter }),
       retries: 0,
     })
-    showToast(`Moved ${result.moved} lead${result.moved !== 1 ? 's' : ''}.`, 'success')
+    showToast(`Moved ${result.moved} lead${result.moved !== 1 ? 's' : ''}${statusLabel}.`, 'success')
     _arLoadWorkload()
   } catch (err) {
     showToast('Move failed: ' + (err && err.message || 'Unknown error'), 'error')

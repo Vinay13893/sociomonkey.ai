@@ -224,6 +224,7 @@ function applyPipelineFilters() {
               <div class="pipeline-card-meta">${escape(lead.project_name || 'No Project')} · ${escape(mgrName || 'Unassigned')}</div>
               <div class="pipeline-card-actions" onclick="event.stopPropagation()">
                 <button class="pipeline-card-action-btn" title="Call" onclick='_abStartCallFlow(${lead.id}, ${JSON.stringify(lead.phone || '')}, ${JSON.stringify(lead.name || 'Lead')}); event.stopPropagation();'>📞</button>
+                <button class="pipeline-card-action-btn" title="WhatsApp" onclick='openWhatsAppModal(${lead.id}, ${JSON.stringify(lead.phone || '')}, ${JSON.stringify(lead.alternate_phone || '')}, ${JSON.stringify(lead.name || 'Lead')}, ${lead.project_id || 'null'}); event.stopPropagation();'>💬</button>
                 <button class="pipeline-card-action-btn" title="Callback" onclick="openLeadCallbackScheduler(${lead.id}); event.stopPropagation();">📅</button>
                 <button class="pipeline-card-action-btn" title="Notes" onclick="openLeadInlineNoteEditor(${lead.id}); event.stopPropagation();">📝</button>
                 <button class="pipeline-card-action-btn" title="Open Lead" onclick="viewLeadDetails(${lead.id}); event.stopPropagation();">↗</button>

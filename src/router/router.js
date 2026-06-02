@@ -6,9 +6,15 @@
 function showContent() {
   _PERF.count('showContent')
   window._ACTIVE_ROUTE = activeTab  // update global route BEFORE any render function runs — this is what kills stale _guard() checks in renders that are no longer the active route
+  if (window._PENDING_LEAD_ID) {
+    var _pendingId = window._PENDING_LEAD_ID
+    window._PENDING_LEAD_ID = null
+    window._ACTIVE_ROUTE = 'lead_details'
+    if (typeof viewLeadDetails === 'function') { viewLeadDetails(_pendingId); return }
+  }
   if (activeTab === 'dashboard') return renderDashboard()
   if (activeTab === 'leads') return renderLeads()
-  if (activeTab === 'action_board') { loadUsers && loadUsers(); return renderActionBoard() }
+  if (activeTab === 'action_board') { return (loadUsers ? loadUsers() : Promise.resolve()).then(function() { if (window._ACTIVE_ROUTE === 'action_board') renderActionBoard() }) }
   if (activeTab === 'assign_reassign') return renderAssignReassign()
   if (activeTab === 'recycle_queue') return renderAssignReassign('recycle_queue')
   if (activeTab === 'projects') return renderProjects()
@@ -19,6 +25,7 @@ function showContent() {
   if (activeTab === 'export') return renderExportLeads()
   if (activeTab === 'platform') return renderPlatformAdmin()
   if (activeTab === 'activitylogs') return renderActivityLogs()
+  if (activeTab === 'lead_sources') return renderLeadSources()
   if (activeTab === 'profile') return renderMyProfile()
   if (activeTab === 'product_home') {
     // LMS product home has its own rich landing page
@@ -84,6 +91,22 @@ function parseRoute() {
   const raw  = window.location.pathname
   const path = raw.replace(/\/+$/, '') || '/'
 
+  // Single-PWA LMS launch entry: /apps/lms
+  if (path === '/apps/lms') {
+    return { layer: 'lms-entry', product: 'lms' }
+  }
+
+  // Defensive normalization for malformed LMS aliases occasionally produced by
+  // legacy URL parsing paths.
+  if (path === '/apps/lms/apps') {
+    history.replaceState({}, '', '/apps/lms')
+    return { layer: 'lms-entry', product: 'lms' }
+  }
+  if (path === '/apps/lms/apps/login') {
+    history.replaceState({}, '', '/login')
+    return { layer: 'platform-login' }
+  }
+
   // Explicit platform paths
   if (PLATFORM_ROUTE_VIEWS[path]) {
     return { layer: 'platform', view: PLATFORM_ROUTE_VIEWS[path] }
@@ -102,6 +125,10 @@ function parseRoute() {
   // Canonical tenant app login path: /apps/:product/:slug/login
   const appTenantLoginMatch = path.match(/^\/apps\/([^\/]+)\/([^\/]+)\/login$/)
   if (appTenantLoginMatch) {
+    if (appTenantLoginMatch[1] === 'lms' && appTenantLoginMatch[2] === 'apps') {
+      history.replaceState({}, '', '/login')
+      return { layer: 'platform-login' }
+    }
     return {
       layer: 'tenant-login',
       product: appTenantLoginMatch[1],
@@ -110,9 +137,26 @@ function parseRoute() {
     }
   }
 
+  // Lead detail sub-path: /apps/:product/:slug/:tab/lead/:leadId
+  const appLeadMatch = path.match(/^\/apps\/([^\/]+)\/([^\/]+)\/([^\/]+)\/lead\/(\d+)$/)
+  if (appLeadMatch) {
+    return {
+      layer: 'tenant',
+      product: appLeadMatch[1],
+      slug: authCanonicalTenantSlug(appLeadMatch[2]),
+      tenant_data_slug: authTenantDataSlug(appLeadMatch[2]),
+      tab: authCanonicalTenantTab(appLeadMatch[3]),
+      leadId: parseInt(appLeadMatch[4], 10),
+    }
+  }
+
   // Canonical tenant app path: /apps/:product/:slug or /apps/:product/:slug/:tab
   const appTenantMatch = path.match(/^\/apps\/([^\/]+)\/([^\/]+)(?:\/([^\/]+))?$/)
   if (appTenantMatch) {
+    if (appTenantMatch[1] === 'lms' && appTenantMatch[2] === 'apps') {
+      history.replaceState({}, '', '/apps/lms')
+      return { layer: 'lms-entry', product: 'lms' }
+    }
     const canonicalSlug = authCanonicalTenantSlug(appTenantMatch[2])
     const canonicalTab = authCanonicalTenantTab(appTenantMatch[3] || 'dashboard')
     const canonicalPath = authBuildTenantTabPath(canonicalSlug, appTenantMatch[1], canonicalTab)
@@ -239,11 +283,100 @@ async function _dispatchInner() {
   const route = parseRoute()
   _PERF.end('parseRoute')
 
+  function _setTenantCookie(slug) {
+    try {
+      if (!slug) return
+      document.cookie = 'lms_last_tenant_slug=' + encodeURIComponent(slug) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure'
+    } catch (_e) {}
+  }
+
+  function _isValidTenantSlug(slug) {
+    var s = String(slug || '').trim().toLowerCase()
+    if (!s) return false
+    if (!/^[a-z0-9-]{2,80}$/.test(s)) return false
+    var reserved = { apps:1, app:1, login:1, lms:1, crm:1, products:1, api:1 }
+    return !reserved[s]
+  }
+
+  function _readTenantCookie() {
+    try {
+      var parts = (document.cookie || '').split(';')
+      for (var i = 0; i < parts.length; i++) {
+        var kv = parts[i].trim()
+        if (kv.indexOf('lms_last_tenant_slug=') === 0) {
+          return decodeURIComponent(kv.substring('lms_last_tenant_slug='.length))
+        }
+      }
+    } catch (_e) {}
+    return ''
+  }
+
+  function _rememberTenantSlug(slug) {
+    try {
+      var canonical = authCanonicalTenantSlug(slug || '')
+      if (!canonical || !_isValidTenantSlug(canonical)) return
+      localStorage.setItem('lms_last_tenant_slug', canonical)
+      _setTenantCookie(canonical)
+    } catch (_e) {}
+  }
+
+  function _lastTenantSlug() {
+    try {
+      var fromStorage = authCanonicalTenantSlug(localStorage.getItem('lms_last_tenant_slug') || '')
+      if (fromStorage && _isValidTenantSlug(fromStorage)) return fromStorage
+      var fromCookie = authCanonicalTenantSlug(_readTenantCookie() || '')
+      if (fromCookie && _isValidTenantSlug(fromCookie)) {
+        localStorage.setItem('lms_last_tenant_slug', fromCookie)
+        return fromCookie
+      }
+      // Purge corrupted hints so they can't keep poisoning route resolution.
+      localStorage.removeItem('lms_last_tenant_slug')
+      document.cookie = 'lms_last_tenant_slug=; Path=/; Max-Age=0; SameSite=Lax; Secure'
+    } catch (_e) {}
+    return ''
+  }
+
+  // ── LMS PWA launch entry ─────────────────────────────────────────────────
+  if (route.layer === 'lms-entry') {
+    if (token && user && authIsTenantUser()) {
+      const tenantSlug = authCanonicalTenantSlug((user && user.tenant_slug) || _lastTenantSlug())
+      if (tenantSlug) {
+        _rememberTenantSlug(tenantSlug)
+        history.replaceState({}, '', authBuildTenantTabPath(tenantSlug, 'lms', 'dashboard'))
+        return _dispatchInner()
+      }
+    }
+    if (token && user && authIsPlatformUser()) {
+      history.replaceState({}, '', '/')
+      return _dispatchInner()
+    }
+    var hintedTenant = _lastTenantSlug()
+    if (hintedTenant) {
+      loginRedirectPath = '/apps/lms'
+      history.replaceState({}, '', authBuildTenantLoginPath(hintedTenant, 'lms'))
+      _setPublicLoginMode(true)
+      renderLogin({ type: 'tenant', slug: hintedTenant, product: 'lms' })
+      return
+    }
+    loginRedirectPath = '/apps/lms'
+    history.replaceState({}, '', '/login')
+    _setPublicLoginMode(true)
+    clearTenantContext()
+    renderLogin({ type: 'platform' })
+    return
+  }
+
   // ── Login pages (no auth required) ─────────────────────────────────────────
   if (route.layer === 'platform-login') {
-    // Already authenticated → go to platform dashboard
+    // Already authenticated → route by user type
     if (token && user) {
-      history.replaceState({}, '', '/')
+      if (authIsTenantUser() && user.tenant_slug) {
+        // Tenant users must not land on the platform dashboard; send them to
+        // their own app so the platform-route guard never clears their session.
+        history.replaceState({}, '', authBuildTenantAppPath(user.tenant_slug, 'lms'))
+      } else {
+        history.replaceState({}, '', '/')
+      }
       return _dispatchInner()
     }
     _setPublicLoginMode(true)
@@ -252,9 +385,11 @@ async function _dispatchInner() {
     return
   }
   if (route.layer === 'tenant-login') {
+    _rememberTenantSlug(route.slug)
     // Already authenticated → go to tenant LMS
     if (token && user) {
       const slug = (user && user.tenant_slug) || route.slug
+      _rememberTenantSlug(slug)
       history.replaceState({}, '', authBuildTenantAppPath(slug, route.product || 'lms'))
       return _dispatchInner()
     }
@@ -320,6 +455,7 @@ async function _dispatchInner() {
 
   // ── Tenant routes (including platform owner drilling in via product hub) ────
   if (route.layer === 'tenant') {
+    _rememberTenantSlug(route.slug)
     platformTenantSlug = route.tenant_data_slug || authTenantDataSlug(route.slug)
     // Sync currentProduct from URL so nav items and content match the route
     if (route.product) {
@@ -327,6 +463,13 @@ async function _dispatchInner() {
       localStorage.setItem('current_product', route.product)
     }
     activeTab = route.tab || 'dashboard'
+    if (route.leadId) {
+      var _TAB_SLUGS = { action_board: 'action-board', recycle_queue: 'recycle-queue', activitylogs: 'activity-logs' }
+      var _tabSlug = _TAB_SLUGS[activeTab] || activeTab
+      window._PENDING_LEAD_ID = route.leadId
+      window._LEAD_DETAIL_ORIGIN = activeTab
+      window._LEAD_ORIGIN_URL = authBuildTenantTabPath(platformTenantSlug, currentProduct, _tabSlug)
+    }
     // Don't block render — cached paths (in-memory/sessionStorage) apply branding
     // synchronously; cold-path network fetch applies branding when it resolves.
     loadTenantConfig(platformTenantSlug)

@@ -196,7 +196,17 @@ async function openProjectAssetsModal(projectId, projectName) {
         <button class="button secondary" onclick="document.getElementById('projectAssetsModal')?.remove()" style="padding:6px 10px;font-size:12px;">Close</button>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-        <input type="file" id="projectAssetFile" class="input" style="max-width:420px;" accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.xlsx,.xls,.doc,.docx,.zip" />
+        <input type="file" id="projectAssetFile" class="input" style="max-width:300px;" accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.xlsx,.xls,.doc,.docx,.zip" />
+        <select id="projectAssetType" class="select" style="max-width:180px;font-size:13px;">
+          <option value="">— Asset Type —</option>
+          <option value="brochure">Brochure</option>
+          <option value="price_list">Price List</option>
+          <option value="floor_plan">Floor Plan</option>
+          <option value="payment_plan">Payment Plan</option>
+          <option value="location_map">Location Map</option>
+          <option value="gallery_pdf">Gallery PDF</option>
+          <option value="custom_pdf">Custom PDF</option>
+        </select>
         <button class="button" onclick="uploadProjectAsset(${projectId})" style="font-size:13px;">Upload Asset</button>
       </div>
       <div style="font-size:12px;color:#64748b;margin-bottom:10px;">Supported: PDF, Images, Excel, Word, ZIP</div>
@@ -227,6 +237,7 @@ async function loadProjectAssets(projectId) {
           <thead>
             <tr>
               <th>File Name</th>
+              <th>Type</th>
               <th>Uploaded By</th>
               <th>Upload Date</th>
               <th>View</th>
@@ -234,15 +245,30 @@ async function loadProjectAssets(projectId) {
             </tr>
           </thead>
           <tbody>
-            ${assets.map(a => `
+            ${assets.map(a => {
+              const typeLabels = { brochure: 'Brochure', price_list: 'Price List', floor_plan: 'Floor Plan', payment_plan: 'Payment Plan', location_map: 'Location Map', gallery_pdf: 'Gallery PDF', custom_pdf: 'Custom PDF' }
+              const typeLabel = (a.asset_type && typeLabels[a.asset_type]) ? typeLabels[a.asset_type] : (a.asset_type || '—')
+              return `
               <tr>
                 <td>${escape(a.file_name || '-')}</td>
+                <td>
+                  <select class="select" onchange="patchProjectAssetType(${projectId}, ${a.id}, this.value)" style="font-size:11px;padding:3px 6px;min-width:110px;">
+                    <option value="">— Type —</option>
+                    <option value="brochure" ${a.asset_type === 'brochure' ? 'selected' : ''}>Brochure</option>
+                    <option value="price_list" ${a.asset_type === 'price_list' ? 'selected' : ''}>Price List</option>
+                    <option value="floor_plan" ${a.asset_type === 'floor_plan' ? 'selected' : ''}>Floor Plan</option>
+                    <option value="payment_plan" ${a.asset_type === 'payment_plan' ? 'selected' : ''}>Payment Plan</option>
+                    <option value="location_map" ${a.asset_type === 'location_map' ? 'selected' : ''}>Location Map</option>
+                    <option value="gallery_pdf" ${a.asset_type === 'gallery_pdf' ? 'selected' : ''}>Gallery PDF</option>
+                    <option value="custom_pdf" ${a.asset_type === 'custom_pdf' ? 'selected' : ''}>Custom PDF</option>
+                  </select>
+                </td>
                 <td>${escape(a.uploaded_by_name || '-')}</td>
                 <td>${a.uploaded_at ? new Date(a.uploaded_at).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-'}</td>
                 <td><button class="button secondary" onclick="viewProjectAsset(${projectId}, ${a.id})" style="font-size:12px;padding:4px 8px;">View</button></td>
                 <td><button class="button" onclick="downloadProjectAsset(${projectId}, ${a.id})" style="font-size:12px;padding:4px 8px;">Download</button></td>
-              </tr>
-            `).join('')}
+              </tr>`
+            }).join('')}
           </tbody>
         </table>
       </div>
@@ -262,6 +288,8 @@ async function uploadProjectAsset(projectId) {
 
   const formData = new FormData()
   formData.append('file', file)
+  const assetTypeEl = document.getElementById('projectAssetType')
+  if (assetTypeEl && assetTypeEl.value) formData.append('asset_type', assetTypeEl.value)
   try {
     const res = await fetch(`${API_BASE}/projects/${projectId}/assets`, {
       method: 'POST',
@@ -315,3 +343,14 @@ async function downloadProjectAsset(projectId, assetId) {
   }
 }
 
+async function patchProjectAssetType(projectId, assetId, assetType) {
+  try {
+    await fetch(`${API_BASE}/projects/${projectId}/assets/${assetId}`, {
+      method: 'PATCH',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, _apiAuthHeaders()),
+      body: JSON.stringify({ asset_type: assetType || null }),
+    })
+  } catch (_) {
+    showToast('Unable to update asset type.', 'error')
+  }
+}

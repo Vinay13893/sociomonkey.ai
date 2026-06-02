@@ -34,11 +34,11 @@ function render() {
 
 function initMobileNav() {
   if (mobileNavInitialized) return
-  mobileNavInitialized = true
   const hamburger = document.getElementById('hamburgerBtn')
   const overlay = document.getElementById('mobileOverlay')
   const sidebar = document.getElementById('sidebar')
   if (!hamburger || !overlay || !sidebar) return
+  mobileNavInitialized = true
   hamburger.addEventListener('click', () => {
     sidebar.classList.toggle('open')
     overlay.classList.toggle('active')
@@ -174,6 +174,12 @@ async function init() {
   } else {
     // Normal session restore from storage (validates token expiry locally)
     var hasSession = authRestoreSession()
+    // authRestoreSession may return 'refresh' when the access token is missing
+    // or expired but a long-lived refresh token is present \u2014 exchange it now,
+    // synchronously waiting so the rest of init sees a valid token.
+    if (hasSession === 'refresh') {
+      try { hasSession = await authExchangeRefresh() } catch (_e) { hasSession = false }
+    }
     _PERF.lap('init', 'session=' + (hasSession ? 'restored-from-storage' : 'none-redirect-to-login'))
     if (hasSession) {
       if (token) authScheduleExpiry()

@@ -9,6 +9,13 @@
 // Roles that belong to the platform layer (not tenant apps)
 var AUTH_PLATFORM_ROLES = new Set(['platform_owner', 'platform_admin', 'product_admin'])
 
+function _authIsLegacyPlatformSuperadmin(target) {
+  if (!target || target.role !== 'superadmin') return false
+  // Legacy behavior: if a superadmin is not bound to a tenant, treat as
+  // platform-scoped. Tenant-bound superadmins must remain tenant users.
+  return !(target.tenant_slug || target.tenant_id)
+}
+
 // Route-level slug aliases (URL canonicalization) while preserving existing
 // tenant slugs in backend data/auth flows.
 var AUTH_TENANT_ROUTE_ALIASES = Object.freeze({
@@ -95,13 +102,13 @@ function authSecondsRemaining(tok) {
 // Returns true if the current (or given) user is a platform-layer user
 function authIsPlatformUser(u) {
   var target = (typeof u !== 'undefined') ? u : user
-  return !!(target && AUTH_PLATFORM_ROLES.has(target.role))
+  return !!(target && (AUTH_PLATFORM_ROLES.has(target.role) || _authIsLegacyPlatformSuperadmin(target)))
 }
 
 // Returns true if the current (or given) user is a tenant user
 function authIsTenantUser(u) {
   var target = (typeof u !== 'undefined') ? u : user
-  return !!(target && !AUTH_PLATFORM_ROLES.has(target.role))
+  return !!(target && !authIsPlatformUser(target))
 }
 
 // Returns true if the current user has the exact given role
@@ -160,7 +167,7 @@ function authGetLoginPath(route) {
  * remember=true  → localStorage  (survives browser close)
  * remember=false → sessionStorage (cleared when tab closes)
  */
-function authSetSession(newToken, newUser, remember) {
+function authSetSession(newToken, newUser, remember, refreshToken) {
   token = newToken
   user  = newUser
   if (remember) {
@@ -173,6 +180,11 @@ function authSetSession(newToken, newUser, remember) {
     sessionStorage.setItem('lms_user',  JSON.stringify(newUser))
     localStorage.removeItem('lms_token')
     localStorage.removeItem('lms_user')
+  }
+  // Refresh token is long-lived (30d) and only ever stored in localStorage,
+  // and only when the caller passes one ("Keep me signed in" flow).
+  if (refreshToken) {
+    localStorage.setItem('lms_refresh_token', refreshToken)
   }
   // Broadcast login event to other tabs
   try {
@@ -200,6 +212,7 @@ function authClearSession() {
     localStorage.removeItem('lms_token')
     localStorage.removeItem('lms_user')
     localStorage.removeItem('lms_products')
+    localStorage.removeItem('lms_refresh_token')
     sessionStorage.removeItem('lms_token')
     sessionStorage.removeItem('lms_user')
     sessionStorage.removeItem('lms_products')
@@ -216,8 +229,16 @@ function authClearSession() {
  */
 function authRestoreSession() {
   var tok = localStorage.getItem('lms_token') || sessionStorage.getItem('lms_token')
-  if (!tok) return false
+  var refreshTok = localStorage.getItem('lms_refresh_token')
+  // If access token is missing or expired BUT a refresh token exists, the
+  // caller (boot code) should kick off authExchangeRefresh() and retry. We
+  // signal that here by returning 'refresh' instead of false so boot can
+  // distinguish "never logged in" from "access token aged out, refresh me".
+  if (!tok) {
+    return refreshTok ? 'refresh' : false
+  }
   if (authTokenExpired(tok)) {
+    if (refreshTok) return 'refresh'
     authClearSession()
     return false
   }
@@ -231,8 +252,53 @@ function authRestoreSession() {
     var rawProducts = localStorage.getItem('lms_products') || sessionStorage.getItem('lms_products')
     if (rawProducts) availableProducts = JSON.parse(rawProducts)
   } catch (e) {}
+
+  // If the short-lived (24h) access token has < 1 hour remaining and we have a
+  // refresh token, proactively exchange it so the user never sees an expiry.
+  try {
+    if (refreshTok) {
+      var secs = authSecondsRemaining(token)
+      if (secs > 0 && secs < 3600) {
+        authExchangeRefresh()
+      }
+    }
+  } catch (e) {}
   return true
 }
+
+// Exchange the stored refresh token for a fresh access token (and rotated
+// refresh token). Returns a Promise resolving true on success, false otherwise.
+function authExchangeRefresh() {
+  var refreshTok = localStorage.getItem('lms_refresh_token')
+  if (!refreshTok) return Promise.resolve(false)
+  return fetch(API_BASE + '/auth/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: refreshTok }),
+  }).then(function (resp) {
+    if (!resp.ok) {
+      // 401 → refresh token expired or invalid. Drop it so we don't loop.
+      if (resp.status === 401) {
+        localStorage.removeItem('lms_refresh_token')
+        authClearSession()
+      }
+      return null
+    }
+    return resp.json()
+  }).then(function (data) {
+    if (data && data.token) {
+      var nextUser = data.user || user
+      authSetSession(data.token, nextUser, true, data.refresh_token || null)
+      authScheduleExpiry()
+      return true
+    }
+    return false
+  }).catch(function () { return false })
+}
+
+// Legacy alias — retained so any older callers don't break. Routes through the
+// refresh-token exchange now instead of a Bearer-auth /refresh call.
+function authSilentRefresh() { return authExchangeRefresh() }
 
 // ── Session Expiry Scheduling ─────────────────────────────────────────────────
 
@@ -251,7 +317,13 @@ function authScheduleExpiry() {
   var secs = authSecondsRemaining(token)
   if (secs <= 0) return
 
-  if (secs > 300) {
+  // If we hold a refresh token, schedule a silent exchange ~5 min before the
+  // 24h access token expires. The expiry banner never needs to show.
+  var hasRefresh = !!localStorage.getItem('lms_refresh_token')
+  if (hasRefresh) {
+    var refreshAt = Math.max(1, secs - 300) * 1000
+    _authWarnTimer = setTimeout(authExchangeRefresh, refreshAt)
+  } else if (secs > 300) {
     _authWarnTimer = setTimeout(authShowExpiryWarning, (secs - 300) * 1000)
   }
 
