@@ -55,7 +55,7 @@ def _check_source_ownership(source, user):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('', methods=['GET'])
-@require_role('superadmin', 'sales_manager')
+@require_role('superadmin', 'sales_manager', 'platform_owner')
 def list_sources():
     user = request.current_user
     sources = LeadSource.query.filter_by(
@@ -65,7 +65,7 @@ def list_sources():
 
 
 @lead_sources_bp.route('', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def create_source():
     user = request.current_user
     data = request.get_json() or {}
@@ -112,7 +112,7 @@ def create_source():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('/<int:source_id>', methods=['GET'])
-@require_role('superadmin', 'sales_manager')
+@require_role('superadmin', 'sales_manager', 'platform_owner')
 def get_source(source_id):
     user = request.current_user
     source = LeadSource.query.get_or_404(source_id)
@@ -123,7 +123,7 @@ def get_source(source_id):
 
 
 @lead_sources_bp.route('/<int:source_id>', methods=['PUT'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def update_source(source_id):
     user = request.current_user
     source = LeadSource.query.get_or_404(source_id)
@@ -170,7 +170,7 @@ def update_source(source_id):
 
 
 @lead_sources_bp.route('/<int:source_id>', methods=['DELETE'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def delete_source(source_id):
     user = request.current_user
     source = LeadSource.query.get_or_404(source_id)
@@ -187,7 +187,7 @@ def delete_source(source_id):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('/<int:source_id>/enable', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def enable_source(source_id):
     user = request.current_user
     source = LeadSource.query.get_or_404(source_id)
@@ -200,7 +200,7 @@ def enable_source(source_id):
 
 
 @lead_sources_bp.route('/<int:source_id>/disable', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def disable_source(source_id):
     user = request.current_user
     source = LeadSource.query.get_or_404(source_id)
@@ -217,7 +217,7 @@ def disable_source(source_id):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('/<int:source_id>/test', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def test_source(source_id):
     """
     Test the connection / permissions for a lead source.
@@ -390,7 +390,7 @@ def _test_google(source: LeadSource) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('/meta/pages', methods=['GET'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def meta_list_pages():
     """List Meta pages accessible to the given access_token."""
     user = request.current_user
@@ -410,7 +410,7 @@ def meta_list_pages():
 
 
 @lead_sources_bp.route('/meta/forms/<page_id>', methods=['GET'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def meta_list_forms(page_id):
     """List lead gen forms for a Meta page."""
     user = request.current_user
@@ -435,7 +435,7 @@ def meta_list_forms(page_id):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('/logs', methods=['GET'])
-@require_role('superadmin', 'sales_manager')
+@require_role('superadmin', 'sales_manager', 'platform_owner')
 def ingestion_logs():
     user = request.current_user
     source_id = request.args.get('source_id', type=int)
@@ -465,7 +465,7 @@ def ingestion_logs():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('/reports/by-source', methods=['GET'])
-@require_role('superadmin', 'sales_manager')
+@require_role('superadmin', 'sales_manager', 'platform_owner')
 def report_by_source():
     """Lead counts grouped by source name / type, with optional date range."""
     user = request.current_user
@@ -522,7 +522,7 @@ def report_by_source():
 
 
 @lead_sources_bp.route('/reports/by-campaign', methods=['GET'])
-@require_role('superadmin', 'sales_manager')
+@require_role('superadmin', 'sales_manager', 'platform_owner')
 def report_by_campaign():
     """Lead counts grouped by campaign name."""
     user = request.current_user
@@ -574,7 +574,7 @@ def report_by_campaign():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('/meta/exchange-token', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def meta_exchange_token():
     """
     Exchange a short-lived user access token (from the browser JS SDK / OAuth
@@ -650,7 +650,7 @@ def meta_exchange_token():
 
 
 @lead_sources_bp.route('/meta/page-forms', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def meta_page_forms():
     """
     List all lead-gen forms for a specific Meta page.
@@ -705,7 +705,7 @@ def meta_page_forms():
 
 
 @lead_sources_bp.route('/meta/save-connection', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def meta_save_connection():
     """
     Finalise a Meta OAuth wizard: create or update the LeadSource with the
@@ -785,7 +785,7 @@ def meta_save_connection():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('/google/exchange-code', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def google_exchange_code():
     """
     Exchange a Google OAuth authorization code for access + refresh tokens.
@@ -856,7 +856,7 @@ def google_exchange_code():
 
 
 @lead_sources_bp.route('/google/save-connection', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def google_save_connection():
     """
     Finalise Google OAuth wizard: create or update LeadSource with Google
@@ -939,7 +939,7 @@ def google_save_connection():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('/<int:source_id>/inject-test-lead', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def inject_test_lead(source_id):
     """
     Inject a synthetic test lead through the ingestion pipeline.
@@ -1076,7 +1076,7 @@ def inject_test_lead(source_id):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @lead_sources_bp.route('/validate', methods=['POST'])
-@require_role('superadmin')
+@require_role('superadmin', 'platform_owner')
 def run_validation():
     """
     Run the Phase META-1.3 validation suite against this tenant.
