@@ -7,7 +7,7 @@
 
 	var defaultApiBase = isLocal
 		? 'http://127.0.0.1:5002/api'
-: 'https://smk-api.vercel.app/api'
+: 'https://smk-backend-api.vercel.app/api'
 
 	var configuredApiBase = (typeof runtime.API_BASE === 'string' && runtime.API_BASE.trim())
 		? runtime.API_BASE.trim()
