@@ -535,7 +535,7 @@ function _lsRenderGoogleWizard() {
         var oauthUrl = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=' + encodeURIComponent(w.clientId) +
             '&redirect_uri=' + encodeURIComponent(w.redirectUri) +
             '&response_type=code&scope=' + encodeURIComponent(scopes) +
-            '&access_type=offline&prompt=consent';
+            '&access_type=offline&prompt=select_account%20consent';
         body = `
         <p class="text-muted small">Click the button to open Google authorization. After approving, copy the <code>?code=</code> value from the redirect URL.</p>
         <a class="btn btn-danger mb-3" href="${_esc(oauthUrl)}" target="_blank">🔗 Open Google Authorization</a>
