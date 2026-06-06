@@ -491,7 +491,8 @@ async function _lsMetaSave(evt) {
 // ─── GOOGLE WIZARD ────────────────────────────────────────────────────────────
 
 function _lsStartGoogleWizard() {
-    _googleWizard = { step: 1, clientId: '', clientSecret: '', redirectUri: location.origin + '/api/lead-sources/google/oauth-callback', authCode: '', accessToken: '', refreshToken: '', user: null };
+    var _googleRedirectUri = 'https://smk-backend-api.vercel.app/api/lead-sources/google/oauth/callback';
+    _googleWizard = { step: 1, clientId: '', clientSecret: '', redirectUri: _googleRedirectUri, authCode: '', accessToken: '', refreshToken: '', user: null };
     _lsRenderGoogleWizard();
 }
 
@@ -509,7 +510,7 @@ function _lsRenderGoogleWizard() {
     var body = '';
 
     if (w.step === 1) {
-        var defaultRedirect = location.origin + '/api/lead-sources/google/oauth-callback';
+        var defaultRedirect = 'https://smk-backend-api.vercel.app/api/lead-sources/google/oauth/callback';
         body = `
         <p class="text-muted small">Create OAuth 2.0 credentials at
             <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a>.
