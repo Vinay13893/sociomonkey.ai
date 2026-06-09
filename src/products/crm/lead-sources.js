@@ -89,7 +89,15 @@ function renderLeadSources() {
         });
     });
 
-    _lsRenderTab('sources');
+    // Auto-switch to connect tab if returning from OAuth callback
+    var urlParams = new URLSearchParams(window.location.search);
+    var startTab = (urlParams.get('meta_session') || urlParams.get('google_session') || urlParams.get('meta_tab') === 'connect') ? 'connect' : 'sources';
+    _lsRenderTab(startTab);
+    if (startTab === 'connect') {
+        document.querySelectorAll('#ls-tabs .nav-link').forEach(function(a) {
+            a.classList.toggle('active', a.dataset.tab === 'connect');
+        });
+    }
 }
 
 function _lsSwitchTab(tab) {
@@ -222,6 +230,16 @@ function _lsOpenTestLead(id) {
 
 function _lsRenderConnect() {
     var el = document.getElementById('ls-body');
+    // Check if returning from OAuth
+    var urlParams = new URLSearchParams(window.location.search);
+    var metaSession   = urlParams.get('meta_session');
+    var googleSession = urlParams.get('google_session');
+    if (metaSession || googleSession) {
+        el.innerHTML = `<div class="row g-4"><div class="col-12"><div id="ls-wizard-area"></div></div></div>`;
+        if (metaSession)   _lsStartMetaWizard();
+        if (googleSession) _lsStartGoogleWizard();
+        return;
+    }
     el.innerHTML = `
     <div class="row g-4">
         <div class="col-md-5">
@@ -270,8 +288,335 @@ function _lsRenderConnect() {
 // ─── META WIZARD ──────────────────────────────────────────────────────────────
 
 function _lsStartMetaWizard() {
-    _metaWizard = { step: 1, appId: '', appSecret: '', longToken: '', user: null, pages: [], selectedPage: null, forms: [], selectedForms: [], verifyToken: '' };
+    // Check if returning from OAuth callback
+    var urlParams = new URLSearchParams(window.location.search);
+    var sessionKey = urlParams.get('meta_session');
+    if (sessionKey) {
+        _metaWizard = { step: 3, sessionKey: sessionKey, pages: [], selectedPage: null, forms: [], selectedForms: [], user: null, longToken: '' };
+        _lsRenderMetaWizard();
+        _lsMetaLoadSession(sessionKey);
+        return;
+    }
+    _metaWizard = { step: 1, businessId: '', sessionKey: '', pages: [], selectedPage: null, forms: [], selectedForms: [], user: null, longToken: '' };
     _lsRenderMetaWizard();
+}
+
+async function _lsMetaLoadSession(sessionKey) {
+    var el = document.getElementById('ls-wizard-area');
+    var res = await authFetch('/api/lead-sources/meta/auth-session/' + encodeURIComponent(sessionKey));
+    if (!res.ok) {
+        var data = await res.json();
+        if (el) el.innerHTML = '<div class="alert alert-danger">' + _esc(data.error || 'Session expired') + ' — <a href="#" onclick="_lsStartMetaWizard()">Start over</a></div>';
+        return;
+    }
+    var data = await res.json();
+    _metaWizard.user      = data.user;
+    _metaWizard.pages     = data.pages || [];
+    _metaWizard.longToken = data.long_token || '';
+    _metaWizard.step      = 3;
+    // Clean the URL
+    var cleanUrl = window.location.pathname;
+    window.history.replaceState({}, '', cleanUrl);
+    _lsRenderMetaWizard();
+}
+
+function _lsRenderMetaWizard() {
+    var el = document.getElementById('ls-wizard-area');
+    if (!el) return;
+    var w = _metaWizard;
+
+    var stepLabels = ['Business ID', 'Login', 'Select Page', 'Select Forms', 'Save'];
+    var stepNav = stepLabels.map(function(s, i) {
+        var cls = (i + 1 === w.step) ? 'bg-primary' : (i + 1 < w.step) ? 'bg-success' : 'bg-secondary';
+        return '<span class="badge ' + cls + ' me-1">' + (i + 1 < w.step ? '✓' : (i + 1)) + '. ' + s + '</span>';
+    }).join('');
+
+    var body = '';
+
+    if (w.step === 1) {
+        body = `
+        <p class="text-muted small">Enter your Facebook Business ID. You can find this in <strong>Facebook Business Manager → Settings → Business Info</strong>.</p>
+        <div class="mb-3">
+            <label class="form-label fw-semibold">Meta Business ID</label>
+            <input class="form-control" id="mw-business-id" placeholder="e.g. 123456789012345" value="${_esc(w.businessId)}">
+            <div class="form-text">This is your Business Portfolio ID from Meta Business Manager.</div>
+        </div>
+        <button class="btn btn-primary" onclick="_lsMetaStep1Next(event)">Next →</button>`;
+
+    } else if (w.step === 2) {
+        body = `
+        <p class="text-muted small">Click the button below to log in with the Facebook account that manages your Business ID <strong>${_esc(w.businessId)}</strong>.</p>
+        <div class="d-grid gap-2 mb-3" style="max-width:300px">
+            <button class="btn btn-primary btn-lg" onclick="_lsMetaOpenFacebookLogin(event)">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="white" class="me-2"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                Login with Facebook
+            </button>
+        </div>
+        <p class="text-muted small">You will be redirected to Facebook to authorize access. After approving, you'll be brought back here automatically.</p>
+        <button class="btn btn-outline-secondary btn-sm" onclick="_metaWizard.step=1; _lsRenderMetaWizard()">← Back</button>`;
+
+    } else if (w.step === 3) {
+        if (!w.pages || !w.pages.length) {
+            body = '<div class="text-center py-4"><div class="spinner-border text-primary mb-3"></div><p class="text-muted">Loading your Facebook Pages...</p></div>';
+        } else {
+            var pageItems = w.pages.map(function(p) {
+                var active = (w.selectedPage && w.selectedPage.id === p.id) ? 'active' : '';
+                return '<div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ' + active + '" style="cursor:pointer" onclick="_lsMetaSelectPage(\'' + _esc(p.id) + '\')">' +
+                    '<div><strong>' + _esc(p.name) + '</strong><br><small class="opacity-75">ID: ' + _esc(p.id) + '</small></div>' +
+                    (active ? '<span class="badge bg-primary">✓ Selected</span>' : '') +
+                '</div>';
+            }).join('');
+
+            body = '<p class="text-muted small">Logged in as <strong>' + _esc(w.user ? w.user.name : '') + '</strong>. Select the Facebook Page that runs your Lead Ads.</p>' +
+                '<div class="list-group mb-3">' + pageItems + '</div>' +
+                '<div class="d-flex gap-2">' +
+                    '<button class="btn btn-primary" onclick="_lsMetaStep3Next(event)" ' + (!w.selectedPage ? 'disabled' : '') + '>Next →</button>' +
+                '</div>';
+        }
+
+    } else if (w.step === 4) {
+        var formItems = w.forms.length ? w.forms.map(function(f) {
+            var checked = w.selectedForms.find(function(x) { return x.id === f.id; }) ? 'checked' : '';
+            var statusColor = f.status === 'ACTIVE' ? 'success' : 'secondary';
+            return '<div class="list-group-item">' +
+                '<div class="form-check">' +
+                    '<input class="form-check-input" type="checkbox" id="mwf-' + f.id + '" ' + checked + ' onchange="_lsMetaToggleForm(\'' + _esc(f.id) + '\', \'' + _esc(f.name) + '\', this.checked)">' +
+                    '<label class="form-check-label w-100" for="mwf-' + f.id + '">' +
+                        '<strong>' + _esc(f.name) + '</strong>' +
+                        '<span class="badge bg-' + statusColor + ' ms-2">' + _esc(f.status || 'UNKNOWN') + '</span>' +
+                        (f.leads_count ? '<small class="text-muted ms-2">' + f.leads_count + ' leads</small>' : '') +
+                    '</label>' +
+                '</div>' +
+            '</div>';
+        }).join('') : '<p class="text-muted p-3">No lead forms found on this page. Make sure you have active Lead Ads.</p>';
+
+        body = '<p class="text-muted small">Select lead forms to receive from <strong>' + _esc(w.selectedPage ? w.selectedPage.name : '') + '</strong>.</p>' +
+            '<div class="list-group mb-3">' + formItems + '</div>' +
+            (w.forms.length ? '<div class="mb-3"><button class="btn btn-sm btn-outline-secondary me-2" onclick="_lsMetaSelectAllForms()">Select All</button><button class="btn btn-sm btn-outline-secondary" onclick="_lsMetaClearForms()">Clear</button></div>' : '') +
+            '<div class="d-flex gap-2">' +
+                '<button class="btn btn-outline-secondary" onclick="_metaWizard.step=3; _lsRenderMetaWizard()">← Back</button>' +
+                '<button class="btn btn-primary" onclick="_metaWizard.step=5; _lsRenderMetaWizard()" ' + (!w.forms.length ? 'disabled' : '') + '>Next →</button>' +
+            '</div>';
+
+    } else if (w.step === 5) {
+        body = `
+        <div class="row g-3">
+            <div class="col-md-6">
+                <h6>Connection Summary</h6>
+                <table class="table table-sm">
+                    <tr><th>Account</th><td>${_esc(w.user ? w.user.name : '')}</td></tr>
+                    <tr><th>Page</th><td>${_esc(w.selectedPage ? w.selectedPage.name : '')}</td></tr>
+                    <tr><th>Forms Selected</th><td>${w.selectedForms.length}</td></tr>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Source Name</label>
+                <input class="form-control mb-2" id="mw-source-name" value="${_esc('Meta - ' + (w.selectedPage ? w.selectedPage.name : ''))}">
+            </div>
+        </div>
+        <div class="d-flex gap-2 mt-3">
+            <button class="btn btn-outline-secondary" onclick="_metaWizard.step=4; _lsRenderMetaWizard()">← Back</button>
+            <button class="btn btn-success" onclick="_lsMetaSave(event)">✅ Save &amp; Activate</button>
+        </div>`;
+    }
+
+    el.innerHTML = '<div class="card"><div class="card-header d-flex align-items-center gap-2"><strong>🟦 Connect Meta</strong><div class="ms-auto">' + stepNav + '</div></div><div class="card-body">' + body + '</div></div>';
+}
+
+async function _lsMetaStep1Next(evt) {
+    var businessId = (document.getElementById('mw-business-id').value || '').trim();
+    if (!businessId) { showToast('Please enter your Meta Business ID', 'danger'); return; }
+    _metaWizard.businessId = businessId;
+    _metaWizard.step = 2;
+    _lsRenderMetaWizard();
+}
+
+async function _lsMetaOpenFacebookLogin(evt) {
+    var btn = evt ? evt.target : null;
+    if (btn) { btn.disabled = true; btn.innerHTML = 'Loading...'; }
+    var res = await authFetch('/api/lead-sources/meta/start-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: _metaWizard.businessId }),
+    });
+    var data = await res.json();
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="white" class="me-2"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Login with Facebook'; }
+    if (!res.ok) { showToast(data.error || 'Could not start OAuth', 'danger'); return; }
+    window.location.href = data.auth_url;
+}
+
+function _lsMetaSelectPage(pageId) {
+    _metaWizard.selectedPage = _metaWizard.pages.find(function(p) { return p.id === pageId; }) || null;
+    _lsRenderMetaWizard();
+}
+
+async function _lsMetaStep3Next(evt) {
+    if (!_metaWizard.selectedPage) { showToast('Select a page first', 'danger'); return; }
+    var btn = evt ? evt.target : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading forms...'; }
+    var res = await authFetch('/api/lead-sources/meta/page-forms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ page_id: _metaWizard.selectedPage.id, page_access_token: _metaWizard.selectedPage.access_token }),
+    });
+    if (btn) { btn.disabled = false; btn.textContent = 'Next →'; }
+    var data = await res.json();
+    if (!res.ok) { showToast(data.error || 'Could not load forms', 'danger'); return; }
+    _metaWizard.forms = data.forms || [];
+    _metaWizard.selectedForms = _metaWizard.forms.slice();
+    _metaWizard.step = 4;
+    _lsRenderMetaWizard();
+}
+
+function _lsMetaToggleForm(id, name, checked) {
+    if (checked) {
+        if (!_metaWizard.selectedForms.find(function(f) { return f.id === id; }))
+            _metaWizard.selectedForms.push({ id: id, name: name });
+    } else {
+        _metaWizard.selectedForms = _metaWizard.selectedForms.filter(function(f) { return f.id !== id; });
+    }
+}
+
+function _lsMetaSelectAllForms() { _metaWizard.selectedForms = _metaWizard.forms.slice(); _lsRenderMetaWizard(); }
+function _lsMetaClearForms()     { _metaWizard.selectedForms = []; _lsRenderMetaWizard(); }
+
+async function _lsMetaSave(evt) {
+    var name = ((document.getElementById('mw-source-name') || {}).value || '').trim()
+               || ('Meta - ' + (_metaWizard.selectedPage ? _metaWizard.selectedPage.name : ''));
+    var btn = evt ? evt.target : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    var res = await authFetch('/api/lead-sources/meta/save-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name:              name,
+            user_token:        _metaWizard.longToken,
+            page_id:           _metaWizard.selectedPage.id,
+            page_name:         _metaWizard.selectedPage.name,
+            page_access_token: _metaWizard.selectedPage.access_token,
+            selected_forms:    _metaWizard.selectedForms,
+            verify_token:      'smk_' + _metaWizard.selectedPage.id,
+        }),
+    });
+    if (btn) { btn.disabled = false; btn.textContent = 'Save & Activate'; }
+    var data = await res.json();
+    if (!res.ok) { showToast(data.error || 'Save failed', 'danger'); return; }
+    showToast('✅ Meta source connected!', 'success');
+    await _lsLoadSources();
+    _lsSwitchTab('sources');
+}
+
+// ─── GOOGLE WIZARD ────────────────────────────────────────────────────────────
+
+function _lsStartGoogleWizard() {
+    // Check if returning from OAuth callback
+    var urlParams = new URLSearchParams(window.location.search);
+    var sessionKey = urlParams.get('google_session');
+    if (sessionKey) {
+        _googleWizard = { step: 2, sessionKey: sessionKey, user: null, accessToken: '', refreshToken: '' };
+        _lsRenderGoogleWizard();
+        _lsGoogleLoadSession(sessionKey);
+        return;
+    }
+    _googleWizard = { step: 1, sessionKey: '', user: null, accessToken: '', refreshToken: '' };
+    _lsRenderGoogleWizard();
+}
+
+async function _lsGoogleLoadSession(sessionKey) {
+    var el = document.getElementById('ls-wizard-area');
+    var res = await authFetch('/api/lead-sources/google/auth-session/' + encodeURIComponent(sessionKey));
+    if (!res.ok) {
+        var data = await res.json();
+        if (el) el.innerHTML = '<div class="alert alert-danger">' + _esc(data.error || 'Session expired') + ' — <a href="#" onclick="_lsStartGoogleWizard()">Start over</a></div>';
+        return;
+    }
+    var data = await res.json();
+    _googleWizard.user         = data.user;
+    _googleWizard.accessToken  = data.access_token || '';
+    _googleWizard.refreshToken = data.refresh_token || '';
+    _googleWizard.step         = 2;
+    var cleanUrl = window.location.pathname;
+    window.history.replaceState({}, '', cleanUrl);
+    _lsRenderGoogleWizard();
+}
+
+function _lsRenderGoogleWizard() {
+    var el = document.getElementById('ls-wizard-area');
+    if (!el) return;
+    var w = _googleWizard;
+
+    var stepLabels = ['Login', 'Account Details', 'Save'];
+    var stepNav = stepLabels.map(function(s, i) {
+        var cls = (i + 1 === w.step) ? 'bg-danger' : (i + 1 < w.step) ? 'bg-success' : 'bg-secondary';
+        return '<span class="badge ' + cls + ' me-1">' + (i + 1 < w.step ? '✓' : (i + 1)) + '. ' + s + '</span>';
+    }).join('');
+
+    var body = '';
+
+    if (w.step === 1) {
+        body = `
+        <p class="text-muted small">Click the button below to log in with the Google account that manages your Google Ads account.</p>
+        <div class="d-grid gap-2 mb-3" style="max-width:300px">
+            <button class="btn btn-outline-danger btn-lg d-flex align-items-center justify-content-center gap-2" onclick="_lsGoogleOpenLogin(event)">
+                <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                Login with Google
+            </button>
+        </div>
+        <p class="text-muted small">You'll be redirected to Google to authorize access to your Google Ads Lead Forms.</p>`;
+
+    } else if (w.step === 2) {
+        body = `
+        <p class="text-muted small">Connected as <strong>${_esc(w.user ? (w.user.name || w.user.email) : '')}</strong>.</p>
+        <div class="mb-3">
+            <label class="form-label">Google Ads Customer ID <small class="text-muted">(optional)</small></label>
+            <input class="form-control" id="gw-customer-id" placeholder="123-456-7890">
+            <div class="form-text">Find this in Google Ads → top bar next to your account name.</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Source Name</label>
+            <input class="form-control" id="gw-source-name" value="${_esc('Google - ' + (w.user ? (w.user.email || '') : ''))}">
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-success" onclick="_lsGoogleSave(event)">✅ Save &amp; Activate</button>
+        </div>`;
+    }
+
+    el.innerHTML = '<div class="card"><div class="card-header d-flex align-items-center gap-2"><strong>🔴 Connect Google</strong><div class="ms-auto">' + stepNav + '</div></div><div class="card-body">' + body + '</div></div>';
+}
+
+async function _lsGoogleOpenLogin(evt) {
+    var btn = evt ? evt.target : null;
+    if (btn) { btn.disabled = true; btn.innerHTML = 'Loading...'; }
+    var res = await authFetch('/api/lead-sources/google/start-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    var data = await res.json();
+    if (btn) { btn.disabled = false; }
+    if (!res.ok) { showToast(data.error || 'Could not start OAuth', 'danger'); return; }
+    window.location.href = data.auth_url;
+}
+
+async function _lsGoogleSave(evt) {
+    var name       = ((document.getElementById('gw-source-name') || {}).value || '').trim();
+    var customerId = ((document.getElementById('gw-customer-id') || {}).value || '').trim();
+    var btn = evt ? evt.target : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    var res = await authFetch('/api/lead-sources/google/save-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name:          name || ('Google - ' + (_googleWizard.user ? _googleWizard.user.email : '')),
+            client_id:     '__platform__',
+            client_secret: '__platform__',
+            refresh_token: _googleWizard.refreshToken,
+            customer_id:   customerId,
+            user_email:    _googleWizard.user ? _googleWizard.user.email : '',
+        }),
+    });
+    if (btn) { btn.disabled = false; btn.textContent = 'Save & Activate'; }
+    var data = await res.json();
+    if (!res.ok) { showToast(data.error || 'Save failed', 'danger'); return; }
+    showToast('✅ Google source connected!', 'success');
+    await _lsLoadSources();
+    _lsSwitchTab('sources');
 }
 
 function _lsRenderMetaWizard() {
