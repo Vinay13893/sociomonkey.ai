@@ -35,6 +35,8 @@
     { "source": "/:tenant/lms/login", "destination": "/apps/lms/:tenant/login", "permanent": true }
   ],
   "rewrites": [
+    { "source": "/privacy", "destination": "/privacy.html" },
+    { "source": "/terms", "destination": "/terms.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
