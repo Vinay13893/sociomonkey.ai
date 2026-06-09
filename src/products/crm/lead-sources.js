@@ -1,29 +1,29 @@
-/**
- * Lead Sources – Admin UI  (Phase META-1.1)
+﻿/**
+ * Lead Sources â€“ Admin UI  (Phase META-1.1)
  * ==========================================
  * Tabs:
- *   Sources     – list all sources, test/enable/disable
- *   Connect     – guided OAuth wizard (Meta and Google)
- *   Add/Edit    – manual credential form for webhooks/generic
- *   Test Lead   – inject synthetic lead through full pipeline
- *   Validate    – run 7-item PASS/FAIL validation report
- *   Logs        – paginated ingestion log
- *   Reports     – by-source and by-campaign tables
+ *   Sources     â€“ list all sources, test/enable/disable
+ *   Connect     â€“ guided OAuth wizard (Meta and Google)
+ *   Add/Edit    â€“ manual credential form for webhooks/generic
+ *   Test Lead   â€“ inject synthetic lead through full pipeline
+ *   Validate    â€“ run 7-item PASS/FAIL validation report
+ *   Logs        â€“ paginated ingestion log
+ *   Reports     â€“ by-source and by-campaign tables
  *
  * Depends on: authFetch() from auth.js, showToast() from ui-utils.js
  */
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SOURCE_TYPE_LABELS = {
-    meta:            '🟦 Facebook / Instagram',
-    google:          '🔴 Google Lead Form',
-    webhook:         '🌐 Website / Webhook',
-    housing:         '🏠 Housing.com',
-    magicbricks:     '🧱 MagicBricks',
-    ninetynineacres: '🏡 99acres',
-    indiamart:       '🏭 IndiaMART',
-    whatsapp_form:   '💬 WhatsApp Form',
+    meta:            'ðŸŸ¦ Facebook / Instagram',
+    google:          'ðŸ”´ Google Lead Form',
+    webhook:         'ðŸŒ Website / Webhook',
+    housing:         'ðŸ  Housing.com',
+    magicbricks:     'ðŸ§± MagicBricks',
+    ninetynineacres: 'ðŸ¡ 99acres',
+    indiamart:       'ðŸ­ IndiaMART',
+    whatsapp_form:   'ðŸ’¬ WhatsApp Form',
 };
 
 const DUP_MODE_LABELS = {
@@ -41,7 +41,7 @@ const ASSIGN_STRATEGY_LABELS = {
     manager_based: 'Fixed Manager',
 };
 
-// ─── Module state ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Module state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 let _lsTab     = 'sources';
 let _lsEditId  = null;
@@ -54,7 +54,7 @@ const _lsLogPerPage = 25;
 let _metaWizard   = {};
 let _googleWizard = {};
 
-// ─── Entry Point ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Entry Point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function renderLeadSources() {
     const el = document.getElementById('content');
@@ -63,8 +63,8 @@ function renderLeadSources() {
     el.innerHTML = `
     <div class="page-header d-flex align-items-center justify-content-between mb-3">
         <div>
-            <h2 class="mb-0">🔗 Lead Sources</h2>
-            <p class="text-muted mb-0 small">Manage lead ingestion — Facebook, Google, website forms and more.</p>
+            <h2 class="mb-0">ðŸ”— Lead Sources</h2>
+            <p class="text-muted mb-0 small">Manage lead ingestion â€” Facebook, Google, website forms and more.</p>
         </div>
     </div>
 
@@ -73,7 +73,7 @@ function renderLeadSources() {
         <li class="nav-item"><a class="nav-link" href="#" data-tab="connect">+ Connect</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="add">Manual / Webhook</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="testlead">Test Lead</a></li>
-        <li class="nav-item"><a class="nav-link" href="#" data-tab="validate">✅ Validate</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" data-tab="validate">âœ… Validate</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="logs">Logs</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="reports">Reports</a></li>
     </ul>
@@ -120,9 +120,9 @@ function _lsRenderTab(tab) {
     if (tab === 'reports')  return _lsLoadReports();
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TAB: Sources list
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async function _lsLoadSources() {
     const el = document.getElementById('ls-body');
@@ -140,7 +140,7 @@ function _lsRenderSources() {
         el.innerHTML = `
         <div class="text-center py-5">
             <p class="text-muted mb-3">No lead sources configured yet.</p>
-            <button class="btn btn-primary me-2" onclick="_lsSwitchTab('connect')">🔗 Connect Meta or Google</button>
+            <button class="btn btn-primary me-2" onclick="_lsSwitchTab('connect')">ðŸ”— Connect Meta or Google</button>
             <button class="btn btn-outline-secondary" onclick="_lsSwitchTab('add')">+ Manual / Webhook</button>
         </div>`;
         return;
@@ -177,7 +177,7 @@ function _lsRenderSources() {
     <div class="d-flex justify-content-between align-items-center mb-3">
         <span class="text-muted small">${_lsSources.length} source(s) configured</span>
         <div>
-            <button class="btn btn-primary btn-sm me-2" onclick="_lsSwitchTab('connect')">🔗 Connect New</button>
+            <button class="btn btn-primary btn-sm me-2" onclick="_lsSwitchTab('connect')">ðŸ”— Connect New</button>
             <button class="btn btn-outline-secondary btn-sm" onclick="_lsSwitchTab('add')">+ Manual</button>
         </div>
     </div>
@@ -197,7 +197,7 @@ async function _lsTestSource(id, evt) {
     if (btn) { btn.disabled = false; btn.textContent = 'Ping'; }
     var data = await res.json();
     var t = data.test || {};
-    var icon = t.result === 'pass' ? '✅' : t.result === 'partial' ? '⚠️' : '❌';
+    var icon = t.result === 'pass' ? 'âœ…' : t.result === 'partial' ? 'âš ï¸' : 'âŒ';
     showToast(icon + ' ' + (t.message || 'Test completed'), t.result === 'pass' ? 'success' : 'warning');
     await _lsLoadSources();
 }
@@ -224,9 +224,9 @@ function _lsOpenTestLead(id) {
     }, 120);
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// TAB: Connect — guided OAuth wizard chooser
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// TAB: Connect â€” guided OAuth wizard chooser
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _lsRenderConnect() {
     var el = document.getElementById('ls-body');
@@ -245,7 +245,7 @@ function _lsRenderConnect() {
         <div class="col-md-5">
             <div class="card h-100">
                 <div class="card-body">
-                    <h5 class="card-title">🟦 Connect Meta (Facebook / Instagram)</h5>
+                    <h5 class="card-title">ðŸŸ¦ Connect Meta (Facebook / Instagram)</h5>
                     <p class="card-text text-muted small">Guided OAuth wizard. Select your page and lead forms.</p>
                     <ul class="text-muted small mb-3">
                         <li>Enter App credentials</li>
@@ -254,14 +254,14 @@ function _lsRenderConnect() {
                         <li>Select Lead Forms</li>
                         <li>Save &amp; Activate</li>
                     </ul>
-                    <button class="btn btn-primary w-100" onclick="_lsStartMetaWizard()">Connect Meta →</button>
+                    <button class="btn btn-primary w-100" onclick="_lsStartMetaWizard()">Connect Meta â†’</button>
                 </div>
             </div>
         </div>
         <div class="col-md-5">
             <div class="card h-100">
                 <div class="card-body">
-                    <h5 class="card-title">🔴 Connect Google Lead Form</h5>
+                    <h5 class="card-title">ðŸ”´ Connect Google Lead Form</h5>
                     <p class="card-text text-muted small">OAuth 2.0 connection. Receive leads from Google Ads Lead Form extensions.</p>
                     <ul class="text-muted small mb-3">
                         <li>Enter OAuth credentials</li>
@@ -269,7 +269,7 @@ function _lsRenderConnect() {
                         <li>Configure Customer ID</li>
                         <li>Save &amp; Activate</li>
                     </ul>
-                    <button class="btn btn-danger w-100" onclick="_lsStartGoogleWizard()">Connect Google →</button>
+                    <button class="btn btn-danger w-100" onclick="_lsStartGoogleWizard()">Connect Google â†’</button>
                 </div>
             </div>
         </div>
@@ -285,7 +285,7 @@ function _lsRenderConnect() {
     <div id="ls-wizard-area" class="mt-4"></div>`;
 }
 
-// ─── META WIZARD ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ META WIZARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function _lsStartMetaWizard() {
     // Check if returning from OAuth callback
@@ -306,7 +306,7 @@ async function _lsMetaLoadSession(sessionKey) {
     var res = await authFetch('/api/lead-sources/meta/auth-session/' + encodeURIComponent(sessionKey));
     if (!res.ok) {
         var data = await res.json();
-        if (el) el.innerHTML = '<div class="alert alert-danger">' + _esc(data.error || 'Session expired') + ' — <a href="#" onclick="_lsStartMetaWizard()">Start over</a></div>';
+        if (el) el.innerHTML = '<div class="alert alert-danger">' + _esc(data.error || 'Session expired') + ' â€” <a href="#" onclick="_lsStartMetaWizard()">Start over</a></div>';
         return;
     }
     var data = await res.json();
@@ -328,20 +328,20 @@ function _lsRenderMetaWizard() {
     var stepLabels = ['Business ID', 'Login', 'Select Page', 'Select Forms', 'Save'];
     var stepNav = stepLabels.map(function(s, i) {
         var cls = (i + 1 === w.step) ? 'bg-primary' : (i + 1 < w.step) ? 'bg-success' : 'bg-secondary';
-        return '<span class="badge ' + cls + ' me-1">' + (i + 1 < w.step ? '✓' : (i + 1)) + '. ' + s + '</span>';
+        return '<span class="badge ' + cls + ' me-1">' + (i + 1 < w.step ? 'âœ“' : (i + 1)) + '. ' + s + '</span>';
     }).join('');
 
     var body = '';
 
     if (w.step === 1) {
         body = `
-        <p class="text-muted small">Enter your Facebook Business ID. You can find this in <strong>Facebook Business Manager → Settings → Business Info</strong>.</p>
+        <p class="text-muted small">Enter your Facebook Business ID. You can find this in <strong>Facebook Business Manager â†’ Settings â†’ Business Info</strong>.</p>
         <div class="mb-3">
             <label class="form-label fw-semibold">Meta Business ID</label>
             <input class="form-control" id="mw-business-id" placeholder="e.g. 123456789012345" value="${_esc(w.businessId)}">
             <div class="form-text">This is your Business Portfolio ID from Meta Business Manager.</div>
         </div>
-        <button class="btn btn-primary" onclick="_lsMetaStep1Next(event)">Next →</button>`;
+        <button class="btn btn-primary" onclick="_lsMetaStep1Next(event)">Next â†’</button>`;
 
     } else if (w.step === 2) {
         body = `
@@ -353,7 +353,7 @@ function _lsRenderMetaWizard() {
             </button>
         </div>
         <p class="text-muted small">You will be redirected to Facebook to authorize access. After approving, you'll be brought back here automatically.</p>
-        <button class="btn btn-outline-secondary btn-sm" onclick="_metaWizard.step=1; _lsRenderMetaWizard()">← Back</button>`;
+        <button class="btn btn-outline-secondary btn-sm" onclick="_metaWizard.step=1; _lsRenderMetaWizard()">â† Back</button>`;
 
     } else if (w.step === 3) {
         if (!w.pages || !w.pages.length) {
@@ -363,14 +363,14 @@ function _lsRenderMetaWizard() {
                 var active = (w.selectedPage && w.selectedPage.id === p.id) ? 'active' : '';
                 return '<div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ' + active + '" style="cursor:pointer" onclick="_lsMetaSelectPage(\'' + _esc(p.id) + '\')">' +
                     '<div><strong>' + _esc(p.name) + '</strong><br><small class="opacity-75">ID: ' + _esc(p.id) + '</small></div>' +
-                    (active ? '<span class="badge bg-primary">✓ Selected</span>' : '') +
+                    (active ? '<span class="badge bg-primary">âœ“ Selected</span>' : '') +
                 '</div>';
             }).join('');
 
             body = '<p class="text-muted small">Logged in as <strong>' + _esc(w.user ? w.user.name : '') + '</strong>. Select the Facebook Page that runs your Lead Ads.</p>' +
                 '<div class="list-group mb-3">' + pageItems + '</div>' +
                 '<div class="d-flex gap-2">' +
-                    '<button class="btn btn-primary" onclick="_lsMetaStep3Next(event)" ' + (!w.selectedPage ? 'disabled' : '') + '>Next →</button>' +
+                    '<button class="btn btn-primary" onclick="_lsMetaStep3Next(event)" ' + (!w.selectedPage ? 'disabled' : '') + '>Next â†’</button>' +
                 '</div>';
         }
 
@@ -394,8 +394,8 @@ function _lsRenderMetaWizard() {
             '<div class="list-group mb-3">' + formItems + '</div>' +
             (w.forms.length ? '<div class="mb-3"><button class="btn btn-sm btn-outline-secondary me-2" onclick="_lsMetaSelectAllForms()">Select All</button><button class="btn btn-sm btn-outline-secondary" onclick="_lsMetaClearForms()">Clear</button></div>' : '') +
             '<div class="d-flex gap-2">' +
-                '<button class="btn btn-outline-secondary" onclick="_metaWizard.step=3; _lsRenderMetaWizard()">← Back</button>' +
-                '<button class="btn btn-primary" onclick="_metaWizard.step=5; _lsRenderMetaWizard()" ' + (!w.forms.length ? 'disabled' : '') + '>Next →</button>' +
+                '<button class="btn btn-outline-secondary" onclick="_metaWizard.step=3; _lsRenderMetaWizard()">â† Back</button>' +
+                '<button class="btn btn-primary" onclick="_metaWizard.step=5; _lsRenderMetaWizard()" ' + (!w.forms.length ? 'disabled' : '') + '>Next â†’</button>' +
             '</div>';
 
     } else if (w.step === 5) {
@@ -415,12 +415,12 @@ function _lsRenderMetaWizard() {
             </div>
         </div>
         <div class="d-flex gap-2 mt-3">
-            <button class="btn btn-outline-secondary" onclick="_metaWizard.step=4; _lsRenderMetaWizard()">← Back</button>
-            <button class="btn btn-success" onclick="_lsMetaSave(event)">✅ Save &amp; Activate</button>
+            <button class="btn btn-outline-secondary" onclick="_metaWizard.step=4; _lsRenderMetaWizard()">â† Back</button>
+            <button class="btn btn-success" onclick="_lsMetaSave(event)">âœ… Save &amp; Activate</button>
         </div>`;
     }
 
-    el.innerHTML = '<div class="card"><div class="card-header d-flex align-items-center gap-2"><strong>🟦 Connect Meta</strong><div class="ms-auto">' + stepNav + '</div></div><div class="card-body">' + body + '</div></div>';
+    el.innerHTML = '<div class="card"><div class="card-header d-flex align-items-center gap-2"><strong>ðŸŸ¦ Connect Meta</strong><div class="ms-auto">' + stepNav + '</div></div><div class="card-body">' + body + '</div></div>';
 }
 
 async function _lsMetaStep1Next(evt) {
@@ -459,7 +459,7 @@ async function _lsMetaStep3Next(evt) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ page_id: _metaWizard.selectedPage.id, page_access_token: _metaWizard.selectedPage.access_token }),
     });
-    if (btn) { btn.disabled = false; btn.textContent = 'Next →'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Next â†’'; }
     var data = await res.json();
     if (!res.ok) { showToast(data.error || 'Could not load forms', 'danger'); return; }
     _metaWizard.forms = data.forms || [];
@@ -501,12 +501,12 @@ async function _lsMetaSave(evt) {
     if (btn) { btn.disabled = false; btn.textContent = 'Save & Activate'; }
     var data = await res.json();
     if (!res.ok) { showToast(data.error || 'Save failed', 'danger'); return; }
-    showToast('✅ Meta source connected!', 'success');
+    showToast('âœ… Meta source connected!', 'success');
     await _lsLoadSources();
     _lsSwitchTab('sources');
 }
 
-// ─── GOOGLE WIZARD ────────────────────────────────────────────────────────────
+// â”€â”€â”€ GOOGLE WIZARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function _lsStartGoogleWizard() {
     // Check if returning from OAuth callback
@@ -527,7 +527,7 @@ async function _lsGoogleLoadSession(sessionKey) {
     var res = await authFetch('/api/lead-sources/google/auth-session/' + encodeURIComponent(sessionKey));
     if (!res.ok) {
         var data = await res.json();
-        if (el) el.innerHTML = '<div class="alert alert-danger">' + _esc(data.error || 'Session expired') + ' — <a href="#" onclick="_lsStartGoogleWizard()">Start over</a></div>';
+        if (el) el.innerHTML = '<div class="alert alert-danger">' + _esc(data.error || 'Session expired') + ' â€” <a href="#" onclick="_lsStartGoogleWizard()">Start over</a></div>';
         return;
     }
     var data = await res.json();
@@ -548,7 +548,7 @@ function _lsRenderGoogleWizard() {
     var stepLabels = ['Login', 'Account Details', 'Save'];
     var stepNav = stepLabels.map(function(s, i) {
         var cls = (i + 1 === w.step) ? 'bg-danger' : (i + 1 < w.step) ? 'bg-success' : 'bg-secondary';
-        return '<span class="badge ' + cls + ' me-1">' + (i + 1 < w.step ? '✓' : (i + 1)) + '. ' + s + '</span>';
+        return '<span class="badge ' + cls + ' me-1">' + (i + 1 < w.step ? 'âœ“' : (i + 1)) + '. ' + s + '</span>';
     }).join('');
 
     var body = '';
@@ -570,18 +570,18 @@ function _lsRenderGoogleWizard() {
         <div class="mb-3">
             <label class="form-label">Google Ads Customer ID <small class="text-muted">(optional)</small></label>
             <input class="form-control" id="gw-customer-id" placeholder="123-456-7890">
-            <div class="form-text">Find this in Google Ads → top bar next to your account name.</div>
+            <div class="form-text">Find this in Google Ads â†’ top bar next to your account name.</div>
         </div>
         <div class="mb-3">
             <label class="form-label">Source Name</label>
             <input class="form-control" id="gw-source-name" value="${_esc('Google - ' + (w.user ? (w.user.email || '') : ''))}">
         </div>
         <div class="d-flex gap-2">
-            <button class="btn btn-success" onclick="_lsGoogleSave(event)">✅ Save &amp; Activate</button>
+            <button class="btn btn-success" onclick="_lsGoogleSave(event)">âœ… Save &amp; Activate</button>
         </div>`;
     }
 
-    el.innerHTML = '<div class="card"><div class="card-header d-flex align-items-center gap-2"><strong>🔴 Connect Google</strong><div class="ms-auto">' + stepNav + '</div></div><div class="card-body">' + body + '</div></div>';
+    el.innerHTML = '<div class="card"><div class="card-header d-flex align-items-center gap-2"><strong>ðŸ”´ Connect Google</strong><div class="ms-auto">' + stepNav + '</div></div><div class="card-body">' + body + '</div></div>';
 }
 
 async function _lsGoogleOpenLogin(evt) {
@@ -614,389 +614,13 @@ async function _lsGoogleSave(evt) {
     if (btn) { btn.disabled = false; btn.textContent = 'Save & Activate'; }
     var data = await res.json();
     if (!res.ok) { showToast(data.error || 'Save failed', 'danger'); return; }
-    showToast('✅ Google source connected!', 'success');
+    showToast('âœ… Google source connected!', 'success');
     await _lsLoadSources();
     _lsSwitchTab('sources');
 }
-
-function _lsRenderMetaWizard() {
-    var el = document.getElementById('ls-wizard-area');
-    if (!el) return;
-    var w = _metaWizard;
-
-    var stepLabels = ['App Credentials', 'Get Token', 'Select Page', 'Select Forms', 'Save'];
-    var stepNav = stepLabels.map(function(s, i) {
-        var cls = (i + 1 === w.step) ? 'bg-primary' : (i + 1 < w.step) ? 'bg-success' : 'bg-secondary';
-        return '<span class="badge ' + cls + ' me-1">' + (i + 1 < w.step ? '✓' : (i + 1)) + '. ' + s + '</span>';
-    }).join('');
-
-    var body = '';
-
-    if (w.step === 1) {
-        body = `
-        <p class="text-muted small">Enter your Meta App credentials from
-            <a href="https://developers.facebook.com/apps" target="_blank">Meta for Developers → Your App → Settings → Basic</a>.
-        </p>
-        <div class="mb-3">
-            <label class="form-label">App ID</label>
-            <input class="form-control" id="mw-app-id" placeholder="123456789012345" value="${_esc(w.appId)}">
-        </div>
-        <div class="mb-3">
-            <label class="form-label">App Secret</label>
-            <input type="password" class="form-control" id="mw-app-secret" value="${_esc(w.appSecret)}">
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Webhook Verify Token <small class="text-muted">(any secret string you choose)</small></label>
-            <input class="form-control" id="mw-verify-token" placeholder="my_secret_token_2024" value="${_esc(w.verifyToken)}">
-        </div>
-        <button class="btn btn-primary" onclick="_lsMetaStep1Next()">Next →</button>`;
-
-    } else if (w.step === 2) {
-        body = `
-        <p class="text-muted small">Go to <a href="https://developers.facebook.com/tools/explorer" target="_blank">Meta Graph Explorer</a>, request permissions
-            <code>pages_manage_ads</code>, <code>pages_read_engagement</code>, <code>leads_retrieval</code>, then paste your short-lived User Access Token below.
-        </p>
-        <div class="mb-3">
-            <label class="form-label">Short-Lived User Access Token</label>
-            <input type="password" class="form-control" id="mw-short-token" placeholder="EAABsbCS...">
-        </div>
-        <div class="d-flex gap-2">
-            <button class="btn btn-outline-secondary" onclick="_metaWizard.step=1; _lsRenderMetaWizard()">← Back</button>
-            <button class="btn btn-primary" onclick="_lsMetaStep2Exchange(event)">Exchange Token →</button>
-        </div>`;
-
-    } else if (w.step === 3) {
-        var pageItems = w.pages.length ? w.pages.map(function(p) {
-            var active = (w.selectedPage && w.selectedPage.id === p.id) ? 'active' : '';
-            return '<div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ' + active + '" style="cursor:pointer" onclick="_lsMetaSelectPage(\'' + _esc(p.id) + '\')">' +
-                '<div><strong>' + _esc(p.name) + '</strong><br><small class="opacity-75">ID: ' + _esc(p.id) + '</small></div>' +
-                (active ? '<span>✓</span>' : '') +
-            '</div>';
-        }).join('') : '<p class="text-muted p-3">No pages found.</p>';
-
-        body = '<p class="text-muted small">Logged in as <strong>' + _esc(w.user ? w.user.name : '') + '</strong>. Select a Facebook Page.</p>' +
-            '<div class="list-group mb-3">' + pageItems + '</div>' +
-            '<div class="d-flex gap-2">' +
-                '<button class="btn btn-outline-secondary" onclick="_metaWizard.step=2; _lsRenderMetaWizard()">← Back</button>' +
-                '<button class="btn btn-primary" onclick="_lsMetaStep3Next(event)" ' + (!w.selectedPage ? 'disabled' : '') + '>Next →</button>' +
-            '</div>';
-
-    } else if (w.step === 4) {
-        var formItems = w.forms.length ? w.forms.map(function(f) {
-            var checked = w.selectedForms.find(function(x) { return x.id === f.id; }) ? 'checked' : '';
-            var statusColor = f.status === 'ACTIVE' ? 'success' : 'secondary';
-            return '<div class="list-group-item">' +
-                '<div class="form-check">' +
-                    '<input class="form-check-input" type="checkbox" id="mwf-' + f.id + '" ' + checked + ' onchange="_lsMetaToggleForm(\'' + _esc(f.id) + '\', \'' + _esc(f.name) + '\', this.checked)">' +
-                    '<label class="form-check-label w-100" for="mwf-' + f.id + '">' +
-                        '<strong>' + _esc(f.name) + '</strong>' +
-                        '<span class="badge bg-' + statusColor + ' ms-2">' + _esc(f.status || 'UNKNOWN') + '</span>' +
-                        (f.leads_count ? '<small class="text-muted ms-2">' + f.leads_count + ' leads</small>' : '') +
-                    '</label>' +
-                '</div>' +
-            '</div>';
-        }).join('') : '<p class="text-muted p-3">No lead forms found. Make sure you have active Lead Ads on this page.</p>';
-
-        body = '<p class="text-muted small">Select lead forms to receive. Selected: <strong>' + w.selectedForms.length + '</strong></p>' +
-            '<div class="list-group mb-3">' + formItems + '</div>' +
-            '<div class="mb-3">' +
-                '<button class="btn btn-sm btn-outline-secondary me-2" onclick="_lsMetaSelectAllForms()">Select All</button>' +
-                '<button class="btn btn-sm btn-outline-secondary" onclick="_lsMetaClearForms()">Clear</button>' +
-            '</div>' +
-            '<div class="d-flex gap-2">' +
-                '<button class="btn btn-outline-secondary" onclick="_metaWizard.step=3; _lsRenderMetaWizard()">← Back</button>' +
-                '<button class="btn btn-primary" onclick="_metaWizard.step=5; _lsRenderMetaWizard()">Next →</button>' +
-            '</div>';
-
-    } else if (w.step === 5) {
-        body = `
-        <div class="row g-3">
-            <div class="col-md-6">
-                <h6>Connection Summary</h6>
-                <table class="table table-sm">
-                    <tr><th>Account</th><td>${_esc(w.user ? w.user.name : '')}</td></tr>
-                    <tr><th>Page</th><td>${_esc(w.selectedPage ? w.selectedPage.name : '')}</td></tr>
-                    <tr><th>Forms Selected</th><td>${w.selectedForms.length}</td></tr>
-                </table>
-            </div>
-            <div class="col-md-6">
-                <label class="form-label">Source Name</label>
-                <input class="form-control mb-3" id="mw-source-name" value="${_esc('Meta - ' + (w.selectedPage ? w.selectedPage.name : ''))}">
-                <div class="alert alert-info small mb-0">
-                    <strong>After saving:</strong> In Meta App → Webhooks, set:<br>
-                    <span>Verify Token: <code>${_esc(w.verifyToken)}</code></span><br>
-                    <span>Subscribe: <code>leadgen</code></span>
-                </div>
-            </div>
-        </div>
-        <div class="d-flex gap-2 mt-3">
-            <button class="btn btn-outline-secondary" onclick="_metaWizard.step=4; _lsRenderMetaWizard()">← Back</button>
-            <button class="btn btn-success" onclick="_lsMetaSave(event)">✅ Save &amp; Activate</button>
-        </div>`;
-    }
-
-    el.innerHTML = '<div class="card"><div class="card-header d-flex align-items-center gap-2"><strong>🟦 Connect Meta</strong><div class="ms-auto">' + stepNav + '</div></div><div class="card-body">' + body + '</div></div>';
-}
-
-function _lsMetaStep1Next() {
-    var appId       = (document.getElementById('mw-app-id').value || '').trim();
-    var appSecret   = (document.getElementById('mw-app-secret').value || '').trim();
-    var verifyToken = (document.getElementById('mw-verify-token').value || '').trim();
-    if (!appId || !appSecret) { showToast('App ID and App Secret are required', 'danger'); return; }
-    _metaWizard.appId       = appId;
-    _metaWizard.appSecret   = appSecret;
-    _metaWizard.verifyToken = verifyToken || ('lms_verify_' + Date.now());
-    _metaWizard.step = 2;
-    _lsRenderMetaWizard();
-}
-
-async function _lsMetaStep2Exchange(evt) {
-    var shortToken = (document.getElementById('mw-short-token').value || '').trim();
-    if (!shortToken) { showToast('Please paste your short-lived token', 'danger'); return; }
-    var btn = evt ? evt.target : null;
-    if (btn) { btn.disabled = true; btn.textContent = 'Exchanging...'; }
-    var res = await authFetch('/api/lead-sources/meta/exchange-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ short_lived_token: shortToken, app_id: _metaWizard.appId, app_secret: _metaWizard.appSecret }),
-    });
-    if (btn) { btn.disabled = false; btn.textContent = 'Exchange Token →'; }
-    var data = await res.json();
-    if (!res.ok) { showToast(data.error || 'Token exchange failed', 'danger'); return; }
-    _metaWizard.longToken = data.long_lived_token;
-    _metaWizard.user      = data.user;
-    _metaWizard.pages     = data.pages || [];
-    _metaWizard.step      = 3;
-    _lsRenderMetaWizard();
-}
-
-function _lsMetaSelectPage(pageId) {
-    _metaWizard.selectedPage = _metaWizard.pages.find(function(p) { return p.id === pageId; }) || null;
-    _lsRenderMetaWizard();
-}
-
-async function _lsMetaStep3Next(evt) {
-    if (!_metaWizard.selectedPage) { showToast('Select a page first', 'danger'); return; }
-    var btn = evt ? evt.target : null;
-    if (btn) { btn.disabled = true; btn.textContent = 'Loading forms...'; }
-    var res = await authFetch('/api/lead-sources/meta/page-forms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ page_id: _metaWizard.selectedPage.id, page_access_token: _metaWizard.selectedPage.access_token }),
-    });
-    if (btn) { btn.disabled = false; btn.textContent = 'Next →'; }
-    var data = await res.json();
-    if (!res.ok) { showToast(data.error || 'Could not load forms', 'danger'); return; }
-    _metaWizard.forms = data.forms || [];
-    _metaWizard.selectedForms = _metaWizard.forms.slice(); // select all by default
-    _metaWizard.step = 4;
-    _lsRenderMetaWizard();
-}
-
-function _lsMetaToggleForm(id, name, checked) {
-    if (checked) {
-        if (!_metaWizard.selectedForms.find(function(f) { return f.id === id; }))
-            _metaWizard.selectedForms.push({ id: id, name: name });
-    } else {
-        _metaWizard.selectedForms = _metaWizard.selectedForms.filter(function(f) { return f.id !== id; });
-    }
-}
-
-function _lsMetaSelectAllForms() { _metaWizard.selectedForms = _metaWizard.forms.slice(); _lsRenderMetaWizard(); }
-function _lsMetaClearForms()     { _metaWizard.selectedForms = []; _lsRenderMetaWizard(); }
-
-async function _lsMetaSave(evt) {
-    var name = ((document.getElementById('mw-source-name') || {}).value || '').trim()
-               || ('Meta - ' + (_metaWizard.selectedPage ? _metaWizard.selectedPage.name : ''));
-    var btn = evt ? evt.target : null;
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-    var res = await authFetch('/api/lead-sources/meta/save-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name:              name,
-            app_id:            _metaWizard.appId,
-            app_secret:        _metaWizard.appSecret,
-            user_token:        _metaWizard.longToken,
-            page_id:           _metaWizard.selectedPage.id,
-            page_name:         _metaWizard.selectedPage.name,
-            page_access_token: _metaWizard.selectedPage.access_token,
-            selected_forms:    _metaWizard.selectedForms,
-            verify_token:      _metaWizard.verifyToken,
-        }),
-    });
-    if (btn) { btn.disabled = false; btn.textContent = 'Save & Activate'; }
-    var data = await res.json();
-    if (!res.ok) { showToast(data.error || 'Save failed', 'danger'); return; }
-    showToast('✅ Meta source connected!', 'success');
-    await _lsLoadSources();
-    _lsSwitchTab('sources');
-}
-
-// ─── GOOGLE WIZARD ────────────────────────────────────────────────────────────
-
-function _lsStartGoogleWizard() {
-    var _googleRedirectUri = 'https://smk-backend-api.vercel.app/api/lead-sources/google/oauth/callback';
-    _googleWizard = { step: 1, clientId: '', clientSecret: '', redirectUri: _googleRedirectUri, authCode: '', accessToken: '', refreshToken: '', user: null };
-    _lsRenderGoogleWizard();
-}
-
-function _lsRenderGoogleWizard() {
-    var el = document.getElementById('ls-wizard-area');
-    if (!el) return;
-    var w = _googleWizard;
-
-    var stepLabels = ['App Credentials', 'Authorize', 'Details', 'Save'];
-    var stepNav = stepLabels.map(function(s, i) {
-        var cls = (i + 1 === w.step) ? 'bg-danger' : (i + 1 < w.step) ? 'bg-success' : 'bg-secondary';
-        return '<span class="badge ' + cls + ' me-1">' + (i + 1 < w.step ? '✓' : (i + 1)) + '. ' + s + '</span>';
-    }).join('');
-
-    var body = '';
-
-    if (w.step === 1) {
-        var defaultRedirect = 'https://smk-backend-api.vercel.app/api/lead-sources/google/oauth/callback';
-        body = `
-        <p class="text-muted small">Create OAuth 2.0 credentials at
-            <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a>.
-            Add <code>${_esc(defaultRedirect)}</code> as an authorised redirect URI.
-        </p>
-        <div class="mb-3">
-            <label class="form-label">Client ID</label>
-            <input class="form-control" id="gw-client-id" placeholder="1234...apps.googleusercontent.com" value="${_esc(w.clientId)}">
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Client Secret</label>
-            <input type="password" class="form-control" id="gw-client-secret" placeholder="GOCSPX-..." value="${_esc(w.clientSecret)}">
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Redirect URI</label>
-            <input class="form-control" id="gw-redirect-uri" value="${_esc(w.redirectUri || defaultRedirect)}">
-        </div>
-        <button class="btn btn-danger" onclick="_lsGoogleStep1Next()">Next →</button>`;
-
-    } else if (w.step === 2) {
-        var scopes = 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/adwords';
-        var oauthUrl = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=' + encodeURIComponent(w.clientId) +
-            '&redirect_uri=' + encodeURIComponent(w.redirectUri) +
-            '&response_type=code&scope=' + encodeURIComponent(scopes) +
-            '&access_type=offline&prompt=select_account%20consent';
-        body = `
-        <p class="text-muted small">Click the button to open Google authorization. After approving, copy the <code>?code=</code> value from the redirect URL.</p>
-        <a class="btn btn-danger mb-3" href="${_esc(oauthUrl)}" target="_blank">🔗 Open Google Authorization</a>
-        <div class="mb-3">
-            <label class="form-label">Authorization Code</label>
-            <input class="form-control font-monospace" id="gw-auth-code" placeholder="4/0AX4XfWj...">
-        </div>
-        <div class="d-flex gap-2">
-            <button class="btn btn-outline-secondary" onclick="_googleWizard.step=1; _lsRenderGoogleWizard()">← Back</button>
-            <button class="btn btn-danger" onclick="_lsGoogleStep2Exchange(event)">Exchange Code →</button>
-        </div>`;
-
-    } else if (w.step === 3) {
-        body = `
-        <p class="text-muted small">Connected as <strong>${_esc(w.user ? w.user.email : '')}</strong>.</p>
-        <div class="mb-3">
-            <label class="form-label">Google Ads Customer ID <small class="text-muted">(optional, e.g. 123-456-7890)</small></label>
-            <input class="form-control" id="gw-customer-id" placeholder="123-456-7890">
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Campaign / Form label <small class="text-muted">(your reference label)</small></label>
-            <input class="form-control" id="gw-campaign-label" placeholder="Mumbai Apartments Q2 2026">
-        </div>
-        <div class="d-flex gap-2">
-            <button class="btn btn-outline-secondary" onclick="_googleWizard.step=2; _lsRenderGoogleWizard()">← Back</button>
-            <button class="btn btn-danger" onclick="_googleWizard.step=4; _lsRenderGoogleWizard()">Next →</button>
-        </div>`;
-
-    } else if (w.step === 4) {
-        body = `
-        <div class="row g-3">
-            <div class="col-md-6">
-                <h6>Connection Summary</h6>
-                <table class="table table-sm">
-                    <tr><th>Account</th><td>${_esc(w.user ? w.user.email : '')}</td></tr>
-                </table>
-            </div>
-            <div class="col-md-6">
-                <label class="form-label">Source Name</label>
-                <input class="form-control mb-3" id="gw-source-name" value="${_esc('Google - ' + (w.user ? w.user.email : ''))}">
-                <div class="alert alert-info small mb-0">
-                    After saving, go to Google Ads → Lead Form Extensions → Webhook and enter the webhook URL shown in the Sources list.
-                </div>
-            </div>
-        </div>
-        <div class="d-flex gap-2 mt-3">
-            <button class="btn btn-outline-secondary" onclick="_googleWizard.step=3; _lsRenderGoogleWizard()">← Back</button>
-            <button class="btn btn-success" onclick="_lsGoogleSave(event)">✅ Save &amp; Activate</button>
-        </div>`;
-    }
-
-    el.innerHTML = '<div class="card"><div class="card-header d-flex align-items-center gap-2"><strong>🔴 Connect Google</strong><div class="ms-auto">' + stepNav + '</div></div><div class="card-body">' + body + '</div></div>';
-}
-
-function _lsGoogleStep1Next() {
-    var clientId     = (document.getElementById('gw-client-id').value || '').trim();
-    var clientSecret = (document.getElementById('gw-client-secret').value || '').trim();
-    var redirectUri  = (document.getElementById('gw-redirect-uri').value || '').trim();
-    if (!clientId || !clientSecret) { showToast('Client ID and Client Secret are required', 'danger'); return; }
-    _googleWizard.clientId     = clientId;
-    _googleWizard.clientSecret = clientSecret;
-    _googleWizard.redirectUri  = redirectUri;
-    _googleWizard.step = 2;
-    _lsRenderGoogleWizard();
-}
-
-async function _lsGoogleStep2Exchange(evt) {
-    var code = (document.getElementById('gw-auth-code').value || '').trim();
-    if (!code) { showToast('Paste the authorization code', 'danger'); return; }
-    var btn = evt ? evt.target : null;
-    if (btn) { btn.disabled = true; btn.textContent = 'Exchanging...'; }
-    var res = await authFetch('/api/lead-sources/google/exchange-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: code, client_id: _googleWizard.clientId, client_secret: _googleWizard.clientSecret, redirect_uri: _googleWizard.redirectUri }),
-    });
-    if (btn) { btn.disabled = false; btn.textContent = 'Exchange Code →'; }
-    var data = await res.json();
-    if (!res.ok) { showToast(data.error || 'Code exchange failed', 'danger'); return; }
-    _googleWizard.accessToken  = data.access_token;
-    _googleWizard.refreshToken = data.refresh_token;
-    _googleWizard.user         = data.user;
-    _googleWizard.step = 3;
-    _lsRenderGoogleWizard();
-}
-
-async function _lsGoogleSave(evt) {
-    var name       = ((document.getElementById('gw-source-name') || {}).value || '').trim();
-    var customerId = ((document.getElementById('gw-customer-id') || {}).value || '').trim();
-    var label      = ((document.getElementById('gw-campaign-label') || {}).value || '').trim();
-    var btn = evt ? evt.target : null;
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-    var res = await authFetch('/api/lead-sources/google/save-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name:           name || ('Google - ' + (_googleWizard.user ? _googleWizard.user.email : '')),
-            client_id:      _googleWizard.clientId,
-            client_secret:  _googleWizard.clientSecret,
-            refresh_token:  _googleWizard.refreshToken,
-            customer_id:    customerId,
-            user_email:     _googleWizard.user ? _googleWizard.user.email : '',
-            selected_forms: label ? [{ id: 'custom', name: label }] : [],
-        }),
-    });
-    if (btn) { btn.disabled = false; btn.textContent = 'Save & Activate'; }
-    var data = await res.json();
-    if (!res.ok) { showToast(data.error || 'Save failed', 'danger'); return; }
-    showToast('✅ Google source connected!', 'success');
-    await _lsLoadSources();
-    _lsSwitchTab('sources');
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// TAB: Manual / Webhook — Add / Edit form
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// TAB: Manual / Webhook â€” Add / Edit form
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _lsRenderForm(source) {
     _lsEditId = source ? source.id : null;
@@ -1034,7 +658,7 @@ function _lsRenderForm(source) {
         </div>
         <div id="ls-creds-area"></div>
         <hr>
-        <h6>Field Mapping <small class="text-muted fw-normal">(JSON: source field → LMS field)</small></h6>
+        <h6>Field Mapping <small class="text-muted fw-normal">(JSON: source field â†’ LMS field)</small></h6>
         <textarea class="form-control font-monospace" id="ls-field-mapping" rows="3" placeholder='{"phone_number": "phone"}'>${source && source.field_mapping ? JSON.stringify(source.field_mapping, null, 2) : ''}</textarea>
         <hr>
         <h6>Default Values <small class="text-muted fw-normal">(JSON: applied to every lead)</small></h6>
@@ -1168,9 +792,9 @@ async function _lsDeleteSource(id) {
     _lsSwitchTab('sources');
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TAB: Test Lead
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _lsRenderTestLead() {
     var el = document.getElementById('ls-body');
@@ -1206,7 +830,7 @@ function _lsRenderTestLead() {
                 <label class="form-label">Campaign Name</label>
                 <input class="form-control" id="ls-test-campaign" placeholder="Test Campaign">
             </div>
-            <button class="btn btn-primary w-100" onclick="_lsRunTestLead(event)">▶ Run Test Lead</button>
+            <button class="btn btn-primary w-100" onclick="_lsRunTestLead(event)">â–¶ Run Test Lead</button>
         </div>
         <div class="col-md-7" id="ls-test-result">
             <div class="text-muted small pt-5 text-center">Results will appear here after you run a test lead.</div>
@@ -1235,7 +859,7 @@ async function _lsRunTestLead(evt) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
-    if (btn) { btn.disabled = false; btn.textContent = '▶ Run Test Lead'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'â–¶ Run Test Lead'; }
 
     var data = await res.json();
     var el = document.getElementById('ls-test-result');
@@ -1253,7 +877,7 @@ async function _lsRunTestLead(evt) {
     var log = ev.log || {};
 
     var statusColor = r.status === 'created' ? 'success' : r.status === 'error' ? 'danger' : 'warning';
-    var statusIcon  = r.status === 'created' ? '✅' : r.status === 'error' ? '❌' : '⚠️';
+    var statusIcon  = r.status === 'created' ? 'âœ…' : r.status === 'error' ? 'âŒ' : 'âš ï¸';
 
     // also update inject-test-lead checklist to show push+action board
     function checkRow(label, passed) {
@@ -1286,30 +910,30 @@ async function _lsRunTestLead(evt) {
         (log.id ? '<h6>Ingestion Log</h6><table class="table table-sm">' +
             '<tr><th>Log ID</th><td>' + log.id + '</td></tr>' +
             '<tr><th>Status</th><td>' + _esc(log.status || '') + '</td></tr>' +
-            '<tr><th>Campaign</th><td>' + _esc(log.campaign_name || '—') + '</td></tr>' +
+            '<tr><th>Campaign</th><td>' + _esc(log.campaign_name || 'â€”') + '</td></tr>' +
         '</table>' : '');
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// TAB: Validate — PASS/FAIL report
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// TAB: Validate â€” PASS/FAIL report
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _lsRenderValidate() {
     var el = document.getElementById('ls-body');
     var metaSources   = _lsSources.filter(function(s) { return s.source_type === 'meta'; });
     var googleSources = _lsSources.filter(function(s) { return s.source_type === 'google'; });
 
-    var metaOpts = [{ id: '', name: '— None —' }].concat(metaSources).map(function(s) {
-        return '<option value="' + _esc(String(s.id)) + '">' + _esc(s.name || '— None —') + '</option>';
+    var metaOpts = [{ id: '', name: 'â€” None â€”' }].concat(metaSources).map(function(s) {
+        return '<option value="' + _esc(String(s.id)) + '">' + _esc(s.name || 'â€” None â€”') + '</option>';
     }).join('');
-    var googleOpts = [{ id: '', name: '— None —' }].concat(googleSources).map(function(s) {
-        return '<option value="' + _esc(String(s.id)) + '">' + _esc(s.name || '— None —') + '</option>';
+    var googleOpts = [{ id: '', name: 'â€” None â€”' }].concat(googleSources).map(function(s) {
+        return '<option value="' + _esc(String(s.id)) + '">' + _esc(s.name || 'â€” None â€”') + '</option>';
     }).join('');
 
     el.innerHTML = `
     <div class="row g-4">
         <div class="col-md-4">
-            <h5>🧪 Phase META-1.1 Validation</h5>
+            <h5>ðŸ§ª Phase META-1.1 Validation</h5>
             <p class="text-muted small">Runs all 7 checks and generates a PASS/FAIL deployment report.</p>
             <div class="mb-3">
                 <label class="form-label">Meta Source</label>
@@ -1319,8 +943,8 @@ function _lsRenderValidate() {
                 <label class="form-label">Google Source</label>
                 <select class="form-select" id="ls-val-google">${googleOpts}</select>
             </div>
-            <button class="btn btn-dark w-100" onclick="_lsRunValidation(event)">▶ Run Validation</button>
-            <p class="text-muted small mt-2">⚠ Test leads will be created in your database.</p>
+            <button class="btn btn-dark w-100" onclick="_lsRunValidation(event)">â–¶ Run Validation</button>
+            <p class="text-muted small mt-2">âš  Test leads will be created in your database.</p>
         </div>
         <div class="col-md-8" id="ls-val-result">
             <div class="text-muted small pt-4 text-center">Select sources and click Run Validation.</div>
@@ -1345,7 +969,7 @@ async function _lsRunValidation(evt) {
             google_source_id: googleId ? parseInt(googleId) : null,
         }),
     });
-    if (btn) { btn.disabled = false; btn.textContent = '▶ Run Validation'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'â–¶ Run Validation'; }
 
     var data = await res.json();
     if (!res.ok) {
@@ -1437,9 +1061,9 @@ async function _lsRunValidation(evt) {
 
     el.innerHTML =
         '<div class="alert alert-' + (ready ? 'success' : 'warning') + ' d-flex align-items-center mb-4">' +
-            '<span class="fs-2 me-3">' + (ready ? '🚀' : '⚠️') + '</span>' +
+            '<span class="fs-2 me-3">' + (ready ? 'ðŸš€' : 'âš ï¸') + '</span>' +
             '<div><strong>' + _esc(data.summary || (passCount + '/7 checks passed')) + '</strong><br>' +
-            '<span class="fs-5">Deployment Ready: <strong>' + (ready ? 'YES ✅' : 'NO ❌') + '</strong></span></div>' +
+            '<span class="fs-5">Deployment Ready: <strong>' + (ready ? 'YES âœ…' : 'NO âŒ') + '</strong></span></div>' +
         '</div>' +
         '<table class="table table-bordered align-middle">' +
             '<thead class="table-light"><tr><th>Check</th><th style="width:90px">Result</th><th>Details</th></tr></thead>' +
@@ -1449,12 +1073,12 @@ async function _lsRunValidation(evt) {
 }
 
 function _lsSubBadge(label, passed) {
-    return '<span class="badge bg-' + (passed ? 'success' : 'danger') + ' text-wrap">' + _esc(label) + ' ' + (passed ? '✓' : '✗') + '</span>';
+    return '<span class="badge bg-' + (passed ? 'success' : 'danger') + ' text-wrap">' + _esc(label) + ' ' + (passed ? 'âœ“' : 'âœ—') + '</span>';
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TAB: Logs
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async function _lsLoadLogs(page) {
     if (!page) page = 1;
@@ -1477,9 +1101,9 @@ async function _lsLoadLogs(page) {
         return '<tr>' +
             '<td>' + new Date(l.received_at).toLocaleString() + '</td>' +
             '<td>' + (SOURCE_TYPE_LABELS[l.source_type] || l.source_type) + '</td>' +
-            '<td>' + _esc(l.campaign_name || '—') + '</td>' +
+            '<td>' + _esc(l.campaign_name || 'â€”') + '</td>' +
             '<td>' + statusBadge(l.status) + '</td>' +
-            '<td>' + (l.lead_id ? '#' + l.lead_id : '—') + '</td>' +
+            '<td>' + (l.lead_id ? '#' + l.lead_id : 'â€”') + '</td>' +
             '<td class="text-muted small text-truncate" style="max-width:200px">' + _esc((l.error_message || '').substring(0, 80)) + '</td>' +
         '</tr>';
     }).join('') || '<tr><td colspan="6" class="text-center text-muted">No logs yet</td></tr>';
@@ -1502,9 +1126,9 @@ async function _lsLoadLogs(page) {
         '<p class="text-muted text-center small">' + _lsLogTotal + ' total entries</p>';
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TAB: Reports
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async function _lsLoadReports() {
     var el = document.getElementById('ls-body');
@@ -1547,9 +1171,9 @@ async function _lsLoadReports() {
     </div>`;
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Utilities
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _esc(s) {
     if (s === null || s === undefined) return '';
@@ -1561,7 +1185,7 @@ function _esc(s) {
 }
 
 function _lsRelTime(iso) {
-    if (!iso) return '—';
+    if (!iso) return 'â€”';
     var diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
     if (diff < 60)    return diff + 's ago';
     if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
