@@ -26,9 +26,14 @@ Meta OAuth helpers:
 """
 
 import logging
+import os
+import secrets
+import json as _json
+import urllib.request as _req
+import urllib.parse as _parse
 from datetime import datetime, timedelta
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, redirect
 from sqlalchemy import func
 
 from app.middleware import require_auth, require_role
@@ -39,6 +44,26 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 
 lead_sources_bp = Blueprint('lead_sources', __name__, url_prefix='/api/lead-sources')
+
+# ── In-memory OAuth session store (TTL = 10 min) ──────────────────────────────
+# Maps session_key → { tenant_id, business_id, pages, user, created_at }
+_oauth_sessions = {}
+
+def _get_platform_meta_creds():
+    app_id     = os.environ.get('META_APP_ID', '951583117718268')
+    app_secret = os.environ.get('META_APP_SECRET', '')
+    return app_id, app_secret
+
+def _get_platform_google_creds():
+    client_id     = os.environ.get('GOOGLE_CLIENT_ID', '')
+    client_secret = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+    return client_id, client_secret
+
+def _purge_expired_sessions():
+    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    expired = [k for k, v in _oauth_sessions.items() if v.get('created_at', cutoff) < cutoff]
+    for k in expired:
+        del _oauth_sessions[k]
 
 
 # ── Auth helper ────────────────────────────────────────────────────────────────
@@ -931,6 +956,327 @@ def google_save_connection():
 
     db.session.commit()
     return jsonify({'source': source.to_dict()}), 200
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SIMPLIFIED META OAUTH  (platform credentials stored in env vars)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@lead_sources_bp.route('/meta/start-auth', methods=['POST'])
+@require_role('superadmin', 'platform_owner')
+def meta_start_auth():
+    """
+    Generate a Facebook OAuth URL using the platform Meta app credentials.
+    Tenant provides their Business ID; we encode it in the OAuth state.
+
+    POST body: { "business_id": "123456789" }
+    Returns:   { "auth_url": "https://facebook.com/dialog/oauth?..." }
+    """
+    user = request.current_user
+    data = request.get_json() or {}
+    business_id = (data.get('business_id') or '').strip()
+    if not business_id:
+        return jsonify({'error': 'business_id is required'}), 400
+
+    app_id, app_secret = _get_platform_meta_creds()
+    if not app_secret:
+        return jsonify({'error': 'Meta platform credentials not configured. Set META_APP_SECRET in environment.'}), 500
+
+    session_key = secrets.token_urlsafe(24)
+    _purge_expired_sessions()
+    _oauth_sessions[session_key] = {
+        'tenant_id':   user.tenant_id,
+        'business_id': business_id,
+        'created_at':  datetime.utcnow(),
+    }
+
+    frontend_base = os.environ.get('FRONTEND_URL', 'https://app.sociomonkey.com')
+    callback_url  = os.environ.get('BACKEND_URL', 'https://smk-backend-api.vercel.app') + '/api/lead-sources/meta/oauth/callback'
+    state = _parse.quote(session_key)
+
+    scopes = 'pages_show_list,pages_read_engagement,leads_retrieval,pages_manage_ads'
+    auth_url = (
+        f'https://www.facebook.com/dialog/oauth'
+        f'?client_id={_parse.quote(app_id)}'
+        f'&redirect_uri={_parse.quote(callback_url)}'
+        f'&scope={_parse.quote(scopes)}'
+        f'&response_type=code'
+        f'&state={state}'
+    )
+    return jsonify({'auth_url': auth_url, 'session_key': session_key}), 200
+
+
+@lead_sources_bp.route('/meta/oauth/callback', methods=['GET'])
+def meta_oauth_callback():
+    """
+    Facebook OAuth callback. Exchanges code → token → fetches pages
+    from the business_id stored in session. Redirects tenant back to
+    the LMS page with session_key so frontend can retrieve pages.
+    """
+    code        = request.args.get('code', '')
+    state       = request.args.get('state', '')
+    error       = request.args.get('error', '')
+    frontend_base = os.environ.get('FRONTEND_URL', 'https://app.sociomonkey.com')
+
+    if error:
+        return redirect(f'{frontend_base}/?meta_oauth_error={_parse.quote(error)}')
+
+    session_data = _oauth_sessions.get(state)
+    if not session_data:
+        return redirect(f'{frontend_base}/?meta_oauth_error=session_expired')
+
+    app_id, app_secret = _get_platform_meta_creds()
+    callback_url = os.environ.get('BACKEND_URL', 'https://smk-backend-api.vercel.app') + '/api/lead-sources/meta/oauth/callback'
+
+    try:
+        # Exchange code → short-lived token
+        token_url = (
+            f'https://graph.facebook.com/v19.0/oauth/access_token'
+            f'?client_id={_parse.quote(app_id)}'
+            f'&redirect_uri={_parse.quote(callback_url)}'
+            f'&client_secret={_parse.quote(app_secret)}'
+            f'&code={_parse.quote(code)}'
+        )
+        with _req.urlopen(_req.Request(token_url), timeout=15) as r:
+            token_data = _json.loads(r.read())
+
+        if 'error' in token_data:
+            return redirect(f'{frontend_base}/?meta_oauth_error=token_exchange_failed')
+
+        short_token = token_data.get('access_token', '')
+
+        # Exchange short → long-lived token
+        long_url = (
+            f'https://graph.facebook.com/v19.0/oauth/access_token'
+            f'?grant_type=fb_exchange_token'
+            f'&client_id={_parse.quote(app_id)}'
+            f'&client_secret={_parse.quote(app_secret)}'
+            f'&fb_exchange_token={_parse.quote(short_token)}'
+        )
+        with _req.urlopen(_req.Request(long_url), timeout=15) as r:
+            long_data = _json.loads(r.read())
+        long_token = long_data.get('access_token', short_token)
+
+        # Get user info
+        me_url = f'https://graph.facebook.com/v19.0/me?fields=id,name&access_token={_parse.quote(long_token)}'
+        with _req.urlopen(_req.Request(me_url), timeout=10) as r:
+            me = _json.loads(r.read())
+
+        # Get pages for this user (filtered by business_id if provided)
+        business_id = session_data.get('business_id', '')
+        pages_url = f'https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token&access_token={_parse.quote(long_token)}'
+        with _req.urlopen(_req.Request(pages_url), timeout=10) as r:
+            pages_data = _json.loads(r.read())
+
+        all_pages = [
+            {'id': p['id'], 'name': p['name'], 'access_token': p.get('access_token', '')}
+            for p in pages_data.get('data', [])
+        ]
+
+        # If business_id given, also try fetching pages from that business
+        biz_pages = []
+        if business_id:
+            try:
+                biz_url = (
+                    f'https://graph.facebook.com/v19.0/{_parse.quote(business_id)}/owned_pages'
+                    f'?fields=id,name,access_token&access_token={_parse.quote(long_token)}'
+                )
+                with _req.urlopen(_req.Request(biz_url), timeout=10) as r:
+                    biz_data = _json.loads(r.read())
+                biz_pages = [
+                    {'id': p['id'], 'name': p['name'], 'access_token': p.get('access_token', '')}
+                    for p in biz_data.get('data', [])
+                ]
+            except Exception:
+                pass  # fall back to user pages
+
+        pages = biz_pages if biz_pages else all_pages
+
+        # Store result in session
+        _oauth_sessions[state].update({
+            'user':       {'id': me.get('id'), 'name': me.get('name')},
+            'long_token': long_token,
+            'pages':      pages,
+            'completed':  True,
+        })
+
+        # Redirect back to frontend
+        tenant_id = session_data.get('tenant_id', 'demo')
+        tenant_slug = str(tenant_id)
+        # Try to get the tenant slug from DB for a nicer URL
+        try:
+            from app.models.user import Tenant
+            t = Tenant.query.get(tenant_id)
+            if t and t.slug:
+                tenant_slug = t.slug
+        except Exception:
+            pass
+
+        return redirect(
+            f'{frontend_base}/apps/lms/{tenant_slug}/lead_sources?meta_session={_parse.quote(state)}&meta_tab=connect'
+        )
+
+    except Exception as exc:
+        logger.exception('meta_oauth_callback error: %s', exc)
+        return redirect(f'{frontend_base}/?meta_oauth_error=server_error')
+
+
+@lead_sources_bp.route('/meta/auth-session/<session_key>', methods=['GET'])
+@require_role('superadmin', 'platform_owner')
+def meta_auth_session(session_key):
+    """
+    Retrieve pages + user info from a completed OAuth session.
+    Called by frontend after OAuth callback redirect.
+    """
+    user = request.current_user
+    session_data = _oauth_sessions.get(session_key)
+    if not session_data:
+        return jsonify({'error': 'Session expired or not found'}), 404
+    if session_data.get('tenant_id') != user.tenant_id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    if not session_data.get('completed'):
+        return jsonify({'error': 'OAuth not completed yet'}), 202
+
+    return jsonify({
+        'user':        session_data.get('user'),
+        'pages':       session_data.get('pages', []),
+        'long_token':  session_data.get('long_token', ''),
+        'business_id': session_data.get('business_id', ''),
+    }), 200
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SIMPLIFIED GOOGLE OAUTH  (platform credentials stored in env vars)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@lead_sources_bp.route('/google/start-auth', methods=['POST'])
+@require_role('superadmin', 'platform_owner')
+def google_start_auth():
+    """
+    Generate a Google OAuth URL using platform credentials from env vars.
+    Returns: { "auth_url": "..." }
+    """
+    user = request.current_user
+    client_id, client_secret = _get_platform_google_creds()
+    if not client_id or not client_secret:
+        return jsonify({'error': 'Google platform credentials not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in environment.'}), 500
+
+    session_key = secrets.token_urlsafe(24)
+    _purge_expired_sessions()
+    _oauth_sessions[session_key] = {
+        'tenant_id':  user.tenant_id,
+        'platform':   'google',
+        'created_at': datetime.utcnow(),
+    }
+
+    callback_url = os.environ.get('BACKEND_URL', 'https://smk-backend-api.vercel.app') + '/api/lead-sources/google/oauth/callback'
+    scopes = 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/adwords'
+    auth_url = (
+        f'https://accounts.google.com/o/oauth2/v2/auth'
+        f'?client_id={_parse.quote(client_id)}'
+        f'&redirect_uri={_parse.quote(callback_url)}'
+        f'&response_type=code'
+        f'&scope={_parse.quote(scopes)}'
+        f'&access_type=offline'
+        f'&prompt=select_account%20consent'
+        f'&state={_parse.quote(session_key)}'
+    )
+    return jsonify({'auth_url': auth_url, 'session_key': session_key}), 200
+
+
+@lead_sources_bp.route('/google/oauth/callback', methods=['GET'])
+def google_oauth_callback():
+    """
+    Google OAuth callback — exchanges code → tokens → stores in session.
+    Redirects back to LMS frontend.
+    """
+    code  = request.args.get('code', '')
+    state = request.args.get('state', '')
+    error = request.args.get('error', '')
+    frontend_base = os.environ.get('FRONTEND_URL', 'https://app.sociomonkey.com')
+
+    if error:
+        return redirect(f'{frontend_base}/?google_oauth_error={_parse.quote(error)}')
+
+    session_data = _oauth_sessions.get(state)
+    if not session_data:
+        return redirect(f'{frontend_base}/?google_oauth_error=session_expired')
+
+    client_id, client_secret = _get_platform_google_creds()
+    callback_url = os.environ.get('BACKEND_URL', 'https://smk-backend-api.vercel.app') + '/api/lead-sources/google/oauth/callback'
+
+    try:
+        token_body = _parse.urlencode({
+            'code':          code,
+            'client_id':     client_id,
+            'client_secret': client_secret,
+            'redirect_uri':  callback_url,
+            'grant_type':    'authorization_code',
+        }).encode()
+        req = _req.Request(
+            'https://oauth2.googleapis.com/token',
+            data=token_body,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'},
+        )
+        with _req.urlopen(req, timeout=15) as r:
+            token_data = _json.loads(r.read())
+
+        if 'error' in token_data:
+            return redirect(f'{frontend_base}/?google_oauth_error=token_exchange_failed')
+
+        access_token  = token_data.get('access_token', '')
+        refresh_token = token_data.get('refresh_token', '')
+
+        ui_req = _req.Request(
+            'https://www.googleapis.com/oauth2/v2/userinfo',
+            headers={'Authorization': f'Bearer {access_token}'},
+        )
+        with _req.urlopen(ui_req, timeout=10) as r:
+            userinfo = _json.loads(r.read())
+
+        _oauth_sessions[state].update({
+            'access_token':  access_token,
+            'refresh_token': refresh_token,
+            'user':          {'id': userinfo.get('id'), 'email': userinfo.get('email'), 'name': userinfo.get('name')},
+            'completed':     True,
+        })
+
+        tenant_id   = session_data.get('tenant_id', 'demo')
+        tenant_slug = str(tenant_id)
+        try:
+            from app.models.user import Tenant
+            t = Tenant.query.get(tenant_id)
+            if t and t.slug:
+                tenant_slug = t.slug
+        except Exception:
+            pass
+
+        return redirect(
+            f'{frontend_base}/apps/lms/{tenant_slug}/lead_sources?google_session={_parse.quote(state)}&meta_tab=connect'
+        )
+
+    except Exception as exc:
+        logger.exception('google_oauth_callback error: %s', exc)
+        return redirect(f'{frontend_base}/?google_oauth_error=server_error')
+
+
+@lead_sources_bp.route('/google/auth-session/<session_key>', methods=['GET'])
+@require_role('superadmin', 'platform_owner')
+def google_auth_session(session_key):
+    """Retrieve user + tokens from a completed Google OAuth session."""
+    user = request.current_user
+    session_data = _oauth_sessions.get(session_key)
+    if not session_data:
+        return jsonify({'error': 'Session expired or not found'}), 404
+    if session_data.get('tenant_id') != user.tenant_id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    if not session_data.get('completed'):
+        return jsonify({'error': 'OAuth not completed yet'}), 202
+    return jsonify({
+        'user':          session_data.get('user'),
+        'access_token':  session_data.get('access_token', ''),
+        'refresh_token': session_data.get('refresh_token', ''),
+    }), 200
 
 
 # ══════════════════════════════════════════════════════════════════════════════
