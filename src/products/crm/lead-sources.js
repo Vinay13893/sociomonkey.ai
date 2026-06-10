@@ -270,6 +270,11 @@ function _lsRenderConnect() {
     if (persistedMetaWizard && persistedMetaWizard.step >= 3) {
         _metaWizard = persistedMetaWizard;
         el.innerHTML = `<div class="row g-4"><div class="col-12"><div id="ls-wizard-area"></div></div></div>`;
+        if (_metaWizard.sessionKey && (!_metaWizard.pages || !_metaWizard.pages.length) && !_metaWizard.user) {
+            _lsRenderMetaWizard();
+            _lsMetaLoadSession(_metaWizard.sessionKey);
+            return;
+        }
         _lsRenderMetaWizard();
         return;
     }
@@ -327,6 +332,7 @@ function _lsStartMetaWizard() {
     var persistedMetaWizard = _lsLoadPersistedMetaWizard();
     if (sessionKey) {
         _metaWizard = { step: 3, sessionKey: sessionKey, pages: [], selectedPage: null, forms: [], selectedForms: [], user: null, longToken: '' };
+        _lsPersistMetaWizard();
         _lsRenderMetaWizard();
         _lsMetaLoadSession(sessionKey);
         return;
