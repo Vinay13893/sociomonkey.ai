@@ -50,9 +50,21 @@ lead_sources_bp = Blueprint('lead_sources', __name__, url_prefix='/api/lead-sour
 _oauth_sessions = {}
 
 def _get_platform_meta_creds():
-    app_id     = os.environ.get('META_APP_ID', '951583117718268')
+    app_id     = os.environ.get('META_APP_ID', '1329585565931521')
     app_secret = os.environ.get('META_APP_SECRET', '')
     return app_id, app_secret
+
+def _get_meta_oauth_scopes():
+    """
+    Meta OAuth scopes are environment-driven so we can use a minimal testing set
+    before app review is complete, then switch to full production scopes.
+
+    Env var: META_OAUTH_SCOPES (comma-separated)
+    Default (testing): pages_show_list,pages_read_engagement
+    """
+    raw = os.environ.get('META_OAUTH_SCOPES', 'pages_show_list,pages_read_engagement')
+    scopes = [s.strip() for s in raw.split(',') if s and s.strip()]
+    return scopes
 
 def _get_platform_google_creds():
     client_id     = os.environ.get('GOOGLE_CLIENT_ID', '')
@@ -331,7 +343,7 @@ def _test_meta(source: LeadSource) -> dict:
             perm_data = __import__('json').loads(resp.read())
 
         granted = [p['permission'] for p in perm_data.get('data', []) if p.get('status') == 'granted']
-        required = ['pages_manage_ads', 'pages_read_engagement', 'leads_retrieval']
+        required = _get_meta_oauth_scopes()
         missing  = [r for r in required if r not in granted]
 
         perm_status = 'ok' if not missing else ('partial' if granted else 'missing')
@@ -994,7 +1006,7 @@ def meta_start_auth():
     callback_url  = os.environ.get('BACKEND_URL', 'https://smk-backend-api.vercel.app') + '/api/lead-sources/meta/oauth/callback'
     state = _parse.quote(session_key)
 
-    scopes = 'pages_show_list,pages_read_engagement,leads_retrieval,pages_manage_ads'
+    scopes = ','.join(_get_meta_oauth_scopes())
     auth_url = (
         f'https://www.facebook.com/dialog/oauth'
         f'?client_id={_parse.quote(app_id)}'
