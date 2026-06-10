@@ -1117,7 +1117,7 @@ def meta_oauth_callback():
         tenant_slug = str(tenant_id)
         # Try to get the tenant slug from DB for a nicer URL
         try:
-            from app.models.user import Tenant
+            from app.models.tenant import Tenant
             t = Tenant.query.get(tenant_id)
             if t and t.slug:
                 tenant_slug = t.slug
@@ -1256,7 +1256,7 @@ def google_oauth_callback():
         tenant_id   = session_data.get('tenant_id', 'demo')
         tenant_slug = str(tenant_id)
         try:
-            from app.models.user import Tenant
+            from app.models.tenant import Tenant
             t = Tenant.query.get(tenant_id)
             if t and t.slug:
                 tenant_slug = t.slug
