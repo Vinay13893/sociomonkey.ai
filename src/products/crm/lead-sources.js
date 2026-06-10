@@ -54,6 +54,31 @@ const _lsLogPerPage = 25;
 let _metaWizard   = {};
 let _googleWizard = {};
 
+const _LS_META_WIZARD_STORAGE_KEY = 'ls_meta_wizard';
+
+function _lsPersistMetaWizard() {
+    try {
+        sessionStorage.setItem(_LS_META_WIZARD_STORAGE_KEY, JSON.stringify(_metaWizard || {}));
+    } catch (_err) {}
+}
+
+function _lsLoadPersistedMetaWizard() {
+    try {
+        var raw = sessionStorage.getItem(_LS_META_WIZARD_STORAGE_KEY);
+        if (!raw) return null;
+        var data = JSON.parse(raw);
+        return data && typeof data === 'object' ? data : null;
+    } catch (_err) {
+        return null;
+    }
+}
+
+function _lsClearPersistedMetaWizard() {
+    try {
+        sessionStorage.removeItem(_LS_META_WIZARD_STORAGE_KEY);
+    } catch (_err) {}
+}
+
 // â”€â”€â”€ Entry Point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function renderLeadSources() {
@@ -91,7 +116,8 @@ function renderLeadSources() {
 
     // Auto-switch to connect tab if returning from OAuth callback
     var urlParams = new URLSearchParams(window.location.search);
-    var startTab = (urlParams.get('meta_session') || urlParams.get('google_session') || urlParams.get('meta_tab') === 'connect') ? 'connect' : 'sources';
+    var persistedMetaWizard = _lsLoadPersistedMetaWizard();
+    var startTab = (urlParams.get('meta_session') || urlParams.get('google_session') || urlParams.get('meta_tab') === 'connect' || (persistedMetaWizard && persistedMetaWizard.step >= 3)) ? 'connect' : 'sources';
     _lsRenderTab(startTab);
     if (startTab === 'connect') {
         document.querySelectorAll('#ls-tabs .nav-link').forEach(function(a) {
@@ -234,10 +260,17 @@ function _lsRenderConnect() {
     var urlParams = new URLSearchParams(window.location.search);
     var metaSession   = urlParams.get('meta_session');
     var googleSession = urlParams.get('google_session');
+    var persistedMetaWizard = _lsLoadPersistedMetaWizard();
     if (metaSession || googleSession) {
         el.innerHTML = `<div class="row g-4"><div class="col-12"><div id="ls-wizard-area"></div></div></div>`;
         if (metaSession)   _lsStartMetaWizard();
         if (googleSession) _lsStartGoogleWizard();
+        return;
+    }
+    if (persistedMetaWizard && persistedMetaWizard.step >= 3) {
+        _metaWizard = persistedMetaWizard;
+        el.innerHTML = `<div class="row g-4"><div class="col-12"><div id="ls-wizard-area"></div></div></div>`;
+        _lsRenderMetaWizard();
         return;
     }
     el.innerHTML = `
@@ -291,13 +324,20 @@ function _lsStartMetaWizard() {
     // Check if returning from OAuth callback
     var urlParams = new URLSearchParams(window.location.search);
     var sessionKey = urlParams.get('meta_session');
+    var persistedMetaWizard = _lsLoadPersistedMetaWizard();
     if (sessionKey) {
         _metaWizard = { step: 3, sessionKey: sessionKey, pages: [], selectedPage: null, forms: [], selectedForms: [], user: null, longToken: '' };
         _lsRenderMetaWizard();
         _lsMetaLoadSession(sessionKey);
         return;
     }
+    if (persistedMetaWizard && persistedMetaWizard.step >= 3) {
+        _metaWizard = persistedMetaWizard;
+        _lsRenderMetaWizard();
+        return;
+    }
     _metaWizard = { step: 1, businessId: '', sessionKey: '', pages: [], selectedPage: null, forms: [], selectedForms: [], user: null, longToken: '' };
+    _lsClearPersistedMetaWizard();
     _lsRenderMetaWizard();
 }
 
@@ -313,10 +353,12 @@ async function _lsMetaLoadSession(sessionKey) {
     _metaWizard.user      = data.user;
     _metaWizard.pages     = data.pages || [];
     _metaWizard.longToken = data.long_token || '';
+    _metaWizard.businessId = data.business_id || _metaWizard.businessId || '';
     _metaWizard.step      = 3;
+    _lsPersistMetaWizard();
     // Clean the URL
     var cleanUrl = window.location.pathname;
-    window.history.replaceState({}, '', cleanUrl);
+    window.history.replaceState({}, '', cleanUrl + '?meta_tab=connect');
     _lsRenderMetaWizard();
 }
 
@@ -428,6 +470,7 @@ async function _lsMetaStep1Next(evt) {
     if (!businessId) { showToast('Please enter your Meta Business ID', 'danger'); return; }
     _metaWizard.businessId = businessId;
     _metaWizard.step = 2;
+    _lsPersistMetaWizard();
     _lsRenderMetaWizard();
 }
 
@@ -447,6 +490,7 @@ async function _lsMetaOpenFacebookLogin(evt) {
 
 function _lsMetaSelectPage(pageId) {
     _metaWizard.selectedPage = _metaWizard.pages.find(function(p) { return p.id === pageId; }) || null;
+    _lsPersistMetaWizard();
     _lsRenderMetaWizard();
 }
 
@@ -465,6 +509,7 @@ async function _lsMetaStep3Next(evt) {
     _metaWizard.forms = data.forms || [];
     _metaWizard.selectedForms = _metaWizard.forms.slice();
     _metaWizard.step = 4;
+    _lsPersistMetaWizard();
     _lsRenderMetaWizard();
 }
 
@@ -475,10 +520,11 @@ function _lsMetaToggleForm(id, name, checked) {
     } else {
         _metaWizard.selectedForms = _metaWizard.selectedForms.filter(function(f) { return f.id !== id; });
     }
+    _lsPersistMetaWizard();
 }
 
-function _lsMetaSelectAllForms() { _metaWizard.selectedForms = _metaWizard.forms.slice(); _lsRenderMetaWizard(); }
-function _lsMetaClearForms()     { _metaWizard.selectedForms = []; _lsRenderMetaWizard(); }
+function _lsMetaSelectAllForms() { _metaWizard.selectedForms = _metaWizard.forms.slice(); _lsPersistMetaWizard(); _lsRenderMetaWizard(); }
+function _lsMetaClearForms()     { _metaWizard.selectedForms = []; _lsPersistMetaWizard(); _lsRenderMetaWizard(); }
 
 async function _lsMetaSave(evt) {
     var name = ((document.getElementById('mw-source-name') || {}).value || '').trim()
@@ -501,6 +547,7 @@ async function _lsMetaSave(evt) {
     if (btn) { btn.disabled = false; btn.textContent = 'Save & Activate'; }
     var data = await res.json();
     if (!res.ok) { showToast(data.error || 'Save failed', 'danger'); return; }
+    _lsClearPersistedMetaWizard();
     showToast('âœ… Meta source connected!', 'success');
     await _lsLoadSources();
     _lsSwitchTab('sources');
