@@ -17,7 +17,11 @@ function renderLogin(context) {
     var tenantSimpleLoginM = path.match(/^\/([^\/]+)\/login$/)
     var tenantM = path.match(/^\/([^\/]+)\/([^\/]+)(?:\/login)?$/)
     var platformPaths = ['applications', 'organizations', 'analytics', 'settings', 'products', 'login']
+    var demoLoginM = path.match(/^\/demo\/([^\/]+)\/login$/)
     var isPlatformPath = (!tenantM && !tenantSimpleLoginM && !appTenantLoginM && !appTenantM) || path === '/login' || platformPaths.indexOf((tenantM || [])[1]) !== -1
+    if (demoLoginM) {
+      context = { type: 'demo', product: demoLoginM[1] }
+    } else
     if (!isPlatformPath && appTenantLoginM) {
       context = { type: 'tenant', slug: authCanonicalTenantSlug(appTenantLoginM[2]), product: appTenantLoginM[1] }
     } else
@@ -35,9 +39,11 @@ function renderLogin(context) {
   }
 
   var isPlatform = context.type === 'platform'
-  var tenantSlug  = (!isPlatform && context.slug) ? context.slug : null
+  var isDemo = context.type === 'demo'
+  var loginContext = isPlatform ? 'platform' : (isDemo ? 'demo' : 'tenant')
+  var tenantSlug  = (!isPlatform && !isDemo && context.slug) ? context.slug : null
   var tenantDataSlug = tenantSlug ? authTenantDataSlug(tenantSlug) : null
-  var isDemoTenant = tenantSlug === 'demo'
+  var productSlug = context.product || 'lms'
 
   // Persist tenant hint whenever tenant login UI is rendered so LMS PWA launch
   // can recover tenant context even after Safari -> standalone transitions.
@@ -205,7 +211,7 @@ function renderLogin(context) {
     var passwordVal = document.getElementById('password').value
     var remember    = document.getElementById('rememberMeCheck').checked
     clearError()
-    await login(emailVal, passwordVal, remember, tenantSlug)
+    await login(emailVal, passwordVal, remember, tenantDataSlug || tenantSlug, loginContext, productSlug)
   })
 
   // ── Toggle OTP ↔ Password ──────────────────────────────────────────────────
@@ -261,14 +267,14 @@ function renderLogin(context) {
     btn.textContent = 'Sending\u2026'
     clearError()
     try {
-      var body = { email: emailVal }
+      var body = { email: emailVal, tenant_slug: tenantDataSlug || '', login_context: loginContext, product_slug: productSlug }
       if (tenantDataSlug) body.tenant_slug = tenantDataSlug
       var res  = await fetch(API_BASE + '/auth/send-otp', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
       var data = await res.json()
       if (!res.ok) {
-        showError(data.error || 'Failed to send OTP. Please try again.')
+        showError(data.message || data.error || 'Failed to send OTP. Please try again.')
         btn.disabled    = false
         btn.textContent = 'Send OTP'
         return
@@ -315,20 +321,20 @@ function renderLogin(context) {
     btn.textContent = 'Verifying\u2026'
     clearError()
     try {
-      var body = { email: emailVal, otp: otpVal, remember: !!remember }
+      var body = { email: emailVal, otp: otpVal, remember: !!remember, tenant_slug: tenantDataSlug || '', login_context: loginContext, product_slug: productSlug }
       if (tenantDataSlug) body.tenant_slug = tenantDataSlug
       var res  = await fetch(API_BASE + '/auth/verify-otp', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
       var data = await res.json()
       if (!res.ok) {
-        showError(data.error || 'Invalid OTP. Please try again.')
+        showError(data.message || data.error || 'Invalid OTP. Please try again.')
         btn.disabled    = false
         btn.textContent = 'Verify & Login'
         return
       }
       clearInterval(_countdownTimer)
-      authSetSession(data.token, data.user, remember, data.refresh_token || null)
+      authSetSession(data.token, data.user, remember, data.refresh_token || null, data.login_context || loginContext)
       try {
         if (typeof pushRequestPermission === 'function') {
           pushRequestPermission().catch(function () {})
@@ -339,6 +345,12 @@ function renderLogin(context) {
       if (loginRedirectPath && loginRedirectPath !== '/login' && !loginRedirectPath.endsWith('/login')) {
         history.pushState({}, '', loginRedirectPath)
         loginRedirectPath = ''
+      } else if ((data.login_context || loginContext) === 'platform') {
+        history.replaceState({}, '', '/')
+      } else if ((data.login_context || loginContext) === 'tenant' && data.user && data.user.tenant_slug) {
+        history.replaceState({}, '', authBuildTenantAppPath(data.user.tenant_slug, productSlug || 'lms'))
+      } else if ((data.login_context || loginContext) === 'demo') {
+        history.replaceState({}, '', '/demo/' + (productSlug || 'lms'))
       }
       dispatch()
     } catch (err) {
