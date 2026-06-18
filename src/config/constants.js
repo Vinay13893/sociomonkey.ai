@@ -47,51 +47,91 @@ const PIPELINE_STAGES = Object.keys(PIPELINE_STAGE_LABELS)
 
 const PRODUCT_CATALOGUE = [
   {
-    code: 'lms',         name: 'Lead Management System',
+    code: 'lms',
+    name: 'Lead Management System',
     fullName: 'Lead Management System',
-    desc: 'Lead capture, pipeline, team collaboration & performance tracking',
-    icon: 'fa-solid fa-building',      color: '#1e3a5f', bg: '#eff6ff', active: true,
+    desc: 'Tenant lead management workspace for sales teams',
+    icon: 'fa-solid fa-building', color: '#1e3a5f', bg: '#eff6ff', active: true,
+    catalogueGroup: 'platform', lifecycle: 'live', statusLabel: 'Live',
+    demoLabel: 'Demo Available', demoAvailable: true,
   },
   {
-    code: 'procurement', name: 'Procurement',
+    code: 'procurement',
+    name: 'Procurement',
     fullName: 'Procurement & Vendor Management',
     desc: 'Purchase orders, RFQs, vendor approvals & spend analytics',
     icon: 'fa-solid fa-cart-shopping', color: '#f59e0b', bg: '#fff7ed', active: true,
+    catalogueGroup: 'platform', lifecycle: 'live', statusLabel: 'Live',
+    demoAvailable: false,
   },
   {
-    code: 'wms',         name: '3D Inventory',
-    fullName: '3D Inventory Visualization & Management',
-    desc: '3D warehouse layout, SKUs, bins & real-time stock tracking',
-    icon: 'fa-solid fa-cube',          color: '#3b82f6', bg: '#eff6ff', active: true,
+    code: 'realestate',
+    name: '3D Inventory',
+    fullName: '3D Inventory & Allotment',
+    desc: '3D inventory visualization, availability, and allotment workflows',
+    icon: 'fa-solid fa-cube', color: '#3b82f6', bg: '#eff6ff', active: true,
+    catalogueGroup: 'platform', lifecycle: 'development', statusLabel: 'In Development',
+    demoAvailable: false,
   },
   {
-    code: 'amazon',      name: 'Amazon Intelligence',
+    code: 'amazon',
+    name: 'Amazon Intelligence',
     fullName: 'Amazon Data Intelligence & Analytics',
     desc: 'Keywords, ranking, ads, competitor analysis & market insights',
-    icon: 'fa-brands fa-amazon',       color: '#f97316', bg: '#fff7ed', active: true,
+    icon: 'fa-brands fa-amazon', color: '#f97316', bg: '#fff7ed', active: true,
+    catalogueGroup: 'platform', lifecycle: 'development', statusLabel: 'In Development',
+    demoAvailable: false,
   },
   {
-    code: 'crm',         name: 'CRM',
-    fullName: 'Customer Relationship Management',
-    desc: 'Leads, pipeline, team management & sales analytics',
-    icon: 'fa-solid fa-users',         color: '#22c55e', bg: '#f0fdf4', active: false,
+    code: 'meta',
+    name: 'Meta Intelligence',
+    fullName: 'Meta Data Intelligence & Analytics',
+    desc: 'Meta ad intelligence, campaign insight, and data quality monitoring',
+    icon: 'fa-brands fa-meta', color: '#2563eb', bg: '#eff6ff', active: true,
+    catalogueGroup: 'platform', lifecycle: 'development', statusLabel: 'In Development',
+    demoAvailable: false,
   },
   {
-    code: 'erp',         name: 'ERP',
+    code: 'crm',
+    name: 'CRM',
+    fullName: 'CRM',
+    desc: 'Customer relationship management suite',
+    icon: 'fa-solid fa-address-book', color: '#14b8a6', bg: '#ecfdf5', active: false,
+    catalogueGroup: 'coming-soon', lifecycle: 'coming-soon', statusLabel: 'Coming Soon',
+    demoAvailable: false,
+  },
+  {
+    code: 'erp',
+    name: 'ERP',
     fullName: 'Enterprise Resource Planning',
     desc: 'Finance, operations, HR, supply chain & executive reporting',
-    icon: 'fa-solid fa-industry',      color: '#10b981', bg: '#ecfdf5', active: false,
+    icon: 'fa-solid fa-industry', color: '#10b981', bg: '#ecfdf5', active: false,
+    catalogueGroup: 'coming-soon', lifecycle: 'coming-soon', statusLabel: 'Coming Soon',
+    demoAvailable: false,
   },
   {
-    code: 'realestate',  name: 'Real Estate',
-    fullName: 'Real Estate 3D Inventory & Allotment',
-    desc: '3D property visualization, unit allotment & booking management',
-    icon: 'fa-solid fa-building',      color: '#ef4444', bg: '#fef2f2', active: false,
-  },
-  {
-    code: 'hrms',        name: 'HRMS',
+    code: 'hrms',
+    name: 'HRMS',
     fullName: 'Human Resource Management System',
     desc: 'Payroll, attendance, leave management, onboarding & appraisals',
-    icon: 'fa-solid fa-id-card',       color: '#ec4899', bg: '#fdf2f8', active: false,
+    icon: 'fa-solid fa-id-card', color: '#ec4899', bg: '#fdf2f8', active: false,
+    catalogueGroup: 'coming-soon', lifecycle: 'coming-soon', statusLabel: 'Coming Soon',
+    demoAvailable: false,
   },
 ]
+
+function platformCatalogueApps() {
+  return PRODUCT_CATALOGUE.filter(function (p) { return p.catalogueGroup === 'platform' })
+}
+
+function platformComingSoonApps() {
+  return PRODUCT_CATALOGUE.filter(function (p) { return p.catalogueGroup === 'coming-soon' })
+}
+
+function platformActiveAppsCount() {
+  return platformCatalogueApps().length
+}
+
+function platformProductByCode(code) {
+  return PRODUCT_CATALOGUE.find(function (p) { return p.code === code })
+}

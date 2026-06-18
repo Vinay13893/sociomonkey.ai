@@ -82,23 +82,12 @@ function renderPlatformLayout(activeView) {
           '<h2>' + pageInfo.title + '</h2>' +
           '<p>' + pageInfo.subtitle + '</p>' +
         '</div>' +
-        '<div class="plat-search">' +
-          '<i class="fa-solid fa-magnifying-glass plat-search-icon"></i>' +
-          '<input type="text" placeholder="Search users, modules, reports\u2026  \u2318K" />' +
-        '</div>' +
         '<div class="plat-topbar-actions">' +
-          '<div class="plat-date-badge">' +
-            '<i class="fa-regular fa-calendar" style="color:#94a3b8;font-size:13px;"></i>' +
-            platDateRange() +
-          '</div>' +
-          '<div class="plat-icon-btn" title="Notifications">' +
+          '<div class="plat-icon-btn" title="Notifications" onclick="platToggleNotifications(event)">' +
             '<i class="fa-solid fa-bell"></i>' +
-            '<span class="plat-notif-badge">3</span>' +
+            '<span id="platNotifBadge" class="plat-notif-badge" style="display:none;">0</span>' +
           '</div>' +
-          '<div class="plat-icon-btn" title="Help">' +
-            '<i class="fa-regular fa-circle-question"></i>' +
-          '</div>' +
-          '<div class="plat-user-chip">' +
+          '<div class="plat-user-chip" onclick="platToggleUserMenu(event)">' +
             '<div class="plat-avatar">' + initials + '</div>' +
             '<div class="plat-user-info">' +
               '<div class="plat-user-name">' + platEsc(userName) + '</div>' +
@@ -122,7 +111,7 @@ function renderPlatformLayout(activeView) {
 
 function getPlatViewInfo(view) {
   var map = {
-    'dashboard':     { title: 'Welcome back, Admin &#x1F44B;', subtitle: "Here&#x27;s what&#x27;s happening across your platform today." },
+    'dashboard':     { title: 'Welcome back, Admin &#x1F44B;', subtitle: '' },
     'applications':  { title: 'Applications Suite',             subtitle: 'Manage, launch and configure your product ecosystem.' },
     'product-hub':   { title: 'Product Hub',                    subtitle: 'View subscribed clients and launch applications.' },
     'users':         { title: 'Users &amp; Roles',              subtitle: 'Manage platform users, roles and permissions.' },
@@ -180,10 +169,6 @@ function platLogout() {
   if (typeof dispatch === 'function') dispatch()
 }
 
-function platOpenStatus() {
-  showToast('Status page coming soon!', 'warning')
-}
-
 // -- Stub renderer ------------------------------------------------------------
 
 function renderPlatStub(view) {
@@ -200,13 +185,6 @@ function renderPlatStub(view) {
 
 // -- Helpers ------------------------------------------------------------------
 
-function platDateRange() {
-  var now   = new Date()
-  var start = new Date(now); start.setDate(now.getDate() - 6)
-  var fmt   = function(d) { return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
-  return fmt(start) + ' \u2013 ' + fmt(now) + ', ' + now.getFullYear()
-}
-
 function platEsc(s) {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -214,3 +192,59 @@ function platEsc(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
+
+function platToggleNotifications(event) {
+  event.stopPropagation()
+  platCloseMenus('notifications')
+  var existing = document.getElementById('platNotificationsMenu')
+  if (existing) return existing.remove()
+
+  var menu = document.createElement('div')
+  menu.id = 'platNotificationsMenu'
+  menu.style.cssText = 'position:fixed;right:176px;top:58px;width:min(360px,calc(100vw - 24px));background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 18px 50px rgba(15,23,42,.18);z-index:1800;overflow:hidden;'
+  menu.innerHTML =
+    '<div style="padding:14px 16px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:800;color:#0f172a;">Platform Notifications</div>' +
+    '<div style="padding:18px 16px;color:#64748b;font-size:13px;line-height:1.5;">No platform notifications are available yet.</div>'
+  document.body.appendChild(menu)
+}
+
+function platToggleUserMenu(event) {
+  event.stopPropagation()
+  platCloseMenus('user')
+  var existing = document.getElementById('platUserMenu')
+  if (existing) return existing.remove()
+
+  var menu = document.createElement('div')
+  menu.id = 'platUserMenu'
+  menu.style.cssText = 'position:fixed;right:24px;top:58px;width:190px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 18px 50px rgba(15,23,42,.18);z-index:1800;overflow:hidden;padding:6px;'
+  menu.innerHTML =
+    '<button onclick="platUserMenuAction(\'profile\')" style="width:100%;border:0;background:#fff;text-align:left;padding:10px 12px;border-radius:8px;font-size:13px;color:#0f172a;cursor:pointer;"><i class="fa-solid fa-user" style="width:18px;color:#64748b;"></i>Profile</button>' +
+    '<button onclick="platUserMenuAction(\'settings\')" style="width:100%;border:0;background:#fff;text-align:left;padding:10px 12px;border-radius:8px;font-size:13px;color:#0f172a;cursor:pointer;"><i class="fa-solid fa-gear" style="width:18px;color:#64748b;"></i>Settings</button>' +
+    '<div style="height:1px;background:#f1f5f9;margin:4px;"></div>' +
+    '<button onclick="platLogout()" style="width:100%;border:0;background:#fff;text-align:left;padding:10px 12px;border-radius:8px;font-size:13px;color:#dc2626;cursor:pointer;"><i class="fa-solid fa-right-from-bracket" style="width:18px;"></i>Sign Out</button>'
+  document.body.appendChild(menu)
+}
+
+function platUserMenuAction(action) {
+  platCloseMenus()
+  if (action === 'settings') {
+    platNavigate('settings')
+    return
+  }
+  showToast('Profile page coming soon.', 'warning')
+}
+
+function platCloseMenus(keep) {
+  if (keep !== 'notifications') {
+    var n = document.getElementById('platNotificationsMenu')
+    if (n) n.remove()
+  }
+  if (keep !== 'user') {
+    var u = document.getElementById('platUserMenu')
+    if (u) u.remove()
+  }
+}
+
+document.addEventListener('click', function () {
+  platCloseMenus()
+})

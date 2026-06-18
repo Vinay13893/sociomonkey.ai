@@ -8,8 +8,8 @@ async function renderProductHub(productCode) {
   var el = document.getElementById('platContent')
   if (!el) return
 
-  var prod = (typeof PRODUCT_CATALOGUE !== 'undefined')
-    ? PRODUCT_CATALOGUE.find(function(p){ return p.code === productCode })
+  var prod = (typeof platformProductByCode === 'function')
+    ? platformProductByCode(productCode)
     : null
 
   if (!prod) {
@@ -59,14 +59,18 @@ async function renderProductHub(productCode) {
 function _productHubShell(prod, productCode, state) {
   var loading = !!state.loading
   var isActive = !!prod.active
+  var isLive = prod.lifecycle === 'live'
+  var statusClass = isLive ? 'plat-badge-active' : (prod.lifecycle === 'development' ? 'plat-badge-warning' : 'plat-badge-coming')
   var stats = state.stats || { total_clients: 0, active_clients: 0, total_users: 0, active_users_30d: 0, usage_count: 0 }
   var clients = state.clients || []
 
   var headerActions = loading
     ? '<div class="plat-product-hub-actions"><button class="plat-btn plat-btn-outline" disabled>Loading...</button></div>'
     : '<div class="plat-product-hub-actions">' +
-        '<button class="plat-btn plat-btn-outline" onclick="platOpenDemoAccount(\'' + _escAttr(productCode) + '\')"><i class="fa-solid fa-play"></i> Open Demo</button>' +
-        (isActive
+        (prod.demoAvailable
+          ? '<button class="plat-btn plat-btn-outline" onclick="platOpenDemoAccount(\'' + _escAttr(productCode) + '\')"><i class="fa-solid fa-play"></i> Open Demo</button>'
+          : '') +
+        (isLive && isActive
           ? '<button class="plat-btn plat-btn-primary" onclick="platShowAddClientModal(\'' + _escAttr(productCode) + '\')"><i class="fa-solid fa-plus"></i> Add Client</button>'
           : '<button class="plat-btn plat-btn-primary" disabled style="opacity:.6;cursor:not-allowed;"><i class="fa-solid fa-plus"></i> Add Client</button>') +
       '</div>'
@@ -100,8 +104,8 @@ function _productHubShell(prod, productCode, state) {
       '<div class="plat-product-hub-info">' +
         '<h2>' + _escHtml(prod.fullName || prod.name || productCode) + '</h2>' +
         '<p>' + _escHtml(prod.desc || '') + '</p>' +
-        '<span class="plat-badge ' + (isActive ? 'plat-badge-active' : 'plat-badge-coming') + '">' +
-          (isActive ? 'Live' : 'Coming Soon') + '</span>' +
+        '<span class="plat-badge ' + statusClass + '">' + _escHtml(prod.statusLabel || (isActive ? 'Live' : 'Coming Soon')) + '</span>' +
+        (prod.demoAvailable ? '<span class="plat-badge plat-badge-info" style="margin-left:6px;">' + _escHtml(prod.demoLabel || 'Demo Available') + '</span>' : '') +
       '</div>' +
       headerActions +
     '</div>' +
@@ -313,9 +317,8 @@ async function platSubmitRequestDemo() {
 }
 
 function platShowAddClientModal(productCode) {
-  var productName = (typeof PRODUCT_CATALOGUE !== 'undefined' && PRODUCT_CATALOGUE.find(function(p){ return p.code === productCode }))
-    ? PRODUCT_CATALOGUE.find(function(p){ return p.code === productCode }).fullName
-    : productCode
+  var productConfig = (typeof platformProductByCode === 'function') ? platformProductByCode(productCode) : null
+  var productName = productConfig ? productConfig.fullName : productCode
 
   _platShowModal(
     'Add Client',
