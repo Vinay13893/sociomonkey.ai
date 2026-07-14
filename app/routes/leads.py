@@ -1076,6 +1076,23 @@ def dashboard_stats():
                 return query
         return query
 
+    def apply_dashboard_filters(query):
+        source = (request.args.get('source') or '').strip()
+        status = (request.args.get('status') or '').strip()
+        assigned_to = (request.args.get('assigned_to') or '').strip()
+        if source:
+            query = query.filter(Lead.source == source)
+        if status:
+            query = query.filter(Lead.status == status)
+        if assigned_to == 'unassigned':
+            query = query.filter(Lead.assigned_to.is_(None))
+        elif assigned_to:
+            try:
+                query = query.filter(Lead.assigned_to == int(assigned_to))
+            except ValueError:
+                pass
+        return query
+
     def calc_rates(total, counts):
         if total == 0:
             return {'hot_rate': 0, 'warm_rate': 0}
@@ -1108,7 +1125,7 @@ def dashboard_stats():
         else:
             q = Lead.query.filter_by(assigned_to=user.id, is_active=True, tenant_id=tid_scope)
         q = apply_test_lead_filter(q)
-        return apply_project_filter(apply_time_filter(q))
+        return apply_dashboard_filters(apply_project_filter(apply_time_filter(q)))
 
     scoped_query = scoped_query_for_role()
 
