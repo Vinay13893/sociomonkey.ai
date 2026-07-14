@@ -10,17 +10,11 @@ Safe to run multiple times — uses CREATE TABLE IF NOT EXISTS.
 import os, sys
 from dotenv import load_dotenv
 
+from db_safety import get_database_url
+
 load_dotenv()
 
-DATABASE_URL = os.environ.get('DATABASE_URL', '')
-if not DATABASE_URL:
-    print("ERROR: DATABASE_URL not set.", file=sys.stderr)
-    sys.exit(1)
-
-if DATABASE_URL.startswith('postgres://'):
-    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-
-print(f"Connecting to: {DATABASE_URL[:60]}...")
+DATABASE_URL = get_database_url()
 
 import psycopg2
 

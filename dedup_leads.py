@@ -1,8 +1,10 @@
 import psycopg2
 
-conn = psycopg2.connect(
-    'postgresql://neondb_owner:npg_Z9XE7zyPvpKm@ep-cool-lab-apffph2q-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
-)
+from db_safety import get_database_url
+
+
+DATABASE_URL = get_database_url(destructive=True)
+conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
 # Find all duplicate phones (keep lowest id, delete the rest)

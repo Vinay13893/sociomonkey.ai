@@ -18,12 +18,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from sqlalchemy import inspect, text
 
 from app import create_app, db
+from db_safety import guard_sqlalchemy_engine
 
 
 def main():
     app = create_app()
     with app.app_context():
       engine = db.engine
+      guard_sqlalchemy_engine(engine)
       inspector = inspect(engine)
       columns = {col['name'] for col in inspector.get_columns('leads')}
       if 'alternate_phone' in columns:
