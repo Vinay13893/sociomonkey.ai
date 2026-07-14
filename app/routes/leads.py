@@ -1356,46 +1356,39 @@ def action_board():
         CallbackReminder.lead_id.in_(db.select(visible_ids_subq.c.id))
     )
 
-    # Prevent N+1 query explosions while serializing callback rows.
-    cb_base = cb_base.options(
-        joinedload(CallbackReminder.lead).joinedload(Lead.project),
-        joinedload(CallbackReminder.lead).selectinload(Lead.notes),
-    )
-
     callback_window_start = range_start if range_requested else today_start
     callback_window_end   = range_end if range_requested else today_end
 
-    # FIFO per lead for callbacks: if multiple pending callbacks exist for the
-    # same lead, keep the first input (oldest created callback record).
-    all_pending_callbacks = cb_base.order_by(
-        CallbackReminder.created_at.asc(),
-        CallbackReminder.id.asc(),
-    ).all()
-
-    first_callback_by_lead = {}
-    passthrough_callbacks = []
-    for cb in all_pending_callbacks:
-        # Safety: callbacks without lead_id are kept as-is.
-        if not cb.lead_id:
-            passthrough_callbacks.append(cb)
-            continue
-        if cb.lead_id not in first_callback_by_lead:
-            first_callback_by_lead[cb.lead_id] = cb
-
-    unique_callbacks = list(first_callback_by_lead.values()) + passthrough_callbacks
-
-    current_callbacks = [
-        cb for cb in unique_callbacks
-        if cb.callback_datetime >= callback_window_start and cb.callback_datetime < callback_window_end
-    ]
-    overdue_callbacks = [
-        cb for cb in unique_callbacks
-        if cb.callback_datetime < callback_window_start
-    ]
-
-    # Keep display order by due time inside each section.
-    current_callbacks.sort(key=lambda cb: cb.callback_datetime)
-    overdue_callbacks.sort(key=lambda cb: cb.callback_datetime)
+    ranked_callbacks = (
+        cb_base
+        .with_entities(
+            CallbackReminder.id.label('id'),
+            CallbackReminder.lead_id.label('lead_id'),
+            func.row_number().over(
+                partition_by=CallbackReminder.lead_id,
+                order_by=(CallbackReminder.created_at.asc(), CallbackReminder.id.asc()),
+            ).label('rn'),
+        )
+        .subquery()
+    )
+    first_callback_ids = (
+        db.session.query(ranked_callbacks.c.id)
+        .filter(ranked_callbacks.c.rn == 1)
+        .subquery()
+    )
+    first_callback_lead_ids = (
+        db.session.query(ranked_callbacks.c.lead_id)
+        .filter(ranked_callbacks.c.rn == 1, ranked_callbacks.c.lead_id.isnot(None))
+        .subquery()
+    )
+    unique_cb_base = (
+        CallbackReminder.query
+        .filter(CallbackReminder.id.in_(db.select(first_callback_ids.c.id)))
+        .options(
+            joinedload(CallbackReminder.lead).joinedload(Lead.project),
+            joinedload(CallbackReminder.lead).joinedload(Lead.assigned_user),
+        )
+    )
 
     def _page_param(name):
         try:
@@ -1413,15 +1406,10 @@ def action_board():
         'hot_leads': _page_param('hot_leads_page'),
     }
 
-    def _slice_page(items, page):
+    def _query_page(query, page, *order_by):
+        ordered = query.order_by(*order_by)
         start = (page - 1) * page_size
-        end = start + page_size
-        return items[start:end]
-
-    def _query_page(query, page, sort_col, desc=False):
-        ordered = query.order_by(sort_col.desc() if desc else sort_col.asc())
-        start = (page - 1) * page_size
-        return ordered.offset(start).limit(page_size).all()
+        return list(ordered.offset(start).limit(page_size))
 
     def _pagination_meta(total, page, shown):
         start = ((page - 1) * page_size) + 1 if shown else 0
@@ -1438,20 +1426,46 @@ def action_board():
         }
 
     def _cb_dict(c):
-        d = c.to_dict()
         lead = c.lead
-        d['lead_name'] = lead.name if lead else f'Lead #{c.lead_id}'
-        d['lead_phone'] = lead.phone if lead else None
-        d['lead_status'] = lead.status if lead else None
-        d['lead_created_at'] = lead.created_at.isoformat() if lead and lead.created_at else None
-        d['project_name'] = lead.project.name if lead and lead.project else None
-        d['project_id'] = lead.project_id if lead else None
-        if lead and lead.notes:
-            latest_note = sorted(lead.notes, key=lambda n: n.created_at or datetime.min, reverse=True)[0]
-            d['latest_note'] = latest_note.note if latest_note else None
-        else:
-            d['latest_note'] = None
-        return d
+        latest_note = latest_notes.get(c.lead_id) if c.lead_id else None
+        return {
+            'id': c.id,
+            'lead_id': c.lead_id,
+            'callback_datetime': to_ist_str(c.callback_datetime),
+            'status': c.status,
+            'notes': c.notes,
+            'lead_name': lead.name if lead else f'Lead #{c.lead_id}',
+            'lead_phone': lead.phone if lead else None,
+            'lead_alternate_phone': lead.alternate_phone if lead else None,
+            'lead_email': lead.email if lead else None,
+            'lead_status': lead.status if lead else None,
+            'lead_created_at': to_ist_str(lead.created_at) if lead and lead.created_at else None,
+            'project_name': lead.project.name if lead and lead.project else None,
+            'project_id': lead.project_id if lead else None,
+            'assigned_to_name': lead.assigned_user.name if lead and lead.assigned_user else None,
+            'latest_note': latest_note,
+        }
+
+    def _lead_card_dict(lead):
+        return {
+            'id': lead.id,
+            'name': lead.name,
+            'phone': lead.phone,
+            'alternate_phone': lead.alternate_phone,
+            'email': lead.email,
+            'source': lead.source,
+            'project_id': lead.project_id,
+            'project_name': lead.project.name if lead.project else None,
+            'status': lead.status,
+            'assigned_to': lead.assigned_to,
+            'assigned_to_name': lead.assigned_user.name if lead.assigned_user else None,
+            'sales_manager_id': lead.sales_manager_id,
+            'sales_manager_name': lead.sales_manager.name if lead.sales_manager else None,
+            'created_at': to_ist_str(lead.created_at),
+            'updated_at': to_ist_str(lead.updated_at),
+            'latest_note': latest_notes.get(lead.id),
+            'next_callback': None,
+        }
 
     # ── Lead section buckets (per Action Board spec) ─────────────────────────
     # Callback-first precedence: any lead with a pending callback reminder
@@ -1464,13 +1478,16 @@ def action_board():
     warm_statuses = ['interested', 'site_visit_planned']
     hot_statuses = ['site_visit_done', 'negotiation']
 
-    overdue_callback_lead_ids = list({c.lead_id for c in overdue_callbacks if c.lead_id})
-    callback_lead_ids = {c.lead_id for c in current_callbacks if c.lead_id}
-    callback_lead_ids.update(overdue_callback_lead_ids)
-
     lead_buckets_base = visible
-    if callback_lead_ids:
-        lead_buckets_base = lead_buckets_base.filter(~Lead.id.in_(list(callback_lead_ids)))
+    lead_buckets_base = lead_buckets_base.filter(~Lead.id.in_(db.select(first_callback_lead_ids.c.lead_id)))
+    if range_requested:
+        lead_buckets_base = lead_scope.filter(~Lead.id.in_(db.select(first_callback_lead_ids.c.lead_id)))
+
+    lead_buckets_base = lead_buckets_base.options(
+        joinedload(Lead.project),
+        joinedload(Lead.assigned_user),
+        joinedload(Lead.sales_manager),
+    )
 
     # New leads should always surface in Action Board within the selected window.
     new_bucket_q = lead_buckets_base.filter(Lead.status == 'new')
@@ -1481,8 +1498,15 @@ def action_board():
     hot_q = lead_buckets_base.filter(Lead.status.in_(hot_statuses))
 
     # counts
-    today_callbacks_count = len(current_callbacks)
-    overdue_callbacks_count = len(overdue_callbacks)
+    current_callbacks_q = unique_cb_base.filter(
+        CallbackReminder.callback_datetime >= callback_window_start,
+        CallbackReminder.callback_datetime < callback_window_end,
+    )
+    overdue_callbacks_q = unique_cb_base.filter(
+        CallbackReminder.callback_datetime < callback_window_start,
+    )
+    today_callbacks_count = current_callbacks_q.count()
+    overdue_callbacks_count = overdue_callbacks_q.count()
     new_today_count = new_bucket_q.count()
     follow_up_count = follow_up_q.count()
     no_answer_count = no_answer_q.count()
@@ -1490,22 +1514,63 @@ def action_board():
     hot_count = hot_q.count()
 
     # paged section lists
-    current_callbacks_page = _slice_page(current_callbacks, section_pages['today_callbacks'])
-    overdue_callbacks_page = _slice_page(overdue_callbacks, section_pages['overdue_callbacks'])
-    new_today = _query_page(new_bucket_q, section_pages['new_leads_today'], Lead.created_at, desc=True)
-    follow_up = _query_page(follow_up_q, section_pages['follow_up'], Lead.updated_at, desc=False)
-    no_answer = _query_page(no_answer_q, section_pages['no_answer'], Lead.updated_at, desc=False)
-    warm_leads = _query_page(warm_q, section_pages['warm_leads'], Lead.updated_at, desc=True)
-    hot_leads = _query_page(hot_q, section_pages['hot_leads'], Lead.updated_at, desc=True)
+    current_callbacks_page = _query_page(
+        current_callbacks_q,
+        section_pages['today_callbacks'],
+        CallbackReminder.callback_datetime.asc(),
+        CallbackReminder.id.asc(),
+    )
+    overdue_callbacks_page = _query_page(
+        overdue_callbacks_q,
+        section_pages['overdue_callbacks'],
+        CallbackReminder.callback_datetime.asc(),
+        CallbackReminder.id.asc(),
+    )
+    new_today = _query_page(new_bucket_q, section_pages['new_leads_today'], Lead.created_at.desc(), Lead.id.desc())
+    follow_up = _query_page(follow_up_q, section_pages['follow_up'], Lead.updated_at.asc(), Lead.id.asc())
+    no_answer = _query_page(no_answer_q, section_pages['no_answer'], Lead.updated_at.asc(), Lead.id.asc())
+    warm_leads = _query_page(warm_q, section_pages['warm_leads'], Lead.updated_at.desc(), Lead.id.desc())
+    hot_leads = _query_page(hot_q, section_pages['hot_leads'], Lead.updated_at.desc(), Lead.id.desc())
+
+    page_lead_ids = set()
+    for cb in current_callbacks_page + overdue_callbacks_page:
+        if cb.lead_id:
+            page_lead_ids.add(cb.lead_id)
+    for lead in new_today + follow_up + no_answer + warm_leads + hot_leads:
+        page_lead_ids.add(lead.id)
+
+    latest_notes = {}
+    if page_lead_ids:
+        latest_note_subq = (
+            db.session.query(
+                LeadNote.lead_id.label('lead_id'),
+                func.max(LeadNote.created_at).label('latest_created_at'),
+            )
+            .filter(LeadNote.lead_id.in_(list(page_lead_ids)))
+            .group_by(LeadNote.lead_id)
+            .subquery()
+        )
+        latest_note_rows = (
+            db.session.query(LeadNote.lead_id, LeadNote.note)
+            .join(
+                latest_note_subq,
+                and_(
+                    LeadNote.lead_id == latest_note_subq.c.lead_id,
+                    LeadNote.created_at == latest_note_subq.c.latest_created_at,
+                ),
+            )
+            .all()
+        )
+        latest_notes = {row.lead_id: (row.note or '')[:120] for row in latest_note_rows}
 
     return jsonify({
         'today_callbacks':   [_cb_dict(c) for c in current_callbacks_page],
         'overdue_callbacks':  [_cb_dict(c) for c in overdue_callbacks_page],
-        'new_leads_today':   [l.to_dict() for l in new_today],
-        'follow_up_leads':   [l.to_dict() for l in follow_up],
-        'no_answer_leads':   [l.to_dict() for l in no_answer],
-        'warm_leads':        [l.to_dict() for l in warm_leads],
-        'hot_leads':         [l.to_dict() for l in hot_leads],
+        'new_leads_today':   [_lead_card_dict(l) for l in new_today],
+        'follow_up_leads':   [_lead_card_dict(l) for l in follow_up],
+        'no_answer_leads':   [_lead_card_dict(l) for l in no_answer],
+        'warm_leads':        [_lead_card_dict(l) for l in warm_leads],
+        'hot_leads':         [_lead_card_dict(l) for l in hot_leads],
         'summary': {
             'today_callbacks_count': today_callbacks_count,
             'overdue_count':         overdue_callbacks_count,
