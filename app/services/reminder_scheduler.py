@@ -29,6 +29,8 @@ from app.models.lead import CallbackReminder
 from app.models.notification import Notification
 
 logger = logging.getLogger(__name__)
+_REMINDER_LOCK = threading.Lock()
+_REMINDER_BATCH_SIZE = 100
 
 
 def push_notification(user_id: int, notification: dict):
@@ -109,7 +111,6 @@ def _deliver(callback: 'CallbackReminder', kind: str):
     try:
         from app.models.user import User
         from app.services.notification_events import enqueue_callback_event
-        from app.services.notification_processor import process_notification_queue
         from app.models.base import db as _db
         event_kind = 'due_soon' if kind == '10min' else 'due_now'
         for uid in recipients:
@@ -117,12 +118,6 @@ def _deliver(callback: 'CallbackReminder', kind: str):
             if recipient:
                 enqueue_callback_event(recipient, callback, event_kind)
         _db.session.commit()
-        # Best-effort immediate push dispatch so mobile OS banners are not
-        # blocked waiting for the next cron drain cycle.
-        try:
-            process_notification_queue(batch_size=100)
-        except Exception:
-            pass
     except Exception:
         try:
             from app.models.base import db as _db
@@ -149,18 +144,24 @@ def _run_scheduler(app):
             threading.Event().wait(60)   # sleep 60 s
 
 
-def _process_reminders():
+def _process_reminders_unlocked(batch_size: int = _REMINDER_BATCH_SIZE):
+    from sqlalchemy.orm import joinedload
+
+    batch_size = max(1, min(int(batch_size or _REMINDER_BATCH_SIZE), 500))
     now = datetime.utcnow()
     ten_min_from_now = now + timedelta(minutes=10)
     one_min_from_now = now + timedelta(minutes=1)
 
     # 10-minute warning (exclude the last 1 minute — those will fire as "due" instead)
-    due_10 = CallbackReminder.query.filter(
+    due_10 = CallbackReminder.query.options(joinedload(CallbackReminder.lead)).filter(
         CallbackReminder.status == 'pending',
         CallbackReminder.reminder_10_sent == False,   # noqa: E712
         CallbackReminder.callback_datetime <= ten_min_from_now,
         CallbackReminder.callback_datetime > one_min_from_now,
-    ).all()
+    ).order_by(
+        CallbackReminder.callback_datetime.asc(),
+        CallbackReminder.id.asc(),
+    ).limit(batch_size).all()
 
     for cb in due_10:
         _deliver(cb, '10min')
@@ -168,12 +169,16 @@ def _process_reminders():
 
     # Due notification — fire 1 minute early so push arrives by scheduled time
     grace_window_due = now - timedelta(minutes=4)   # 5-min window relative to 1-min-early firing
-    due_now = CallbackReminder.query.filter(
+    remaining = max(1, batch_size - len(due_10))
+    due_now = CallbackReminder.query.options(joinedload(CallbackReminder.lead)).filter(
         CallbackReminder.status == 'pending',
         CallbackReminder.reminder_due_sent == False,  # noqa: E712
         CallbackReminder.callback_datetime <= one_min_from_now,
         CallbackReminder.callback_datetime >= grace_window_due,
-    ).all()
+    ).order_by(
+        CallbackReminder.callback_datetime.asc(),
+        CallbackReminder.id.asc(),
+    ).limit(remaining).all()
 
     for cb in due_now:
         _deliver(cb, 'due')
@@ -183,11 +188,22 @@ def _process_reminders():
 
     if due_10 or due_now:
         db.session.commit()
+    return {'processed_10min': len(due_10), 'processed_due': len(due_now), 'skipped_overlap': False}
 
 
-def process_pending_reminders():
+def _process_reminders(batch_size: int = _REMINDER_BATCH_SIZE):
+    if not _REMINDER_LOCK.acquire(blocking=False):
+        logger.info('[ReminderScheduler] Skip overlapping reminder run.')
+        return {'processed_10min': 0, 'processed_due': 0, 'skipped_overlap': True}
+    try:
+        return _process_reminders_unlocked(batch_size=batch_size)
+    finally:
+        _REMINDER_LOCK.release()
+
+
+def process_pending_reminders(batch_size: int = _REMINDER_BATCH_SIZE):
     """Public one-shot entry point for cron/worker execution."""
-    _process_reminders()
+    return _process_reminders(batch_size=batch_size)
 
 
 # ---------------------------------------------------------------------------

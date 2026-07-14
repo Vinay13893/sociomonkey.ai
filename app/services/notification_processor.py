@@ -59,7 +59,7 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
             NotificationEvent.status == 'queued',
             NotificationEvent.scheduled_for <= now,
         )
-        .order_by(NotificationEvent.scheduled_for.asc())
+        .order_by(NotificationEvent.scheduled_for.asc(), NotificationEvent.id.asc())
         .limit(batch_size)
         .all()
     )
@@ -92,11 +92,10 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
             continue
 
         # Find active subscriptions for this user
-        subs = (
-            PushSubscription.query
-            .filter_by(user_id=event.user_id, is_active=True)
-            .all()
-        )
+        subs_query = PushSubscription.query.filter_by(user_id=event.user_id, is_active=True)
+        if event.tenant_id is not None:
+            subs_query = subs_query.filter(PushSubscription.tenant_id == event.tenant_id)
+        subs = subs_query.order_by(PushSubscription.id.asc()).all()
 
         if not subs:
             event.status = 'skipped'

@@ -553,12 +553,10 @@ def create_lead():
         })
         try:
             from app.services.notification_events import enqueue_lead_assigned
-            from app.services.notification_processor import process_notification_queue
             assigned_user = User.query.get(lead.assigned_to)
             if assigned_user:
                 enqueue_lead_assigned(assigned_user, lead)
                 db.session.commit()
-                process_notification_queue(batch_size=50)
         except Exception:
             db.session.rollback()
 
@@ -842,7 +840,6 @@ def bulk_assign():
             })
             try:
                 from app.services.notification_events import enqueue_lead_assigned
-                from app.services.notification_processor import process_notification_queue
                 # Enqueue one event summarising the bulk assignment (first lead as anchor)
                 first_lead_id = lead_ids[0] if lead_ids else None
                 first_lead = Lead.query.get(first_lead_id) if first_lead_id else None
@@ -852,7 +849,6 @@ def bulk_assign():
                     ev.title = 'New Leads Assigned'
                     ev.body = f'{updated} new lead{"s" if updated != 1 else ""} assigned to you'
                     db.session.commit()
-                    process_notification_queue(batch_size=50)
             except Exception:
                 db.session.rollback()
 
@@ -941,10 +937,8 @@ def assign_lead(lead_id):
         })
         try:
             from app.services.notification_events import enqueue_lead_reassigned
-            from app.services.notification_processor import process_notification_queue
             enqueue_lead_reassigned(target, lead)
             db.session.commit()
-            process_notification_queue(batch_size=50)
         except Exception:
             db.session.rollback()
 
@@ -1806,14 +1800,12 @@ def ar_bulk_assign():
         })
         try:
             from app.services.notification_events import enqueue_lead_assigned
-            from app.services.notification_processor import process_notification_queue
             first_lead = Lead.query.filter_by(id=lead_ids[0], tenant_id=user.tenant_id).first() if lead_ids else None
             if first_lead:
                 ev = enqueue_lead_assigned(target, first_lead)
                 ev.title = 'New Leads Assigned'
                 ev.body = f'{assigned} new lead{"s" if assigned != 1 else ""} assigned to you'
                 db.session.commit()
-                process_notification_queue(batch_size=50)
         except Exception:
             db.session.rollback()
 
@@ -1884,13 +1876,11 @@ def ar_workload_move():
         })
         try:
             from app.services.notification_events import enqueue_lead_assigned
-            from app.services.notification_processor import process_notification_queue
             if leads:
                 ev = enqueue_lead_assigned(to_user, leads[0])
                 ev.title = 'Leads Transferred to You'
                 ev.body = f'{moved} lead{"s" if moved != 1 else ""} transferred from {from_user.name}'
                 db.session.commit()
-                process_notification_queue(batch_size=50)
         except Exception:
             db.session.rollback()
 

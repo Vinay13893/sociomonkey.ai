@@ -556,10 +556,8 @@ def assign_lead(lead_id):
         })
         try:
             from app.services.notification_events import enqueue_lead_reassigned
-            from app.services.notification_processor import process_notification_queue
             enqueue_lead_reassigned(target_user, lead)
             db.session.commit()
-            process_notification_queue(batch_size=50)
         except Exception:
             db.session.rollback()
 
