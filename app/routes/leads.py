@@ -1,20 +1,22 @@
-from collections import Counter
-
 from flask import Blueprint, jsonify, request
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import case, func
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import selectinload, joinedload
 
 from app.middleware import require_auth, require_role
 from app.models.base import db
 from app.models.activity import ActivityLog
 from app.models.lead import Lead, StatusHistory, LeadNote, LeadAssignmentHistory, CallbackReminder
+from app.models.ingestion import IngestedLeadLog
 from app.models.job import LeadReshuffleJob
 from app.models.project import Project
 from app.models.user import User
+from app.models.ingestion import LeadSource
 from app.utils.activity import log_activity
-from app.utils.leads import get_user_visible_leads, VALID_STATUSES
+from app.utils.leads import get_user_visible_leads, apply_test_lead_filter, VALID_STATUSES
+from app.utils.lead_source_cutoff import lead_source_cutoff_for
+from app.utils.time_utils import to_ist_str
 from app.services.reminder_scheduler import push_notification
 
 leads_bp = Blueprint('leads', __name__, url_prefix='/api/leads')
@@ -226,30 +228,263 @@ def process_queued_reshuffle_jobs(limit: int = 10) -> dict:
 # Collection
 # ---------------------------------------------------------------------------
 
+LEADS_DEFAULT_PAGE_SIZE = 50
+LEADS_MAX_PAGE_SIZE = 100
+LEADS_MAX_IDS_REFRESH = 100
+
+
+def _parse_positive_int(raw_value, default, minimum=1, maximum=None):
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        value = default
+    value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def _parse_leads_datetime(raw_value):
+    if not raw_value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw_value).replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _parse_lead_ids(raw_value):
+    ids = []
+    seen = set()
+    for part in str(raw_value or '').split(','):
+        try:
+            lead_id = int(part.strip())
+        except (TypeError, ValueError):
+            continue
+        if lead_id > 0 and lead_id not in seen:
+            seen.add(lead_id)
+            ids.append(lead_id)
+        if len(ids) >= LEADS_MAX_IDS_REFRESH:
+            break
+    return ids
+
+
 @leads_bp.route('', methods=['GET'])
 @require_auth
 def get_leads():
     user = request.current_user
     query = get_user_visible_leads(user)
 
+    page = _parse_positive_int(request.args.get('page'), 1)
+    page_size = _parse_positive_int(
+        request.args.get('page_size') or request.args.get('per_page'),
+        LEADS_DEFAULT_PAGE_SIZE,
+        maximum=LEADS_MAX_PAGE_SIZE,
+    )
+    if str(request.args.get('page_size') or request.args.get('per_page') or '').strip() == '0':
+        page_size = LEADS_MAX_PAGE_SIZE
     project_id = request.args.get('project_id')
-    status = request.args.get('status')
+    status = (request.args.get('status') or '').strip()
+    source = (request.args.get('source') or '').strip()
+    assigned_to = (request.args.get('assigned_to') or request.args.get('team_member') or '').strip()
+    sales_manager_id = (request.args.get('sales_manager_id') or '').strip()
+    date_from = (request.args.get('date_from') or '').strip()
+    date_to = (request.args.get('date_to') or '').strip()
+    search = (request.args.get('q') or request.args.get('search') or '').strip()
+    sort = (request.args.get('sort') or 'new_old').strip()
+    updated_since = _parse_leads_datetime(request.args.get('updated_since'))
+    requested_ids = _parse_lead_ids(request.args.get('ids'))
+    tenant_cutoff = lead_source_cutoff_for(user, tenant_id=user.tenant_id)
+    if tenant_cutoff:
+        source_lead_ids = (
+            db.session.query(IngestedLeadLog.lead_id)
+            .join(LeadSource, IngestedLeadLog.source_id == LeadSource.id)
+            .filter(IngestedLeadLog.tenant_id == user.tenant_id)
+            .filter(LeadSource.tenant_id == user.tenant_id)
+            .filter(LeadSource.is_active == True)
+            .filter(IngestedLeadLog.status == 'processed')
+            .filter(IngestedLeadLog.lead_id.isnot(None))
+            .filter(IngestedLeadLog.received_at >= tenant_cutoff)
+            .distinct()
+            .subquery()
+        )
+        # Keep manual/sheet-imported leads visible while gating ingestion leads by cutoff.
+        query = query.filter((Lead.created_by.isnot(None)) | (Lead.id.in_(source_lead_ids)))
     if project_id:
-        query = query.filter_by(project_id=int(project_id))
+        try:
+            query = query.filter(Lead.project_id == int(project_id))
+        except ValueError:
+            return jsonify({'error': 'project_id must be an integer'}), 400
     if status:
-        query = query.filter_by(status=status)
+        query = query.filter(Lead.status == status)
+    if source:
+        query = query.filter(Lead.source == source)
+    if assigned_to == 'unassigned':
+        query = query.filter(Lead.assigned_to.is_(None))
+    elif assigned_to:
+        try:
+            query = query.filter(Lead.assigned_to == int(assigned_to))
+        except ValueError:
+            return jsonify({'error': 'assigned_to must be an integer or unassigned'}), 400
+    if sales_manager_id:
+        try:
+            query = query.filter(Lead.sales_manager_id == int(sales_manager_id))
+        except ValueError:
+            return jsonify({'error': 'sales_manager_id must be an integer'}), 400
+    if date_from:
+        try:
+            query = query.filter(Lead.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            return jsonify({'error': 'date_from must be YYYY-MM-DD'}), 400
+    if date_to:
+        try:
+            query = query.filter(Lead.created_at < (datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)))
+        except ValueError:
+            return jsonify({'error': 'date_to must be YYYY-MM-DD'}), 400
+    if search:
+        like_q = f'%{search.lower()}%'
+        query = query.outerjoin(Project, Lead.project_id == Project.id).filter(or_(
+            func.lower(func.coalesce(Lead.name, '')).like(like_q),
+            func.lower(func.coalesce(Lead.phone, '')).like(like_q),
+            func.lower(func.coalesce(Lead.email, '')).like(like_q),
+            func.lower(func.coalesce(Project.name, '')).like(like_q),
+        ))
+    if requested_ids:
+        query = query.filter(Lead.id.in_(requested_ids))
+    if updated_since:
+        query = query.filter(or_(Lead.updated_at > updated_since, Lead.created_at > updated_since))
 
     # Eager-load all relationships used by to_dict() to avoid N+1 queries.
     # Without this, each lead triggers separate SELECT for notes, callbacks,
     # and assigned_user.manager — causing thousands of DB round-trips.
     query = query.options(
-        selectinload(Lead.notes),
-        selectinload(Lead.callbacks),
+        joinedload(Lead.project),
         joinedload(Lead.assigned_user).joinedload(User.manager),
+        joinedload(Lead.sales_manager),
     )
 
-    leads = query.order_by(Lead.created_at.desc()).all()
-    return jsonify({'leads': [l.to_dict() for l in leads]}), 200
+    total = int(query.enable_eagerloads(False).order_by(None).with_entities(func.count(Lead.id)).scalar() or 0)
+    sort_map = {
+        'old_new': (Lead.created_at.asc(), Lead.id.asc()),
+        'updated_new_old': (Lead.updated_at.desc(), Lead.id.desc()),
+        'updated_old_new': (Lead.updated_at.asc(), Lead.id.asc()),
+        'new_old': (Lead.created_at.desc(), Lead.id.desc()),
+    }
+    order_by = sort_map.get(sort, sort_map['new_old'])
+    if sort not in sort_map:
+        sort = 'new_old'
+    if requested_ids:
+        page = 1
+        page_size = min(max(len(requested_ids), 1), LEADS_MAX_IDS_REFRESH)
+    if updated_since and not requested_ids:
+        page = 1
+        page_size = min(page_size, LEADS_MAX_PAGE_SIZE)
+        order_by = sort_map['updated_new_old']
+        sort = 'updated_new_old'
+
+    leads = list(
+        query
+        .order_by(*order_by)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    lead_ids = [lead.id for lead in leads]
+    latest_notes = {}
+    next_callbacks = {}
+
+    if lead_ids:
+        latest_note_subq = (
+            db.session.query(
+                LeadNote.lead_id.label('lead_id'),
+                func.max(LeadNote.created_at).label('latest_created_at'),
+            )
+            .filter(LeadNote.lead_id.in_(lead_ids))
+            .group_by(LeadNote.lead_id)
+            .subquery()
+        )
+        latest_note_rows = (
+            db.session.query(LeadNote.lead_id, LeadNote.note)
+            .join(
+                latest_note_subq,
+                and_(
+                    LeadNote.lead_id == latest_note_subq.c.lead_id,
+                    LeadNote.created_at == latest_note_subq.c.latest_created_at,
+                ),
+            )
+            .all()
+        )
+        latest_notes = {
+            row.lead_id: (row.note or '')[:120]
+            for row in latest_note_rows
+        }
+
+        next_callback_rows = (
+            db.session.query(
+                CallbackReminder.lead_id.label('lead_id'),
+                func.min(CallbackReminder.callback_datetime).label('next_callback'),
+            )
+            .filter(
+                CallbackReminder.lead_id.in_(lead_ids),
+                CallbackReminder.status == 'pending',
+                CallbackReminder.callback_datetime > datetime.utcnow(),
+            )
+            .group_by(CallbackReminder.lead_id)
+            .all()
+        )
+        next_callbacks = {
+            row.lead_id: to_ist_str(row.next_callback)
+            for row in next_callback_rows
+        }
+
+    def lead_list_dict(lead):
+        return {
+            'id': lead.id,
+            'name': lead.name,
+            'phone': lead.phone,
+            'alternate_phone': lead.alternate_phone,
+            'email': lead.email,
+            'source': lead.source,
+            'budget_min': lead.budget_min,
+            'budget_max': lead.budget_max,
+            'project_id': lead.project_id,
+            'project_name': lead.project.name if lead.project else None,
+            'status': lead.status,
+            'assigned_to': lead.assigned_to,
+            'assigned_to_name': lead.assigned_user.name if lead.assigned_user else None,
+            'sales_manager_id': lead.sales_manager_id,
+            'sales_manager_name': lead.sales_manager.name if lead.sales_manager else None,
+            'manager_name': (
+                lead.assigned_user.manager.name
+                if lead.assigned_user and lead.assigned_user.manager
+                else None
+            ),
+            'created_at': to_ist_str(lead.created_at),
+            'updated_at': to_ist_str(lead.updated_at),
+            'is_test': lead.is_test,
+            'latest_note': latest_notes.get(lead.id),
+            'next_callback': next_callbacks.get(lead.id),
+        }
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    server_time = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace('+00:00', 'Z')
+    return jsonify({
+        'leads': [lead_list_dict(lead) for lead in leads],
+        'pagination': {
+            'page': page,
+            'page_size': page_size,
+            'total': total,
+            'total_pages': total_pages,
+            'has_next': page < total_pages,
+            'has_prev': page > 1,
+            'max_page_size': LEADS_MAX_PAGE_SIZE,
+        },
+        'sort': sort,
+        'mode': 'ids' if requested_ids else ('delta' if updated_since else 'page'),
+        'server_time': server_time,
+    }), 200
 
 
 @leads_bp.route('', methods=['POST'])
@@ -501,12 +736,25 @@ def bulk_update_source():
     lead_ids   = data.get('lead_ids', [])
     new_source = (data.get('source') or '').strip()
 
-    VALID_SOURCES = ['Website','Referral','Walk-in','Meta','Google',
-                     'Email Campaign','Direct','Other','G1','G2','G3','TP']
+    base_sources = ['Website','Referral','Walk-in','Meta','Google',
+                    'Email Campaign','Direct','Other','G1','G2','G3','TP']
+    source_names = [
+        name for name, in db.session.query(LeadSource.name)
+        .filter(LeadSource.tenant_id == user.tenant_id, LeadSource.is_active == True)
+        .all()
+        if name
+    ]
+    valid_sources = []
+    seen_sources = set()
+    for source_name in base_sources + source_names:
+        key = str(source_name or '').strip().lower()
+        if key and key not in seen_sources:
+            seen_sources.add(key)
+            valid_sources.append(str(source_name).strip())
     if not lead_ids:
         return jsonify({'error': 'lead_ids is required'}), 400
-    if not new_source or new_source not in VALID_SOURCES:
-        return jsonify({'error': f'Invalid source. Must be one of: {", ".join(VALID_SOURCES)}'}), 400
+    if not new_source or new_source not in valid_sources:
+        return jsonify({'error': f'Invalid source. Must be one of: {", ".join(valid_sources)}'}), 400
 
     visible_ids = {l.id for l in get_user_visible_leads(user).all()}
     updated = 0
@@ -859,27 +1107,47 @@ def dashboard_stats():
             )
         else:
             q = Lead.query.filter_by(assigned_to=user.id, is_active=True, tenant_id=tid_scope)
+        q = apply_test_lead_filter(q)
         return apply_project_filter(apply_time_filter(q))
 
-    scoped_leads = scoped_query_for_role().with_entities(
-        Lead.status.label('status'),
-        Lead.source.label('source'),
-        Lead.project_id.label('project_id'),
-        Lead.assigned_to.label('assigned_to'),
-    ).all()
+    scoped_query = scoped_query_for_role()
 
-    total = len(scoped_leads)
-    status_counter = Counter(row.status for row in scoped_leads if row.status)
+    total = int(scoped_query.order_by(None).with_entities(func.count(Lead.id)).scalar() or 0)
+
+    status_rows = (
+        scoped_query
+        .order_by(None)
+        .with_entities(Lead.status.label('status'), func.count(Lead.id).label('count'))
+        .group_by(Lead.status)
+        .all()
+    )
+    status_counter = {row.status: int(row.count or 0) for row in status_rows if row.status}
     status_counts = {s: int(status_counter.get(s, 0)) for s in statuses}
-    status_counts['assigned'] = sum(1 for row in scoped_leads if row.assigned_to is not None)
+
+    assigned_total = int(
+        scoped_query
+        .order_by(None)
+        .filter(Lead.assigned_to.isnot(None))
+        .with_entities(func.count(Lead.id))
+        .scalar() or 0
+    )
+    status_counts['assigned'] = assigned_total
     status_counts['unassigned'] = total - status_counts['assigned']
     rates = calc_rates(total, status_counts)
 
-    source_counter = Counter((row.source or 'Unknown') for row in scoped_leads)
-    source_rows = sorted(source_counter.items(), key=lambda item: item[1], reverse=True)
-    source_total = sum(int(count or 0) for _source, count in source_rows)
+    source_rows = (
+        scoped_query
+        .order_by(None)
+        .with_entities(func.coalesce(Lead.source, 'Unknown').label('source'), func.count(Lead.id).label('count'))
+        .group_by(func.coalesce(Lead.source, 'Unknown'))
+        .order_by(func.count(Lead.id).desc())
+        .all()
+    )
+    source_total = sum(int(row.count or 0) for row in source_rows)
     source_stats = []
-    for source_name, source_count in source_rows:
+    for row in source_rows:
+        source_name = row.source or 'Unknown'
+        source_count = row.count
         count = int(source_count or 0)
         if count == 0:
             continue
@@ -905,13 +1173,26 @@ def dashboard_stats():
         }
         for row in project_rows
     }
-    for row in scoped_leads:
+
+    project_status_rows = (
+        scoped_query
+        .order_by(None)
+        .with_entities(
+            Lead.project_id.label('project_id'),
+            Lead.status.label('status'),
+            func.count(Lead.id).label('count'),
+        )
+        .group_by(Lead.project_id, Lead.status)
+        .all()
+    )
+    for row in project_status_rows:
         bucket = project_buckets.get(row.project_id)
         if not bucket:
             continue
-        bucket['total'] += 1
+        count = int(row.count or 0)
+        bucket['total'] += count
         if row.status in bucket['status_counts']:
-            bucket['status_counts'][row.status] += 1
+            bucket['status_counts'][row.status] += count
 
     project_stats = []
     for row in project_rows:
@@ -1863,8 +2144,33 @@ def get_lead_detail_bundle(lead_id):
         .all()
     )
 
+    latest_ingestion = (
+        IngestedLeadLog.query
+        .filter_by(tenant_id=lead.tenant_id, lead_id=lead_id)
+        .order_by(IngestedLeadLog.received_at.desc())
+        .first()
+    )
+    acquisition = None
+    if latest_ingestion:
+        acquisition = {
+            'source_type': latest_ingestion.source_type,
+            'platform_lead_id': latest_ingestion.platform_lead_id,
+            'campaign_id': latest_ingestion.campaign_id,
+            'campaign_name': latest_ingestion.campaign_name,
+            'ad_set_id': latest_ingestion.ad_set_id,
+            'ad_set_name': latest_ingestion.ad_set_name,
+            'ad_id': latest_ingestion.ad_id,
+            'ad_name': latest_ingestion.ad_name,
+            'form_id': latest_ingestion.form_id,
+            'form_name': latest_ingestion.form_name,
+            'page_id': latest_ingestion.page_id,
+            'mapped_fields': latest_ingestion.mapped_fields or {},
+            'received_at': latest_ingestion.received_at.isoformat() if latest_ingestion.received_at else None,
+        }
+
     return jsonify({
         'lead': lead.to_dict(),
+        'acquisition': acquisition,
         'notes': [n.to_dict() for n in notes],
         'status_history': [h.to_dict() for h in status_history],
         'assignment_history': [h.to_dict() for h in assignment_history],
