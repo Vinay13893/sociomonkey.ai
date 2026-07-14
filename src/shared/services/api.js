@@ -27,13 +27,14 @@ function _perfRound(ms) {
 function _perfTrackedRoute(path, method) {
   var normalizedMethod = String(method || 'GET').toUpperCase()
   if (normalizedMethod === 'POST' && path === '/auth/login') return 'login'
-  if (normalizedMethod === 'GET' && path === '/leads') return 'leads'
+  if (normalizedMethod === 'GET' && (path === '/leads' || path.indexOf('/leads?') === 0)) return 'leads'
   if (normalizedMethod === 'GET' && path.indexOf('/leads/dashboard/stats') === 0) return 'dashboard_stats'
   return ''
 }
 
 function _perfLog(routeKey, stage, payload) {
   if (!routeKey) return
+  if (!window.DEBUG_PERF) return
   console.log('[PERF]', Object.assign({ route: routeKey, stage: stage }, payload || {}))
 }
 
@@ -107,6 +108,62 @@ window._perfMarkSent = _perfMarkSent
 window._perfReadResponse = _perfReadResponse
 window._perfMarkRenderComplete = _perfMarkRenderComplete
 
+function _apiIsLocalOfflineHost() {
+  var host = String((window.location && window.location.hostname) || '').toLowerCase()
+  return host === '127.0.0.1' || host === 'localhost'
+}
+
+function _apiOfflineToken(user, loginContext) {
+  function b64(obj) {
+    return btoa(JSON.stringify(obj)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
+  }
+  var now = Math.floor(Date.now() / 1000)
+  return [
+    b64({ alg: 'none', typ: 'JWT' }),
+    b64({ sub: user.id, role: user.role, tenant_id: user.tenant_id, ctx: loginContext, iat: now, exp: now + 86400 }),
+    'offline'
+  ].join('.')
+}
+
+function _apiOfflineLoginData(email, tenantSlug, loginContext, productSlug) {
+  var slug = tenantSlug || 'ganga-realty'
+  var userObj = {
+    id: 1,
+    name: 'Ganga Realty Admin',
+    email: email || 'offline@sociomonkey.local',
+    phone: '',
+    role: 'superadmin',
+    tenant_id: 1,
+    tenant_name: 'Ganga Realty',
+    tenant_slug: slug,
+    manager_id: null,
+    manager_name: null,
+    assigned_manager_id: null,
+    assigned_manager_name: null,
+    is_active: true,
+    created_at: new Date().toISOString(),
+    last_login: new Date().toISOString(),
+    offline: true,
+  }
+  var ctx = loginContext || 'tenant'
+  return {
+    token: _apiOfflineToken(userObj, ctx),
+    refresh_token: null,
+    user: userObj,
+    login_context: ctx,
+    products: [
+      {
+        slug: productSlug || 'lms',
+        name: 'Lead Management System (Offline)',
+        fullName: 'Lead Management System',
+        icon: '📋',
+        color: '#1e3a5f',
+      },
+    ],
+    offline: true,
+  }
+}
+
 async function _apiRequest(path, opts) {
   const options = opts || {}
   const retries = typeof options.retries === 'number' ? options.retries : 1
@@ -146,7 +203,7 @@ async function _apiRequest(path, opts) {
       }
 
       if (!res.ok) {
-        const err = new Error((payload && payload.error) || 'Request failed')
+        const err = new Error((payload && (payload.message || payload.error)) || 'Request failed')
         err.status = res.status
         err.payload = payload
         throw err
@@ -183,11 +240,19 @@ async function _apiRequest(path, opts) {
   throw lastErr || new Error('Request failed')
 }
 
-async function login(email, password, remember, tenantSlug) {
+async function login(email, password, remember, tenantSlug, loginCtx, productSlug) {
   let data
   try {
-    const body = { email: email, password: password, remember: !!remember }
+    const loginContext = authNormalizeLoginContext(loginCtx) || (tenantSlug ? 'tenant' : 'platform')
+    const body = {
+      email: email,
+      password: password,
+      remember: !!remember,
+      tenant_slug: tenantSlug || '',
+      login_context: loginContext,
+    }
     if (tenantSlug) body.tenant_slug = tenantSlug
+    if (productSlug) body.product_slug = productSlug
     data = await _apiRequest('/auth/login', {
       method: 'POST',
       headers: _apiJsonHeaders(),
@@ -196,6 +261,10 @@ async function login(email, password, remember, tenantSlug) {
       timeoutMs: 45000,
     })
   } catch (e) {
+    if (_apiIsLocalOfflineHost()) {
+      var loginContext = authNormalizeLoginContext(loginCtx) || (tenantSlug ? 'tenant' : 'platform')
+      data = _apiOfflineLoginData(email, tenantSlug, loginContext, productSlug)
+    } else {
     const msg = (e && e.message) || 'Login failed. Please try again.'
     const errEl = document.getElementById('loginError')
     if (errEl) {
@@ -204,9 +273,11 @@ async function login(email, password, remember, tenantSlug) {
     }
     if (typeof showToast === 'function') showToast(msg, 'error')
     return
+    }
   }
 
-  authSetSession(data.token, data.user, !!remember, data.refresh_token || null)
+  var sessionContext = data.login_context || loginCtx
+  authSetSession(data.token, data.user, !!remember, data.refresh_token || null, sessionContext)
   // iOS Web Push permission is most reliable when requested immediately after
   // a user-initiated login action.
   try {
@@ -217,8 +288,7 @@ async function login(email, password, remember, tenantSlug) {
   availableProducts = data.products || []
   if (availableProducts.length > 0) {
     const hasLms = availableProducts.find(p => p.slug === 'lms')
-    const hasCrm = availableProducts.find(p => p.slug === 'crm')
-    currentProduct = hasLms ? 'lms' : (hasCrm ? 'crm' : ((availableProducts[0] && availableProducts[0].slug) || 'lms'))
+    currentProduct = hasLms ? 'lms' : ((availableProducts[0] && availableProducts[0].slug) || 'lms')
     localStorage.setItem('current_product', currentProduct)
   }
   // Persist products so the sidebar can render instantly on the next page load
@@ -229,21 +299,17 @@ async function login(email, password, remember, tenantSlug) {
   } catch (_e) {}
   await loadMe()
   authScheduleExpiry()
-  // Redirect to the originally-requested page if one was stored, else default by role
-  if (loginRedirectPath && loginRedirectPath !== '/login' && !loginRedirectPath.endsWith('/login')) {
-    history.pushState({}, '', loginRedirectPath)
-    loginRedirectPath = ''
-  } else if (!loginRedirectPath || loginRedirectPath.endsWith('/login')) {
-    if (authIsPlatformUser()) {
-      history.replaceState({}, '', '/')
-    } else if (user && user.tenant_slug) {
-      // Redirect tenant users to their app regardless of which login page they
-      // used (tenant-specific or platform /login). Without this, logging in via
-      // /login leaves the URL as /login, dispatch() redirects to /, and the
-      // platform-route guard then clears the session causing a login loop.
-      const preferredProduct = availableProducts.find(p => p.slug === 'lms') ? 'lms' : 'crm'
-      history.replaceState({}, '', authBuildTenantAppPath(user.tenant_slug, preferredProduct))
-    }
+  var requestedPath = loginRedirectPath
+  loginRedirectPath = ''
+  if (requestedPath && requestedPath !== '/login' && !requestedPath.endsWith('/login')) {
+    history.pushState({}, '', requestedPath)
+  } else if (sessionContext === 'platform') {
+    history.replaceState({}, '', '/')
+  } else if (sessionContext === 'tenant' && user && user.tenant_slug) {
+    const preferredProduct = availableProducts.find(p => p.slug === 'lms') ? 'lms' : ((availableProducts[0] && availableProducts[0].slug) || 'lms')
+    history.replaceState({}, '', authBuildTenantAppPath(user.tenant_slug, preferredProduct))
+  } else if (sessionContext === 'demo') {
+    history.replaceState({}, '', '/demo')
   }
   dispatch()
 }
@@ -273,6 +339,7 @@ async function loadMe() {
   }
 
   user = data.user
+  if (data.login_context) loginContext = authNormalizeLoginContext(data.login_context)
   if (data.products) {
     availableProducts = data.products
   }
@@ -289,25 +356,111 @@ async function loadMe() {
 
 // ── In-memory data caches (5-minute TTL, invalidated on tenant context switch) ──
 var _CACHE_TTL_MS = 5 * 60 * 1000
+var _LEADS_CACHE_TTL_MS = 15 * 1000
 var _cacheSlug = null
 var _projectsCache = null; var _projectsCacheTs = 0
 var _leadsCache    = null; var _leadsCacheTs    = 0
+var _leadsPageCache = {}
+var _leadsInFlight = {}
+var _leadsPagination = { page: 1, page_size: 25, total: 0, total_pages: 1, has_next: false, has_prev: false }
+var _leadsLastServerTime = ''
 var _usersCache    = null; var _usersCacheTs    = 0
+var _metaRealtimeSyncTs = 0
+var _metaRealtimeSyncPromise = null
+var _META_REALTIME_SYNC_COOLDOWN_MS = 15 * 60 * 1000
+var _metaCreatedAtBackfillTs = 0
+var _META_CREATED_AT_BACKFILL_INTERVAL_MS = 6 * 60 * 60 * 1000
 
 function _cacheValid(ts) { return ts > 0 && (Date.now() - ts) < _CACHE_TTL_MS }
+function _leadsCacheValid(ts) { return ts > 0 && (Date.now() - ts) < _LEADS_CACHE_TTL_MS }
 
 function _checkCacheTenant() {
   // Bust all caches when the active tenant context changes (platform owner switching tenants)
   var slug = (typeof platformTenantSlug === 'string' && platformTenantSlug) ? platformTenantSlug : ''
   if (_cacheSlug !== slug) {
-    _projectsCacheTs = 0; _leadsCacheTs = 0; _usersCacheTs = 0
+    _projectsCacheTs = 0; _leadsCacheTs = 0; _leadsPageCache = {}; _leadsInFlight = {}; _leadsLastServerTime = ''; _usersCacheTs = 0
     _cacheSlug = slug
   }
 }
 
 // Call before any mutation that changes lead data (delete, edit, assign, import)
-function invalidateLeadsCache() { _leadsCacheTs = 0 }
+function invalidateLeadsCache() { _leadsCacheTs = 0; _leadsPageCache = {}; _leadsInFlight = {} }
 function invalidateProjectsCache() { _projectsCacheTs = 0 }
+
+async function _maybeRealtimeMetaSync() {
+  var role = String((user && user.role) || '').toLowerCase()
+  if (role !== 'superadmin' && role !== 'platform_owner') return false
+  if (_metaRealtimeSyncPromise) return _metaRealtimeSyncPromise
+
+  var now = Date.now()
+  var tenantKey = String((user && user.tenant_slug) || platformTenantSlug || (user && user.tenant_id) || 'tenant')
+  var storageKey = 'lms_meta_auto_fetch_v1_' + tenantKey
+  var storedTs = 0
+  try { storedTs = Number(localStorage.getItem(storageKey) || 0) } catch (_e) {}
+  var lastTs = Math.max(_metaRealtimeSyncTs, storedTs)
+  if ((now - lastTs) < _META_REALTIME_SYNC_COOLDOWN_MS) return false
+  _metaRealtimeSyncTs = now
+  try { localStorage.setItem(storageKey, String(now)) } catch (_e) {}
+
+  _metaRealtimeSyncPromise = (async function () {
+    try {
+    if (!_metaCreatedAtBackfillTs || (now - _metaCreatedAtBackfillTs) >= _META_CREATED_AT_BACKFILL_INTERVAL_MS) {
+      _metaCreatedAtBackfillTs = now
+      _apiRequest('/lead-sources/meta/backfill/lead-created-at?limit=4000', {
+        method: 'POST',
+        headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+        retries: 0,
+        timeoutMs: 30000,
+      }).catch(function () {})
+    }
+
+    var srcData = await _apiRequest('/lead-sources?include_inactive=true', {
+      headers: _apiAuthHeaders(),
+      retries: 0,
+      timeoutMs: 12000,
+    })
+    var activeMeta = (srcData.sources || []).filter(function (s) {
+      return s && s.source_type === 'meta' && s.is_active
+    })
+    for (var i = 0; i < activeMeta.length; i++) {
+      var s = activeMeta[i]
+      var mappingData = await _apiRequest('/lead-sources/' + s.id + '/forms/mappings', {
+        headers: _apiAuthHeaders(),
+        retries: 0,
+        timeoutMs: 12000,
+      })
+      var mappedFormIds = (mappingData.rows || []).filter(function (row) {
+        return row && row.form_id && row.is_active !== false && row.project_id
+      }).map(function (row) {
+        return String(row.form_id)
+      })
+      if (!mappedFormIds.length) continue
+
+      await _apiRequest('/lead-sources/' + s.id + '/meta/pull-recent', {
+        method: 'POST',
+        headers: { ..._apiAuthHeaders(), ..._apiJsonHeaders() },
+        body: JSON.stringify({
+          per_form_limit: 100,
+          page_size: 100,
+          max_pages: 1,
+          full_history: false,
+          form_ids: mappedFormIds,
+        }),
+        retries: 0,
+        timeoutMs: 55000,
+      })
+    }
+      return true
+    } catch (_e) {
+      _metaRealtimeSyncTs = 0
+      try { localStorage.removeItem(storageKey) } catch (_ignored) {}
+      return false
+    } finally {
+      _metaRealtimeSyncPromise = null
+    }
+  })()
+  return _metaRealtimeSyncPromise
+}
 
 async function loadProjects() {
   _checkCacheTenant()
@@ -326,21 +479,84 @@ async function loadProjects() {
 }
 
 // _force=true bypasses the cache — use after any mutation that modifies lead data
+function _buildDefaultLeadsQuery(options) {
+  var opts = options || {}
+  var params = new URLSearchParams()
+  params.set('page', String(opts.page || leadsPage || 1))
+  params.set('page_size', String(opts.page_size || leadsPageSize || 25))
+  if (opts.ids && opts.ids.length) params.set('ids', opts.ids.join(','))
+  if (opts.updated_since) params.set('updated_since', opts.updated_since)
+  return params
+}
+
+function _buildLeadsRequestPath(options) {
+  var opts = options || {}
+  var params = (typeof _buildLeadsListQueryParams === 'function')
+    ? _buildLeadsListQueryParams(opts)
+    : _buildDefaultLeadsQuery(opts)
+  if (!(params instanceof URLSearchParams)) params = _buildDefaultLeadsQuery(opts)
+  if (opts.ids && opts.ids.length) {
+    params.delete('updated_since')
+    params.set('ids', opts.ids.join(','))
+    params.set('page', '1')
+    params.set('page_size', String(Math.min(Math.max(opts.ids.length, 1), 100)))
+  }
+  if (opts.updated_since) {
+    params.set('updated_since', opts.updated_since)
+    params.set('page', '1')
+    if (!params.get('page_size')) params.set('page_size', '100')
+  }
+  var query = params.toString()
+  return '/leads' + (query ? '?' + query : '')
+}
+
 async function loadLeads(_force) {
   _checkCacheTenant()
-  if (!_force && _cacheValid(_leadsCacheTs)) { leads = _leadsCache; return }
-  try {
-    const data = await _apiRequest('/leads', {
-      headers: _apiAuthHeaders(),
-      retries: 1,
-      timeoutMs: 15000,
-    })
-    leads = data.leads || []
-    _leadsCache = leads; _leadsCacheTs = Date.now()
-  } catch (_e) {
-    leads = _leadsCache || []
-    if (typeof showToast === 'function') showToast('Could not load leads. Check your connection.', 'warning')
+  var opts = (typeof _force === 'object' && _force !== null) ? Object.assign({}, _force) : { force: !!_force }
+  var force = !!opts.force
+  var path = _buildLeadsRequestPath(opts)
+  var cacheKey = path
+  var cached = _leadsPageCache[cacheKey]
+  if (!force && !opts.ids && !opts.updated_since && cached && _leadsCacheValid(cached.ts)) {
+    leads = cached.leads || []
+    _leadsPagination = cached.pagination || _leadsPagination
+    _leadsLastServerTime = cached.server_time || _leadsLastServerTime
+    return cached.data
   }
+  if (!force && _leadsInFlight[cacheKey]) return _leadsInFlight[cacheKey]
+  _leadsInFlight[cacheKey] = (async function () {
+    try {
+      const data = await _apiRequest(path, {
+        headers: _apiAuthHeaders(),
+        retries: 1,
+        timeoutMs: 15000,
+      })
+      var responseLeads = data.leads || []
+      if (!opts.ids && !opts.updated_since) leads = responseLeads
+      _leadsPagination = data.pagination || _leadsPagination
+      _leadsLastServerTime = data.server_time || _leadsLastServerTime
+      if (!opts.ids && !opts.updated_since) {
+        _leadsCache = leads; _leadsCacheTs = Date.now()
+      }
+      if (!opts.ids && !opts.updated_since) {
+        _leadsPageCache[cacheKey] = {
+          ts: Date.now(),
+          leads: responseLeads,
+          pagination: _leadsPagination,
+          server_time: _leadsLastServerTime,
+          data: data,
+        }
+      }
+      return data
+    } catch (_e) {
+      if (!opts.ids && !opts.updated_since) leads = _leadsCache || []
+      if (typeof showToast === 'function') showToast('Could not load leads. Check your connection.', 'warning')
+      return { leads: (opts.ids || opts.updated_since) ? [] : leads, pagination: _leadsPagination, server_time: _leadsLastServerTime }
+    } finally {
+      delete _leadsInFlight[cacheKey]
+    }
+  })()
+  return _leadsInFlight[cacheKey]
 }
 
 async function loadUsers() {
