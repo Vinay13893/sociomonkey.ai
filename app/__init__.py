@@ -311,17 +311,86 @@ def create_app(config_name: str = None) -> Flask:
     @app.route('/api/leads/notifications', methods=['GET'])
     @_require_auth
     def get_notifications():
-        """Return unread notifications without marking them read (for bell polling)."""
+        """Read-only notification retrieval for bell polling/history."""
         from app.models.notification import Notification
+        from datetime import datetime as _dt
+        from sqlalchemy import or_
         user = _req.current_user
-        rows = (
-            Notification.query
-            .filter_by(user_id=user.id, is_read=False)
-            .order_by(Notification.created_at.desc())
-            .limit(50)
-            .all()
-        )
-        return jsonify({'notifications': [r.to_dict() for r in rows], 'unread_count': len(rows)}), 200
+
+        def _int_arg(name, default=0, lo=0, hi=None):
+            raw = (_req.args.get(name) or '').strip()
+            try:
+                val = int(raw) if raw else default
+            except ValueError:
+                val = default
+            val = max(lo, val)
+            if hi is not None:
+                val = min(hi, val)
+            return val
+
+        limit = _int_arg('limit', 20, 1, 50)
+        after_id = _int_arg('after_id', 0, 0)
+        before_id = _int_arg('before_id', 0, 0)
+        mode = (_req.args.get('mode') or 'delta').strip().lower()
+        unread_only = (_req.args.get('unread_only') or '').strip().lower() in ('1', 'true', 'yes')
+
+        base = Notification.query.filter(Notification.user_id == user.id)
+        if getattr(user, 'tenant_id', None) is not None:
+            base = base.filter(or_(Notification.tenant_id == user.tenant_id, Notification.tenant_id.is_(None)))
+
+        unread_count = base.filter(Notification.is_read == False).count()  # noqa: E712
+
+        row_query = base
+        if mode == 'history':
+            if unread_only:
+                row_query = row_query.filter(Notification.is_read == False)  # noqa: E712
+            if before_id:
+                row_query = row_query.filter(Notification.id < before_id)
+            rows = (
+                row_query
+                .order_by(Notification.id.desc())
+                .limit(limit)
+                .all()
+            )
+        else:
+            if after_id:
+                row_query = row_query.filter(Notification.id > after_id)
+            else:
+                row_query = row_query.filter(Notification.is_read == False)  # noqa: E712
+            rows = (
+                row_query
+                .order_by(Notification.id.asc())
+                .limit(limit)
+                .all()
+            )
+
+        def _compact(row):
+            payload = row.payload or {}
+            return {
+                'id': row.id,
+                'tenant_id': row.tenant_id,
+                'category': row.category,
+                'kind': row.kind,
+                'title': row.title,
+                'message': row.message,
+                'is_read': bool(row.is_read),
+                'read_at': row.read_at.isoformat() if row.read_at else None,
+                'source': row.source,
+                'created_at': row.created_at.isoformat() if row.created_at else None,
+                'lead_id': payload.get('lead_id'),
+                'callback_id': payload.get('callback_id'),
+                'action_url': payload.get('url') or payload.get('deep_link'),
+            }
+
+        max_id = max([r.id for r in rows], default=after_id)
+        return jsonify({
+            'notifications': [_compact(r) for r in rows],
+            'unread_count': unread_count,
+            'cursor': max_id,
+            'server_time': _dt.utcnow().isoformat(),
+            'has_more': len(rows) == limit,
+            'mode': mode,
+        }), 200
 
     @app.route('/api/leads/notifications/mark-read', methods=['POST'])
     @_require_auth
@@ -333,14 +402,21 @@ def create_app(config_name: str = None) -> Flask:
         data = (_req.get_json() or {})
         ids = data.get('ids')  # optional list of specific ids
         q = Notification.query.filter_by(user_id=user.id, is_read=False)
+        if getattr(user, 'tenant_id', None) is not None:
+            from sqlalchemy import or_
+            q = q.filter(or_(Notification.tenant_id == user.tenant_id, Notification.tenant_id.is_(None)))
         if ids:
-            q = q.filter(Notification.id.in_(ids))
+            safe_ids = []
+            for raw_id in ids:
+                try:
+                    safe_ids.append(int(raw_id))
+                except (TypeError, ValueError):
+                    continue
+            q = q.filter(Notification.id.in_(safe_ids or [-1]))
         now = _dt.utcnow()
-        for row in q.all():
-            row.is_read = True
-            row.read_at = now
+        changed = q.update({'is_read': True, 'read_at': now}, synchronize_session=False)
         db.session.commit()
-        return jsonify({'ok': True}), 200
+        return jsonify({'ok': True, 'updated': changed, 'unread_count': 0 if not ids else None}), 200
 
     @app.route('/api/internal/reminders/process', methods=['GET', 'POST'])
     def process_reminders_once():
