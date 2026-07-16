@@ -2452,20 +2452,12 @@ def _recycle_eligibility_parts(query, cooldown_days=7):
     if protected:
         reasons['protected_stage'] = protected
         eligible_q = eligible_q.filter(Lead.status.notin_(PROTECTED_RECYCLE_STATUSES))
-    future_exists = db.session.query(CallbackReminder.id).filter(
-        CallbackReminder.lead_id == Lead.id,
-        CallbackReminder.status == 'pending',
-        CallbackReminder.callback_datetime > datetime.utcnow(),
-    )
+    future_exists = _recycle_future_callback_exists()
     future_pending = eligible_q.filter(future_exists.exists()).count()
     if future_pending:
         reasons['future_pending_callback'] = future_pending
         eligible_q = eligible_q.filter(~future_exists.exists())
-    cooldown_cutoff = datetime.utcnow() - timedelta(days=max(1, int(cooldown_days or 7)))
-    cooldown_exists = db.session.query(LeadAssignmentHistory.id).filter(
-        LeadAssignmentHistory.lead_id == Lead.id,
-        LeadAssignmentHistory.assigned_at >= cooldown_cutoff,
-    )
+    cooldown_exists = _recycle_cooldown_exists(cooldown_days)
     cooldown = eligible_q.filter(cooldown_exists.exists()).count()
     if cooldown:
         reasons['inside_cooldown'] = cooldown
@@ -2473,8 +2465,43 @@ def _recycle_eligibility_parts(query, cooldown_days=7):
     return eligible_q, reasons
 
 
+def _recycle_future_callback_exists():
+    return db.session.query(CallbackReminder.id).filter(
+        CallbackReminder.lead_id == Lead.id,
+        CallbackReminder.status == 'pending',
+        CallbackReminder.callback_datetime > datetime.utcnow(),
+    )
+
+
+def _recycle_cooldown_exists(cooldown_days=7):
+    cooldown_cutoff = datetime.utcnow() - timedelta(days=max(1, int(cooldown_days or 7)))
+    return db.session.query(LeadAssignmentHistory.id).filter(
+        LeadAssignmentHistory.lead_id == Lead.id,
+        LeadAssignmentHistory.assigned_at >= cooldown_cutoff,
+    )
+
+
+def _recycle_history_exists():
+    return db.session.query(LeadAssignmentHistory.id).filter(
+        LeadAssignmentHistory.lead_id == Lead.id,
+    )
+
+
 def _recycle_sort(query):
     sort = (request.args.get('sort') or '').strip().lower()
+    if sort == 'highest_reassignment':
+        history_count = (
+            db.session.query(
+                LeadAssignmentHistory.lead_id.label('lead_id'),
+                func.count(LeadAssignmentHistory.id).label('reassignment_count'),
+            )
+            .group_by(LeadAssignmentHistory.lead_id)
+            .subquery()
+        )
+        return (
+            query.outerjoin(history_count, history_count.c.lead_id == Lead.id)
+            .order_by(func.coalesce(history_count.c.reassignment_count, 0).desc(), Lead.updated_at.asc(), Lead.id.asc())
+        )
     if sort == 'recently_stale':
         return query.order_by(Lead.updated_at.desc(), Lead.id.desc())
     if sort == 'oldest_received':
@@ -2518,6 +2545,12 @@ def recycle_queue():
     if view == 'excluded':
         page_query = filtered.filter(~Lead.id.in_(eligible_q.with_entities(Lead.id)))
         total = excluded
+    elif view == 'inside_cooldown':
+        page_query = filtered.filter(_recycle_cooldown_exists(cooldown_days).exists())
+        total = page_query.count()
+    elif view == 'previously_reassigned':
+        page_query = filtered.filter(_recycle_history_exists().exists())
+        total = page_query.count()
     else:
         page_query = eligible_q
         total = eligible
@@ -2538,7 +2571,7 @@ def recycle_queue():
         d['previous_assignee_ids'] = list({r[0] for r in prev if r[0]})
         d['reassignment_count'] = len(prev)
         d['callback_state'] = _lead_callback_state(lead)
-        d['eligible'] = view != 'excluded'
+        d['eligible'] = view == 'eligible'
         d['exclusion_reason'] = None
         if view == 'excluded':
             if lead.status in TERMINAL_LEAD_STATUSES:
@@ -2549,6 +2582,10 @@ def recycle_queue():
                 d['exclusion_reason'] = 'future_pending_callback'
             else:
                 d['exclusion_reason'] = 'inside_cooldown_or_other'
+        elif view == 'inside_cooldown':
+            d['exclusion_reason'] = 'inside_cooldown'
+        elif view == 'previously_reassigned':
+            d['exclusion_reason'] = 'previously_reassigned'
         return d
 
     return jsonify({

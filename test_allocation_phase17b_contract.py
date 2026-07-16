@@ -36,6 +36,9 @@ def test_recycle_queue_has_eligibility_reasons_and_read_only_excluded_view():
     assert "future_pending_callback" in SOURCE
     assert "inside_cooldown" in SOURCE
     assert "view == 'excluded'" in SOURCE
+    assert "view == 'inside_cooldown'" in SOURCE
+    assert "view == 'previously_reassigned'" in SOURCE
+    assert "highest_reassignment" in SOURCE
 
 
 def test_reshuffle_revalidates_selected_leads_before_assignment():
