@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from datetime import datetime, timedelta, timezone
+import random
 
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import selectinload, joinedload
@@ -14,9 +15,26 @@ from app.models.project import Project
 from app.models.user import User
 from app.models.ingestion import LeadSource
 from app.utils.activity import log_activity
-from app.utils.leads import get_user_visible_leads, apply_test_lead_filter, VALID_STATUSES
-from app.utils.lead_source_cutoff import lead_source_cutoff_for
-from app.utils.time_utils import to_ist_str
+from app.utils.leads import (
+    get_user_visible_leads,
+    apply_test_lead_filter,
+    apply_valid_lead_capture_scope,
+    VALID_STATUSES,
+)
+from app.utils.time_utils import (
+    business_date_bounds_utc_naive,
+    IST,
+    parse_business_datetime_to_utc_naive,
+    now_ist,
+    to_ist_str,
+)
+from app.services.callback_workflow import (
+    CALLBACK_PENDING_ERROR,
+    cancel_callback_record,
+    complete_callback_record,
+    create_callback_for_lead,
+    reschedule_callback,
+)
 from app.services.reminder_scheduler import push_notification
 
 leads_bp = Blueprint('leads', __name__, url_prefix='/api/leads')
@@ -29,18 +47,8 @@ CALL_OUTCOME_LABELS = {
     'callback_scheduled': 'Callback Scheduled',
 }
 
-IST = timezone(timedelta(hours=5, minutes=30))
-
-
 def _parse_ist_datetime(raw_value):
-    if not raw_value:
-        raise ValueError('Missing datetime value')
-    parsed = datetime.fromisoformat(str(raw_value).replace('Z', '+00:00'))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=IST)
-    else:
-        parsed = parsed.astimezone(IST)
-    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parse_business_datetime_to_utc_naive(raw_value)
 
 
 def _format_ist_datetime(value):
@@ -57,13 +65,12 @@ def _runtime_prefers_async_jobs() -> bool:
 
 def _process_reshuffle_job(job, user, team, strategy, reason, cooldown_days):
     # Pre-compute active lead counts for all team members (used by multiple strategies)
-    NON_ACTIVE = ['lost', 'junk', 'booking_done', 'not_interested']
     load_counts: dict = {}
     for tm in team:
         load_counts[tm.id] = Lead.query.filter(
             Lead.assigned_to == tm.id,
             Lead.is_active == True,
-            Lead.status.notin_(NON_ACTIVE),
+            Lead.status.notin_(TERMINAL_LEAD_STATUSES),
         ).count()
 
     cooldown_threshold = datetime.utcnow() - timedelta(days=cooldown_days)
@@ -112,7 +119,7 @@ def _process_reshuffle_job(job, user, team, strategy, reason, cooldown_days):
             if lead.assigned_to not in team_ids and lead.sales_manager_id != user.id:
                 continue
 
-        if lead.status in ['lost', 'junk']:
+        if lead.status in TERMINAL_LEAD_STATUSES:
             continue
 
         if strategy == 'intelligent':
@@ -148,6 +155,11 @@ def _process_reshuffle_job(job, user, team, strategy, reason, cooldown_days):
         ))
         lead.assigned_to = new_assignee.id
         lead.assigned_by = user.id
+        CallbackReminder.query.filter(
+            CallbackReminder.tenant_id == user.tenant_id,
+            CallbackReminder.lead_id == lead.id,
+            CallbackReminder.status == 'pending',
+        ).update({'assigned_user_id': new_assignee.id}, synchronize_session=False)
         load_counts[new_assignee.id] = load_counts.get(new_assignee.id, 0) + 1
 
         log_activity(
@@ -272,6 +284,10 @@ def _parse_lead_ids(raw_value):
     return ids
 
 
+def _apply_lead_source_cutoff_scope(query, user, tenant_id):
+    return apply_valid_lead_capture_scope(query, tenant_id)
+
+
 @leads_bp.route('', methods=['GET'])
 @require_auth
 def get_leads():
@@ -297,22 +313,7 @@ def get_leads():
     sort = (request.args.get('sort') or 'new_old').strip()
     updated_since = _parse_leads_datetime(request.args.get('updated_since'))
     requested_ids = _parse_lead_ids(request.args.get('ids'))
-    tenant_cutoff = lead_source_cutoff_for(user, tenant_id=user.tenant_id)
-    if tenant_cutoff:
-        source_lead_ids = (
-            db.session.query(IngestedLeadLog.lead_id)
-            .join(LeadSource, IngestedLeadLog.source_id == LeadSource.id)
-            .filter(IngestedLeadLog.tenant_id == user.tenant_id)
-            .filter(LeadSource.tenant_id == user.tenant_id)
-            .filter(LeadSource.is_active == True)
-            .filter(IngestedLeadLog.status == 'processed')
-            .filter(IngestedLeadLog.lead_id.isnot(None))
-            .filter(IngestedLeadLog.received_at >= tenant_cutoff)
-            .distinct()
-            .subquery()
-        )
-        # Keep manual/sheet-imported leads visible while gating ingestion leads by cutoff.
-        query = query.filter((Lead.created_by.isnot(None)) | (Lead.id.in_(source_lead_ids)))
+    query = _apply_lead_source_cutoff_scope(query, user, user.tenant_id)
     if project_id:
         try:
             query = query.filter(Lead.project_id == int(project_id))
@@ -336,12 +337,14 @@ def get_leads():
             return jsonify({'error': 'sales_manager_id must be an integer'}), 400
     if date_from:
         try:
-            query = query.filter(Lead.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
+            start, _ = business_date_bounds_utc_naive(datetime.strptime(date_from, '%Y-%m-%d').date())
+            query = query.filter(Lead.created_at >= start)
         except ValueError:
             return jsonify({'error': 'date_from must be YYYY-MM-DD'}), 400
     if date_to:
         try:
-            query = query.filter(Lead.created_at < (datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)))
+            _, end = business_date_bounds_utc_naive(datetime.strptime(date_to, '%Y-%m-%d').date())
+            query = query.filter(Lead.created_at < end)
         except ValueError:
             return jsonify({'error': 'date_to must be YYYY-MM-DD'}), 400
     if search:
@@ -499,6 +502,9 @@ def create_lead():
 
     phone_val = (data.get('phone') or '').strip()
     alternate_phone_val = (data.get('alternate_phone') or '').strip()
+    email_val = (data.get('email') or '').strip()
+    if not any((phone_val, alternate_phone_val, email_val)):
+        return jsonify({'error': 'At least one contact method is required'}), 400
     if phone_val:
         force = data.get('force') and user.role == 'superadmin'
         if not force:
@@ -522,7 +528,7 @@ def create_lead():
         name=name,
         phone=phone_val or None,
         alternate_phone=alternate_phone_val or None,
-        email=data.get('email'),
+        email=email_val or None,
         source=data.get('source'),
         budget_min=data.get('budget_min'),
         budget_max=data.get('budget_max'),
@@ -1033,31 +1039,32 @@ def dashboard_stats():
         range_key = (request.args.get('range') or '').strip().lower()
         date_from_str = request.args.get('date_from')
         date_to_str = request.args.get('date_to')
-        now = datetime.now()
+        now_local = now_ist()
 
         if date_from_str or date_to_str:
             try:
                 if date_from_str:
-                    dt_from = datetime.strptime(date_from_str, '%Y-%m-%d')
+                    dt_from, _ = business_date_bounds_utc_naive(datetime.strptime(date_from_str, '%Y-%m-%d').date())
                     query = query.filter(Lead.created_at >= dt_from)
                 if date_to_str:
-                    dt_to = datetime.strptime(date_to_str, '%Y-%m-%d') + timedelta(days=1)
+                    _, dt_to = business_date_bounds_utc_naive(datetime.strptime(date_to_str, '%Y-%m-%d').date())
                     query = query.filter(Lead.created_at < dt_to)
                 return query
             except ValueError:
                 return query
 
         if range_key == 'today':
-            start = datetime(now.year, now.month, now.day)
-            return query.filter(Lead.created_at >= start)
+            start, end = business_date_bounds_utc_naive(now_local.date())
+            return query.filter(Lead.created_at >= start, Lead.created_at < end)
         if range_key == 'this_week':
-            start = datetime(now.year, now.month, now.day) - timedelta(days=now.weekday())
+            start_day = now_local.date() - timedelta(days=now_local.weekday())
+            start, _ = business_date_bounds_utc_naive(start_day)
             return query.filter(Lead.created_at >= start)
         if range_key == 'this_month':
-            start = datetime(now.year, now.month, 1)
+            start, _ = business_date_bounds_utc_naive(now_local.date().replace(day=1))
             return query.filter(Lead.created_at >= start)
         if range_key == 'last_30_days':
-            start = now - timedelta(days=30)
+            start = (now_local - timedelta(days=30)).astimezone(timezone.utc).replace(tzinfo=None)
             return query.filter(Lead.created_at >= start)
         return query
 
@@ -1119,6 +1126,7 @@ def dashboard_stats():
         else:
             q = Lead.query.filter_by(assigned_to=user.id, is_active=True, tenant_id=tid_scope)
         q = apply_test_lead_filter(q)
+        q = _apply_lead_source_cutoff_scope(q, user, tid_scope)
         return apply_dashboard_filters(apply_project_filter(apply_time_filter(q)))
 
     scoped_query = scoped_query_for_role()
@@ -1286,9 +1294,8 @@ def action_board():
         page_size = max(5, min(24, int(request.args.get('page_size', 6))))
     except (TypeError, ValueError):
         page_size = 6
-    now = datetime.utcnow()
-    today_start = datetime(now.year, now.month, now.day)
-    today_end   = today_start + timedelta(days=1)
+    today_ist = now_ist().date()
+    today_start, today_end = business_date_bounds_utc_naive(today_ist)
 
     date_from_str = (request.args.get('date_from') or '').strip()
     date_to_str = (request.args.get('date_to') or '').strip()
@@ -1296,52 +1303,53 @@ def action_board():
 
     range_start = today_start
     range_end = today_end
+    selected_from_date = today_ist
+    selected_to_date = today_ist
     if range_requested:
         try:
             if date_from_str:
-                range_start = datetime.strptime(date_from_str, '%Y-%m-%d')
+                from_date = datetime.strptime(date_from_str, '%Y-%m-%d').date()
             elif date_to_str:
-                range_start = datetime.strptime(date_to_str, '%Y-%m-%d')
+                from_date = datetime.strptime(date_to_str, '%Y-%m-%d').date()
+            else:
+                from_date = today_ist
 
             if date_to_str:
-                range_end = datetime.strptime(date_to_str, '%Y-%m-%d') + timedelta(days=1)
+                to_date = datetime.strptime(date_to_str, '%Y-%m-%d').date()
             else:
-                range_end = range_start + timedelta(days=1)
+                to_date = from_date
+            range_start, _ = business_date_bounds_utc_naive(from_date)
+            _, range_end = business_date_bounds_utc_naive(to_date)
+            selected_from_date = from_date
+            selected_to_date = to_date
         except ValueError:
             range_requested = False
             range_start = today_start
             range_end = today_end
+            selected_from_date = today_ist
+            selected_to_date = today_ist
 
     visible = get_user_visible_leads(viewing_user)
+    board_visible = visible.filter(Lead.assigned_to == viewing_user.id)
 
     if range_requested:
-        lead_scope = visible.filter(
+        lead_scope = board_visible.filter(
             db.or_(
                 db.and_(Lead.created_at >= range_start, Lead.created_at < range_end),
                 db.and_(Lead.updated_at >= range_start, Lead.updated_at < range_end),
             )
         )
     else:
-        lead_scope = visible
+        lead_scope = board_visible
 
-    visible_ids_subq = visible.with_entities(Lead.id.label('id')).subquery()
+    visible_ids_subq = board_visible.with_entities(Lead.id.label('id')).subquery()
 
     # ── Callback queries (scoped by role) ────────────────────────────────────
     cb_base = CallbackReminder.query.filter(
         CallbackReminder.tenant_id == viewing_user.tenant_id,
         CallbackReminder.status == 'pending',
+        CallbackReminder.assigned_user_id == viewing_user.id,
     )
-    if viewing_user.role == 'team_member':
-        cb_base = cb_base.filter(CallbackReminder.assigned_user_id == viewing_user.id)
-    elif viewing_user.role == 'sales_manager':
-        team_ids = [u.id for u in User.query.filter_by(manager_id=viewing_user.id).all()]
-        team_ids.append(viewing_user.id)
-        cb_base = cb_base.filter(
-            db.or_(
-                CallbackReminder.assigned_user_id.in_(team_ids),
-                CallbackReminder.manager_id == viewing_user.id,
-            )
-        )
 
     # Keep callbacks in the same visibility boundary as lead lists.
     # Use a subquery instead of materializing lead IDs in Python to avoid
@@ -1360,7 +1368,7 @@ def action_board():
             CallbackReminder.lead_id.label('lead_id'),
             func.row_number().over(
                 partition_by=CallbackReminder.lead_id,
-                order_by=(CallbackReminder.created_at.asc(), CallbackReminder.id.asc()),
+                order_by=(CallbackReminder.callback_datetime.asc(), CallbackReminder.id.asc()),
             ).label('rn'),
         )
         .subquery()
@@ -1432,8 +1440,10 @@ def action_board():
             'lead_phone': lead.phone if lead else None,
             'lead_alternate_phone': lead.alternate_phone if lead else None,
             'lead_email': lead.email if lead else None,
+            'lead_source': lead.source if lead else None,
             'lead_status': lead.status if lead else None,
             'lead_created_at': to_ist_str(lead.created_at) if lead and lead.created_at else None,
+            'lead_untouched_days': max(0, (datetime.utcnow() - lead.updated_at).days) if lead and lead.updated_at else 0,
             'project_name': lead.project.name if lead and lead.project else None,
             'project_id': lead.project_id if lead else None,
             'assigned_to_name': lead.assigned_user.name if lead and lead.assigned_user else None,
@@ -1457,6 +1467,7 @@ def action_board():
             'sales_manager_name': lead.sales_manager.name if lead.sales_manager else None,
             'created_at': to_ist_str(lead.created_at),
             'updated_at': to_ist_str(lead.updated_at),
+            'days_untouched': max(0, (datetime.utcnow() - lead.updated_at).days) if lead.updated_at else 0,
             'latest_note': latest_notes.get(lead.id),
             'next_callback': None,
         }
@@ -1472,7 +1483,7 @@ def action_board():
     warm_statuses = ['interested', 'site_visit_planned']
     hot_statuses = ['site_visit_done', 'negotiation']
 
-    lead_buckets_base = visible
+    lead_buckets_base = board_visible
     lead_buckets_base = lead_buckets_base.filter(~Lead.id.in_(db.select(first_callback_lead_ids.c.lead_id)))
     if range_requested:
         lead_buckets_base = lead_scope.filter(~Lead.id.in_(db.select(first_callback_lead_ids.c.lead_id)))
@@ -1495,9 +1506,10 @@ def action_board():
     current_callbacks_q = unique_cb_base.filter(
         CallbackReminder.callback_datetime >= callback_window_start,
         CallbackReminder.callback_datetime < callback_window_end,
+        CallbackReminder.callback_datetime >= datetime.utcnow(),
     )
     overdue_callbacks_q = unique_cb_base.filter(
-        CallbackReminder.callback_datetime < callback_window_start,
+        CallbackReminder.callback_datetime < datetime.utcnow(),
     )
     today_callbacks_count = current_callbacks_q.count()
     overdue_callbacks_count = overdue_callbacks_q.count()
@@ -1584,8 +1596,8 @@ def action_board():
             'hot_leads': _pagination_meta(hot_count, section_pages['hot_leads'], len(hot_leads)),
         },
         'selected_range': {
-            'date_from': range_start.date().isoformat(),
-            'date_to': (range_end - timedelta(days=1)).date().isoformat(),
+            'date_from': selected_from_date.isoformat(),
+            'date_to': selected_to_date.isoformat(),
             'range_requested': range_requested,
         },
     }), 200
@@ -1601,6 +1613,11 @@ ALL_LEAD_STATUSES = [
     'not_interested', 'lost', 'junk',
 ]
 
+TERMINAL_LEAD_STATUSES = ['lost', 'junk', 'booking_done', 'not_interested']
+PROTECTED_RECYCLE_STATUSES = ['negotiation', 'site_visit_planned']
+ACTIVE_REASSIGN_STATUSES = [s for s in ALL_LEAD_STATUSES if s not in TERMINAL_LEAD_STATUSES]
+WORKLOAD_STALE_DAYS = 5
+
 
 def _assignable_users(user):
     """Return list of users this actor can assign leads to."""
@@ -1615,6 +1632,291 @@ def _assignable_users(user):
         team.append(user)  # can assign to self
         return team
     return []
+
+
+def _ops_lead_dict(lead):
+    data = lead.to_dict()
+    now = datetime.utcnow()
+    created = lead.created_at or now
+    updated = lead.updated_at or created
+    data['received_at'] = to_ist_str(created)
+    data['received_age_hours'] = max(0, int((now - created).total_seconds() // 3600))
+    data['received_age_days'] = max(0, (now - created).days)
+    data['days_untouched'] = max(0, (now - updated).days)
+    data['stale_reason'] = 'No update in {} day{}'.format(
+        data['days_untouched'],
+        '' if data['days_untouched'] == 1 else 's',
+    )
+    data['last_action_at'] = to_ist_str(updated)
+    data['last_action_label'] = 'Updated' if lead.updated_at else 'Created'
+    return data
+
+
+def _allocation_page_params():
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        raw_size = request.args.get('page_size', request.args.get('per_page', 25))
+        per_page = int(raw_size)
+    except (TypeError, ValueError):
+        per_page = 25
+    return page, min(500, max(10, per_page))
+
+
+def _allocation_project_options(user):
+    rows = (
+        Project.query
+        .with_entities(Project.id, Project.name)
+        .filter(Project.tenant_id == user.tenant_id, Project.is_active == True)
+        .order_by(Project.name.asc())
+        .all()
+    )
+    return [{'id': pid, 'name': name} for pid, name in rows]
+
+
+def _allocation_source_options(base_query):
+    source_expr = func.lower(func.trim(func.coalesce(Lead.source, '')))
+    rows = (
+        base_query
+        .filter(source_expr != '')
+        .with_entities(source_expr.label('value'), func.min(Lead.source).label('label'))
+        .group_by(source_expr)
+        .order_by(func.min(Lead.source).asc())
+        .all()
+    )
+    return [{'value': value, 'label': label or value} for value, label in rows]
+
+
+def _apply_allocation_filters(query):
+    source = (request.args.get('source') or '').strip().lower()
+    project_id = (request.args.get('project_id') or request.args.get('project') or '').strip()
+    search = (request.args.get('search') or request.args.get('q') or '').strip().lower()
+
+    if source:
+        query = query.filter(func.lower(func.trim(func.coalesce(Lead.source, ''))) == source)
+    if project_id:
+        try:
+            query = query.filter(Lead.project_id == int(project_id))
+        except (TypeError, ValueError):
+            pass
+    if search:
+        like_q = f'%{search}%'
+        query = query.outerjoin(Project, Lead.project_id == Project.id).filter(or_(
+            func.lower(func.coalesce(Lead.name, '')).like(like_q),
+            func.lower(func.coalesce(Lead.phone, '')).like(like_q),
+            func.lower(func.coalesce(Lead.alternate_phone, '')).like(like_q),
+            func.lower(func.coalesce(Project.name, '')).like(like_q),
+        ))
+    return query
+
+
+def _allocation_order(query, kind):
+    sort = (request.args.get('sort') or '').strip().lower()
+    if kind == 'stale':
+        if sort == 'stale_asc':
+            return query.order_by(Lead.updated_at.desc(), Lead.id.desc())
+        return query.order_by(Lead.updated_at.asc(), Lead.id.asc())
+    if sort == 'received_asc':
+        return query.order_by(Lead.created_at.asc(), Lead.id.asc())
+    return query.order_by(Lead.created_at.desc(), Lead.id.desc())
+
+
+def _allocation_clamped_page(total, page, per_page):
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    return min(max(1, page), total_pages), total_pages
+
+
+def _team_scope_ids(user, include_self=True):
+    if user.role == 'superadmin':
+        rows = User.query.with_entities(User.id).filter(
+            User.tenant_id == user.tenant_id,
+            User.is_active == True,
+            User.role.in_(['superadmin', 'sales_manager', 'team_member']),
+        ).all()
+        return [r[0] for r in rows]
+    if user.role == 'sales_manager':
+        ids = [tm.id for tm in user.team_members if tm.is_active]
+        if include_self:
+            ids.append(user.id)
+        return list(dict.fromkeys(ids))
+    return [user.id]
+
+
+def _pending_callback_filter(query, state):
+    state = (state or '').strip().lower()
+    pending = db.session.query(CallbackReminder.lead_id).filter(
+        CallbackReminder.tenant_id == request.current_user.tenant_id,
+        CallbackReminder.status == 'pending',
+        CallbackReminder.lead_id == Lead.id,
+    )
+    now = datetime.utcnow()
+    today_start, tomorrow_start = business_date_bounds_utc_naive(now_ist().date())
+    if state == 'none':
+        return query.filter(~pending.exists())
+    if state == 'pending':
+        return query.filter(pending.exists())
+    if state == 'today':
+        return query.filter(pending.filter(
+            CallbackReminder.callback_datetime >= today_start,
+            CallbackReminder.callback_datetime < tomorrow_start,
+        ).exists())
+    if state == 'overdue':
+        return query.filter(pending.filter(CallbackReminder.callback_datetime < now).exists())
+    if state == 'future':
+        return query.filter(pending.filter(CallbackReminder.callback_datetime >= tomorrow_start).exists())
+    return query
+
+
+def _apply_age_filter(query, bucket):
+    bucket = (bucket or '').strip()
+    now = datetime.utcnow()
+    ranges = {
+        '0_3': (now - timedelta(days=3), None),
+        '4_7': (now - timedelta(days=7), now - timedelta(days=3)),
+        '8_15': (now - timedelta(days=15), now - timedelta(days=7)),
+        '16_30': (now - timedelta(days=30), now - timedelta(days=15)),
+        '31_plus': (None, now - timedelta(days=30)),
+        '0_7': (now - timedelta(days=7), None),
+        '31_60': (now - timedelta(days=60), now - timedelta(days=30)),
+        '60_plus': (None, now - timedelta(days=60)),
+    }
+    if bucket not in ranges:
+        return query
+    newer_than, older_than = ranges[bucket]
+    if newer_than:
+        query = query.filter(Lead.created_at >= newer_than)
+    if older_than:
+        query = query.filter(Lead.created_at < older_than)
+    return query
+
+
+def _apply_last_updated_filter(query, bucket):
+    bucket = (bucket or '').strip()
+    now = datetime.utcnow()
+    today_start, tomorrow_start = business_date_bounds_utc_naive(now_ist().date())
+    if bucket == 'today':
+        return query.filter(Lead.updated_at >= today_start, Lead.updated_at < tomorrow_start)
+    days_map = {'1_plus': 1, '3_plus': 3, '7_plus': 7, '15_plus': 15, '30_plus': 30}
+    if bucket in days_map:
+        return query.filter(Lead.updated_at <= now - timedelta(days=days_map[bucket]))
+    return query
+
+
+def _apply_workload_filters(query, args):
+    status = (args.get('status') or args.get('status_filter') or '').strip()
+    source = (args.get('source') or '').strip().lower()
+    project_id = (args.get('project_id') or args.get('project') or '').strip()
+    search = (args.get('search') or args.get('q') or '').strip().lower()
+    callback_state = (args.get('callback_state') or '').strip().lower()
+    age = (args.get('lead_age') or '').strip()
+    last_updated = (args.get('last_updated') or '').strip()
+    untouched_only = (args.get('untouched_only') or '').strip().lower() in ('1', 'true', 'yes')
+    stale_only = (args.get('stale_only') or '').strip().lower() in ('1', 'true', 'yes')
+
+    if status:
+        if status in ALL_LEAD_STATUSES:
+            query = query.filter(Lead.status == status)
+    else:
+        query = query.filter(Lead.status.in_(ACTIVE_REASSIGN_STATUSES))
+    if source:
+        query = query.filter(func.lower(func.trim(func.coalesce(Lead.source, ''))) == source)
+    if project_id:
+        try:
+            query = query.filter(Lead.project_id == int(project_id))
+        except (TypeError, ValueError):
+            pass
+    if search:
+        like_q = f'%{search}%'
+        query = query.outerjoin(Project, Lead.project_id == Project.id).filter(or_(
+            func.lower(func.coalesce(Lead.name, '')).like(like_q),
+            func.lower(func.coalesce(Lead.phone, '')).like(like_q),
+            func.lower(func.coalesce(Lead.alternate_phone, '')).like(like_q),
+            func.lower(func.coalesce(Project.name, '')).like(like_q),
+        ))
+    query = _pending_callback_filter(query, callback_state)
+    query = _apply_age_filter(query, age)
+    query = _apply_last_updated_filter(query, last_updated)
+    if untouched_only:
+        query = query.filter(Lead.status == 'new')
+    if stale_only:
+        query = query.filter(Lead.updated_at <= datetime.utcnow() - timedelta(days=WORKLOAD_STALE_DAYS))
+    return query
+
+
+def _workload_sort(query, args):
+    sort = (args.get('sort') or '').strip().lower()
+    if sort == 'newest_received':
+        return query.order_by(Lead.created_at.desc(), Lead.id.desc())
+    if sort == 'most_recently_updated':
+        return query.order_by(Lead.updated_at.desc(), Lead.id.desc())
+    if sort == 'oldest_callback':
+        return query.outerjoin(CallbackReminder, and_(
+            CallbackReminder.lead_id == Lead.id,
+            CallbackReminder.status == 'pending',
+        )).group_by(Lead.id).order_by(func.min(CallbackReminder.callback_datetime).asc().nullslast(), Lead.id.asc())
+    if sort == 'least_recently_updated':
+        return query.order_by(Lead.updated_at.asc(), Lead.id.asc())
+    return query.order_by(Lead.created_at.asc(), Lead.id.asc())
+
+
+def _lead_callback_state(lead):
+    now = datetime.utcnow()
+    pending = [cb for cb in (lead.callbacks or []) if cb.status == 'pending']
+    if not pending:
+        return 'none'
+    pending.sort(key=lambda cb: cb.callback_datetime)
+    first = pending[0]
+    today_start, tomorrow_start = business_date_bounds_utc_naive(now_ist().date())
+    if first.callback_datetime < now:
+        state = 'overdue'
+    elif today_start <= first.callback_datetime < tomorrow_start:
+        state = 'today'
+    else:
+        state = 'future'
+    return state
+
+
+def _workload_preview_dict(lead):
+    data = _ops_lead_dict(lead)
+    data['callback_state'] = _lead_callback_state(lead)
+    data['current_owner_name'] = lead.sales_manager.name if lead.sales_manager else None
+    data['assigned_user_name'] = lead.assigned_user.name if lead.assigned_user else None
+    return data
+
+
+def _workload_base_for_user(actor, from_user_id):
+    if int(from_user_id) not in _team_scope_ids(actor, include_self=True):
+        return None
+    return Lead.query.options(
+        joinedload(Lead.project),
+        joinedload(Lead.assigned_user),
+        joinedload(Lead.sales_manager),
+        selectinload(Lead.callbacks),
+    ).filter(
+        Lead.tenant_id == actor.tenant_id,
+        Lead.is_active == True,
+        Lead.assigned_to == int(from_user_id),
+    )
+
+
+def _eligible_counts_for_query(query, to_user_id=None):
+    matching = query.count()
+    eligible_q = query
+    reasons = {}
+    terminal = query.filter(Lead.status.in_(TERMINAL_LEAD_STATUSES)).count()
+    if terminal:
+        reasons['terminal_status'] = terminal
+        eligible_q = eligible_q.filter(Lead.status.notin_(TERMINAL_LEAD_STATUSES))
+    if to_user_id:
+        same = eligible_q.filter(Lead.assigned_to == int(to_user_id)).count()
+        if same:
+            reasons['already_assigned_to_destination'] = same
+            eligible_q = eligible_q.filter(Lead.assigned_to != int(to_user_id))
+    eligible = eligible_q.count()
+    excluded = max(0, matching - eligible)
+    return matching, eligible, excluded, reasons, eligible_q
 
 
 @leads_bp.route('/assign-reassign/unassigned', methods=['GET'])
@@ -1635,16 +1937,43 @@ def ar_unassigned():
                 Lead.sales_manager_id == None,
             )
         )
-    page = max(1, int(request.args.get('page', 1)))
-    per_page = min(500, max(10, int(request.args.get('per_page', 25))))
+
+    source_options = _allocation_source_options(q)
+    project_options = _allocation_project_options(user)
+    q = _apply_allocation_filters(q)
+    page, per_page = _allocation_page_params()
     total = q.count()
-    leads = q.order_by(Lead.created_at.asc()).offset((page - 1) * per_page).limit(per_page).all()
+    page, total_pages = _allocation_clamped_page(total, page, per_page)
+    ordered_q = _allocation_order(q, 'unassigned')
+    ids_only = (request.args.get('ids_only') or '').strip().lower() in ('1', 'true', 'yes')
+    if ids_only:
+        try:
+            limit = max(1, min(10000, int(request.args.get('limit', 10000))))
+        except (TypeError, ValueError):
+            limit = 10000
+        id_rows = (
+            ordered_q.with_entities(Lead.id)
+            .limit(limit)
+            .all()
+        )
+        assignable = _assignable_users(user)
+        return jsonify({
+            'lead_ids': [row[0] for row in id_rows],
+            'total': total,
+            'limit': limit,
+            'limited': total > limit,
+            'assignable_users': [{'id': u.id, 'name': u.name, 'role': u.role} for u in assignable],
+            'filters': {'sources': source_options, 'projects': project_options},
+        }), 200
+    leads = ordered_q.offset((page - 1) * per_page).limit(per_page).all()
     assignable = _assignable_users(user)
     return jsonify({
-        'leads': [l.to_dict() for l in leads],
+        'leads': [_ops_lead_dict(l) for l in leads],
         'total': total,
         'page': page,
         'per_page': per_page,
+        'total_pages': total_pages,
+        'filters': {'sources': source_options, 'projects': project_options},
         'assignable_users': [{'id': u.id, 'name': u.name, 'role': u.role} for u in assignable],
     }), 200
 
@@ -1681,17 +2010,40 @@ def ar_stale():
     if status_filter and status_filter in ALL_LEAD_STATUSES:
         q = q.filter(Lead.status == status_filter)
 
-    page = max(1, int(request.args.get('page', 1)))
-    per_page = min(500, max(10, int(request.args.get('per_page', 25))))
+    source_options = _allocation_source_options(q)
+    project_options = _allocation_project_options(user)
+    q = _apply_allocation_filters(q)
+    page, per_page = _allocation_page_params()
     total = q.count()
-    leads = q.order_by(Lead.updated_at.asc()).offset((page - 1) * per_page).limit(per_page).all()
+    page, total_pages = _allocation_clamped_page(total, page, per_page)
+    ordered_q = _allocation_order(q, 'stale')
+    ids_only = (request.args.get('ids_only') or '').strip().lower() in ('1', 'true', 'yes')
+    if ids_only:
+        try:
+            limit = max(1, min(10000, int(request.args.get('limit', 10000))))
+        except (TypeError, ValueError):
+            limit = 10000
+        id_rows = ordered_q.with_entities(Lead.id).limit(limit).all()
+        assignable = _assignable_users(user)
+        return jsonify({
+            'lead_ids': [row[0] for row in id_rows],
+            'total': total,
+            'limit': limit,
+            'limited': total > limit,
+            'days': days,
+            'filters': {'sources': source_options, 'projects': project_options},
+            'assignable_users': [{'id': u.id, 'name': u.name, 'role': u.role} for u in assignable],
+        }), 200
+    leads = ordered_q.offset((page - 1) * per_page).limit(per_page).all()
     assignable = _assignable_users(user)
     return jsonify({
-        'leads': [l.to_dict() for l in leads],
+        'leads': [_ops_lead_dict(l) for l in leads],
         'total': total,
         'page': page,
         'per_page': per_page,
+        'total_pages': total_pages,
         'days': days,
+        'filters': {'sources': source_options, 'projects': project_options},
         'assignable_users': [{'id': u.id, 'name': u.name, 'role': u.role} for u in assignable],
     }), 200
 
@@ -1711,32 +2063,110 @@ def ar_workload():
         members = list(user.team_members)
         members.append(user)
 
-    NON_ACTIVE = ['lost', 'junk', 'booking_done', 'not_interested']
+    stale_cutoff = datetime.utcnow() - timedelta(days=WORKLOAD_STALE_DAYS)
     result = []
     for m in members:
-        total = Lead.query.filter(Lead.tenant_id == user.tenant_id, Lead.is_active == True, Lead.assigned_to == m.id).count()
-        active = Lead.query.filter(
+        member_base = Lead.query.filter(
             Lead.tenant_id == user.tenant_id,
             Lead.is_active == True,
             Lead.assigned_to == m.id,
-            Lead.status.notin_(NON_ACTIVE),
+        )
+        total = member_base.count()
+        active = member_base.filter(
+            Lead.status.notin_(TERMINAL_LEAD_STATUSES),
         ).count()
-        overdue_cb = db.session.query(func.count(func.distinct(CallbackReminder.lead_id))).filter(
+        untouched = member_base.filter(Lead.status == 'new').count()
+        follow_ups = member_base.filter(Lead.status == 'follow_up').count()
+        stale = member_base.filter(
+            Lead.status.notin_(TERMINAL_LEAD_STATUSES),
+            Lead.updated_at <= stale_cutoff,
+        ).count()
+        callback_base = db.session.query(func.count(func.distinct(Lead.id))).join(
+            CallbackReminder,
+            and_(
+                CallbackReminder.lead_id == Lead.id,
+                CallbackReminder.tenant_id == user.tenant_id,
+                CallbackReminder.status == 'pending',
+            ),
+        ).filter(
+            Lead.tenant_id == user.tenant_id,
+            Lead.is_active == True,
+            Lead.assigned_to == m.id,
+        )
+        pending_cb = callback_base.scalar() or 0
+        overdue_cb = callback_base.filter(
+            CallbackReminder.callback_datetime < datetime.utcnow(),
+        ).scalar() or 0
+        legacy_pending_cb = db.session.query(func.count(func.distinct(CallbackReminder.lead_id))).filter(
             CallbackReminder.tenant_id == user.tenant_id,
             CallbackReminder.assigned_user_id == m.id,
             CallbackReminder.status == 'pending',
-            CallbackReminder.callback_datetime < datetime.utcnow(),
         ).scalar() or 0
+        orphaned_callback_delta = max(0, legacy_pending_cb - pending_cb)
         result.append({
             'id': m.id, 'name': m.name, 'role': m.role,
             'total_leads': total, 'active_leads': active,
+            'assigned': total,
+            'untouched': untouched,
+            'callbacks': pending_cb,
             'overdue_callbacks': overdue_cb,
+            'stale': stale,
+            'follow_ups': follow_ups,
+            'legacy_callback_delta': orphaned_callback_delta,
         })
     result.sort(key=lambda x: x['active_leads'], reverse=True)
     assignable = _assignable_users(user)
     return jsonify({
         'members': result,
+        'definitions': {
+            'assigned': 'Active visible leads currently assigned to the member.',
+            'untouched': 'Active assigned leads still in New status under the existing untouched rule.',
+            'callbacks': 'Distinct active current-assignee leads with pending callbacks.',
+            'overdue_callbacks': 'Distinct active current-assignee leads with pending callbacks before now.',
+            'stale': f'Active non-terminal assigned leads not updated in {WORKLOAD_STALE_DAYS}+ days.',
+            'follow_ups': 'Active assigned leads in Follow Up status.',
+        },
         'assignable_users': [{'id': u.id, 'name': u.name, 'role': u.role} for u in assignable],
+        'filters': {
+            'sources': _allocation_source_options(Lead.query.filter(Lead.tenant_id == user.tenant_id, Lead.is_active == True)),
+            'projects': _allocation_project_options(user),
+            'statuses': ALL_LEAD_STATUSES,
+        },
+    }), 200
+
+
+@leads_bp.route('/assign-reassign/workload-preview', methods=['GET'])
+@require_role('superadmin', 'sales_manager')
+def ar_workload_preview():
+    user = request.current_user
+    from_id = request.args.get('from_user_id')
+    if not from_id or not str(from_id).isdigit():
+        return jsonify({'error': 'from_user_id is required'}), 400
+    base = _workload_base_for_user(user, int(from_id))
+    if base is None:
+        return jsonify({'error': 'Source user outside your scope'}), 403
+    filtered = _apply_workload_filters(base, request.args)
+    to_user_id = request.args.get('to_user_id')
+    matching, eligible, excluded, reasons, eligible_q = _eligible_counts_for_query(filtered, to_user_id if to_user_id and str(to_user_id).isdigit() else None)
+    page, per_page = _allocation_page_params()
+    page, total_pages = _allocation_clamped_page(eligible, page, per_page)
+    preview_q = _workload_sort(eligible_q, request.args)
+    leads = preview_q.offset((page - 1) * per_page).limit(per_page).all()
+    return jsonify({
+        'matching': matching,
+        'eligible': eligible,
+        'excluded': excluded,
+        'exclusion_reasons': reasons,
+        'leads': [_workload_preview_dict(l) for l in leads],
+        'page': page,
+        'per_page': per_page,
+        'total_pages': total_pages,
+        'max_rows_returned': per_page,
+        'filters': {
+            'sources': _allocation_source_options(Lead.query.filter(Lead.tenant_id == user.tenant_id, Lead.is_active == True)),
+            'projects': _allocation_project_options(user),
+            'statuses': ALL_LEAD_STATUSES,
+        },
     }), 200
 
 
@@ -1763,16 +2193,27 @@ def ar_bulk_assign():
         if target.id not in allowed_ids:
             return jsonify({'error': 'Cannot assign to users outside your team'}), 403
 
+    leads_q = Lead.query.filter(
+        Lead.tenant_id == user.tenant_id,
+        Lead.is_active == True,
+        Lead.id.in_(lead_ids),
+    )
+    if user.role == 'sales_manager':
+        allowed_lead_ids = [tm.id for tm in user.team_members] + [user.id]
+        leads_q = leads_q.filter(
+            db.or_(
+                Lead.assigned_to.in_(allowed_lead_ids),
+                Lead.assigned_to.is_(None),
+            )
+        )
+
+    leads_by_id = {lead.id: lead for lead in leads_q.all()}
+
     assigned = 0
     for lid in lead_ids:
-        lead = Lead.query.filter_by(id=lid, tenant_id=user.tenant_id, is_active=True).first()
+        lead = leads_by_id.get(lid)
         if not lead:
             continue
-        # Manager scope check
-        if user.role == 'sales_manager':
-            allowed_lead_ids = [tm.id for tm in user.team_members] + [user.id, None]
-            if lead.assigned_to not in allowed_lead_ids:
-                continue
         old_assignee = lead.assigned_to
         lead.assigned_to = target.id
         db.session.add(LeadAssignmentHistory(
@@ -1810,9 +2251,10 @@ def ar_bulk_assign():
             db.session.rollback()
 
     return jsonify({'assigned': assigned, 'total_requested': len(lead_ids)}), 200
+@leads_bp.route('/assign-reassign/workload-move', methods=['POST'])
 @require_role('superadmin', 'sales_manager')
 def ar_workload_move():
-    """Move N active leads from one member to another."""
+    """Move filtered active leads from one member to another."""
     user = request.current_user
     data = request.get_json() or {}
     from_id = data.get('from_user_id')
@@ -1824,6 +2266,8 @@ def ar_workload_move():
 
     if not from_id or not to_id:
         return jsonify({'error': 'from_user_id and to_user_id required'}), 400
+    if int(from_id) == int(to_id):
+        return jsonify({'error': 'Source and destination cannot be the same'}), 400
 
     from_user = User.query.filter_by(id=int(from_id), tenant_id=user.tenant_id, is_active=True).first()
     to_user = User.query.filter_by(id=int(to_id), tenant_id=user.tenant_id, is_active=True).first()
@@ -1835,21 +2279,44 @@ def ar_workload_move():
         if from_user.id not in allowed_ids or to_user.id not in allowed_ids:
             return jsonify({'error': 'Users outside your team'}), 403
 
-    NON_ACTIVE = ['lost', 'junk', 'booking_done', 'not_interested']
-    status_filter = (data.get('status_filter') or '').strip()
-    leads_q = Lead.query.filter(
-        Lead.tenant_id == user.tenant_id,
-        Lead.is_active == True,
-        Lead.assigned_to == from_user.id,
-    )
-    if status_filter:
-        leads_q = leads_q.filter(Lead.status == status_filter)
+    base = _workload_base_for_user(user, from_user.id)
+    if base is None:
+        return jsonify({'error': 'Source user outside your scope'}), 403
+    filter_args = dict(data)
+    if 'status_filter' in filter_args and 'status' not in filter_args:
+        filter_args['status'] = filter_args.get('status_filter')
+    filtered = _apply_workload_filters(base, filter_args)
+    matching, eligible, excluded, reasons, eligible_q = _eligible_counts_for_query(filtered, to_user.id)
+    ordered_q = _workload_sort(eligible_q, filter_args)
+
+    mode = (data.get('selection_mode') or 'first_n').strip().lower()
+    selected_ids = [int(x) for x in (data.get('lead_ids') or []) if str(x).isdigit()]
+    if mode == 'selected':
+        if not selected_ids:
+            return jsonify({'error': 'lead_ids required for selected mode'}), 400
+        leads = ordered_q.filter(Lead.id.in_(selected_ids)).limit(500).all()
+    elif mode == 'current_page':
+        page = max(1, int(data.get('page') or 1))
+        per_page = min(500, max(1, int(data.get('per_page') or data.get('page_size') or count)))
+        leads = ordered_q.offset((page - 1) * per_page).limit(per_page).all()
+    elif mode == 'all':
+        leads = ordered_q.limit(500).all()
+        if eligible > 500:
+            reasons['sync_cap_500'] = eligible - 500
+    elif mode == 'random_n':
+        id_rows = ordered_q.with_entities(Lead.id).limit(2000).all()
+        ids = [row[0] for row in id_rows]
+        chosen = set(random.sample(ids, min(count, len(ids)))) if ids else set()
+        leads = ordered_q.filter(Lead.id.in_(chosen)).all() if chosen else []
     else:
-        leads_q = leads_q.filter(Lead.status.notin_(NON_ACTIVE))
-    leads = leads_q.order_by(Lead.updated_at.asc()).limit(count).all()
+        leads = ordered_q.limit(count).all()
 
     moved = 0
+    skipped = max(0, eligible - len(leads)) if mode in ('all', 'random_n', 'first_n') else 0
+    moved_ids = []
     for lead in leads:
+        if not lead.is_active or lead.assigned_to != from_user.id or lead.status in TERMINAL_LEAD_STATUSES:
+            continue
         lead.assigned_to = to_user.id
         db.session.add(LeadAssignmentHistory(
             lead_id=lead.id,
@@ -1860,7 +2327,13 @@ def ar_workload_move():
         ))
         log_activity(user.id, 'assign_lead', 'leads', lead.id, 'Lead',
             description=f'Workload move: {lead.name} from {from_user.name} to {to_user.name}')
+        CallbackReminder.query.filter(
+            CallbackReminder.tenant_id == user.tenant_id,
+            CallbackReminder.lead_id == lead.id,
+            CallbackReminder.status == 'pending',
+        ).update({'assigned_user_id': to_user.id}, synchronize_session=False)
         moved += 1
+        moved_ids.append(lead.id)
 
     db.session.commit()
 
@@ -1884,7 +2357,18 @@ def ar_workload_move():
         except Exception:
             db.session.rollback()
 
-    return jsonify({'moved': moved}), 200
+    return jsonify({
+        'requested_count': count if mode in ('first_n', 'random_n') else len(selected_ids) if mode == 'selected' else eligible,
+        'matching': matching,
+        'eligible': eligible,
+        'excluded': excluded,
+        'moved': moved,
+        'skipped': skipped,
+        'error_count': 0,
+        'skip_reasons': reasons,
+        'moved_ids': moved_ids,
+        'selection_mode': mode,
+    }), 200
 # ---------------------------------------------------------------------------
 
 RECYCLE_STATUSES = [
@@ -1894,17 +2378,117 @@ RECYCLE_STATUSES = [
 ]
 
 
+def _apply_recycle_filters(query, user, args):
+    owner = (args.get('owner_id') or args.get('assigned_to') or '').strip()
+    status = (args.get('status') or '').strip()
+    source = (args.get('source') or '').strip().lower()
+    project_id = (args.get('project_id') or args.get('project') or '').strip()
+    search = (args.get('q') or args.get('search') or '').strip().lower()
+    callback_state = (args.get('callback_state') or '').strip().lower()
+    lead_age = (args.get('lead_age') or '').strip()
+    untouched_only = (args.get('untouched_only') or '').strip().lower() in ('1', 'true', 'yes')
+
+    if owner == 'unassigned':
+        query = query.filter(Lead.assigned_to == None)
+    elif owner:
+        try:
+            owner_id = int(owner)
+            if owner_id in _team_scope_ids(user, include_self=True):
+                query = query.filter(Lead.assigned_to == owner_id)
+        except (TypeError, ValueError):
+            pass
+    if status and status in RECYCLE_STATUSES:
+        query = query.filter(Lead.status == status)
+    if source:
+        query = query.filter(func.lower(func.trim(func.coalesce(Lead.source, ''))) == source)
+    if project_id:
+        try:
+            query = query.filter(Lead.project_id == int(project_id))
+        except (TypeError, ValueError):
+            pass
+    if search:
+        like_q = f'%{search}%'
+        query = query.outerjoin(User, Lead.assigned_to == User.id).outerjoin(Project, Lead.project_id == Project.id).filter(
+            or_(
+                func.lower(func.coalesce(Lead.name, '')).like(like_q),
+                func.lower(func.coalesce(Lead.phone, '')).like(like_q),
+                func.lower(func.coalesce(Project.name, '')).like(like_q),
+                func.lower(func.coalesce(User.name, '')).like(like_q),
+            )
+        )
+    query = _pending_callback_filter(query, callback_state)
+    query = _apply_age_filter(query, lead_age)
+    if untouched_only:
+        query = query.filter(Lead.status == 'new')
+    return query
+
+
+def _apply_recycle_stale_window(query):
+    stale_mode = (request.args.get('stale_mode') or '').strip().lower()
+    now = datetime.utcnow()
+    if stale_mode in ('3', '3_plus'):
+        return query.filter(Lead.updated_at <= now - timedelta(days=3)), '3_plus'
+    if stale_mode in ('7', '7_plus'):
+        return query.filter(Lead.updated_at <= now - timedelta(days=7)), '7_plus'
+    if stale_mode in ('15', '15_plus'):
+        return query.filter(Lead.updated_at <= now - timedelta(days=15)), '15_plus'
+    if stale_mode in ('30', '30_plus'):
+        return query.filter(Lead.updated_at <= now - timedelta(days=30)), '30_plus'
+    if stale_mode == 'yesterday':
+        today_start, _ = business_date_bounds_utc_naive(now_ist().date())
+        yesterday_start = today_start - timedelta(days=1)
+        return query.filter(Lead.updated_at >= yesterday_start, Lead.updated_at < today_start), 'yesterday'
+    return query.filter(Lead.updated_at <= now - timedelta(days=5)), '5_plus'
+
+
+def _recycle_eligibility_parts(query, cooldown_days=7):
+    reasons = {}
+    eligible_q = query
+    terminal = query.filter(Lead.status.in_(TERMINAL_LEAD_STATUSES)).count()
+    if terminal:
+        reasons['terminal_status'] = terminal
+        eligible_q = eligible_q.filter(Lead.status.notin_(TERMINAL_LEAD_STATUSES))
+    protected = eligible_q.filter(Lead.status.in_(PROTECTED_RECYCLE_STATUSES)).count()
+    if protected:
+        reasons['protected_stage'] = protected
+        eligible_q = eligible_q.filter(Lead.status.notin_(PROTECTED_RECYCLE_STATUSES))
+    future_exists = db.session.query(CallbackReminder.id).filter(
+        CallbackReminder.lead_id == Lead.id,
+        CallbackReminder.status == 'pending',
+        CallbackReminder.callback_datetime > datetime.utcnow(),
+    )
+    future_pending = eligible_q.filter(future_exists.exists()).count()
+    if future_pending:
+        reasons['future_pending_callback'] = future_pending
+        eligible_q = eligible_q.filter(~future_exists.exists())
+    cooldown_cutoff = datetime.utcnow() - timedelta(days=max(1, int(cooldown_days or 7)))
+    cooldown_exists = db.session.query(LeadAssignmentHistory.id).filter(
+        LeadAssignmentHistory.lead_id == Lead.id,
+        LeadAssignmentHistory.assigned_at >= cooldown_cutoff,
+    )
+    cooldown = eligible_q.filter(cooldown_exists.exists()).count()
+    if cooldown:
+        reasons['inside_cooldown'] = cooldown
+        eligible_q = eligible_q.filter(~cooldown_exists.exists())
+    return eligible_q, reasons
+
+
+def _recycle_sort(query):
+    sort = (request.args.get('sort') or '').strip().lower()
+    if sort == 'recently_stale':
+        return query.order_by(Lead.updated_at.desc(), Lead.id.desc())
+    if sort == 'oldest_received':
+        return query.order_by(Lead.created_at.asc(), Lead.id.asc())
+    if sort == 'newest_received':
+        return query.order_by(Lead.created_at.desc(), Lead.id.desc())
+    return query.order_by(Lead.updated_at.asc(), Lead.id.asc())
+
+
 @leads_bp.route('/recycle-queue', methods=['GET'])
 @require_role('superadmin', 'sales_manager')
 def recycle_queue():
     """Return leads eligible for recycling/reshuffling."""
     user = request.current_user
-    stale_mode = (request.args.get('stale_mode') or '').strip().lower()
-    stale_days = max(1, int(request.args.get('stale_days', 3)))
-    date_from_str = (request.args.get('date_from') or '').strip()
-    date_to_str = (request.args.get('date_to') or '').strip()
-    status_filter = request.args.get('status')   # optional single-status filter
-    query_text = (request.args.get('q') or '').strip().lower()
     try:
         page = max(1, int(request.args.get('page', 1)))
     except (TypeError, ValueError):
@@ -1913,62 +2497,33 @@ def recycle_queue():
         page_size = int(request.args.get('page_size', 25))
     except (TypeError, ValueError):
         page_size = 25
-    page_size = max(1, min(1000, page_size))
-    now = datetime.utcnow()
-    today_start = datetime(now.year, now.month, now.day)
-    tomorrow_start = today_start + timedelta(days=1)
-    yesterday_start = today_start - timedelta(days=1)
+    page_size = max(1, min(500, page_size))
+    view = (request.args.get('view') or 'eligible').strip().lower()
+    try:
+        cooldown_days = max(1, int(request.args.get('cooldown_days', 7)))
+    except (TypeError, ValueError):
+        cooldown_days = 7
 
-    base = get_user_visible_leads(user)
-    statuses = [status_filter] if status_filter and status_filter in RECYCLE_STATUSES else RECYCLE_STATUSES
-
-    if stale_mode == 'today':
-        base = base.filter(
-            Lead.status.in_(statuses),
-            Lead.updated_at >= today_start,
-            Lead.updated_at < tomorrow_start,
-        )
-    elif stale_mode == 'yesterday':
-        base = base.filter(
-            Lead.status.in_(statuses),
-            Lead.updated_at >= yesterday_start,
-            Lead.updated_at < today_start,
-        )
-    elif stale_mode == 'custom':
-        range_start = None
-        range_end = None
-        try:
-            if date_from_str:
-                range_start = datetime.strptime(date_from_str, '%Y-%m-%d')
-            if date_to_str:
-                range_end = datetime.strptime(date_to_str, '%Y-%m-%d') + timedelta(days=1)
-        except ValueError:
-            range_start = None
-            range_end = None
-
-        base = base.filter(Lead.status.in_(statuses))
-        if range_start:
-            base = base.filter(Lead.updated_at >= range_start)
-        if range_end:
-            base = base.filter(Lead.updated_at < range_end)
+    base = get_user_visible_leads(user).options(
+        joinedload(Lead.project),
+        joinedload(Lead.assigned_user),
+        selectinload(Lead.callbacks),
+    ).filter(Lead.is_active == True)
+    base, stale_mode = _apply_recycle_stale_window(base)
+    filtered = _apply_recycle_filters(base, user, request.args)
+    matching = filtered.count()
+    eligible_q, reasons = _recycle_eligibility_parts(filtered, cooldown_days)
+    eligible = eligible_q.count()
+    excluded = max(0, matching - eligible)
+    if view == 'excluded':
+        page_query = filtered.filter(~Lead.id.in_(eligible_q.with_entities(Lead.id)))
+        total = excluded
     else:
-        stale_before = now - timedelta(days=stale_days)
-        base = base.filter(Lead.status.in_(statuses), Lead.updated_at <= stale_before)
-
-    if query_text:
-        like_q = f'%{query_text}%'
-        base = base.outerjoin(User, Lead.assigned_to == User.id).outerjoin(Project, Lead.project_id == Project.id).filter(
-            db.or_(
-                func.lower(Lead.name).like(like_q),
-                func.lower(func.coalesce(Lead.phone, '')).like(like_q),
-                func.lower(func.coalesce(Project.name, '')).like(like_q),
-                func.lower(func.coalesce(User.name, '')).like(like_q),
-            )
-        )
-
-    total = base.count()
+        page_query = eligible_q
+        total = eligible
+    page, total_pages = _allocation_clamped_page(total, page, page_size)
     offset = (page - 1) * page_size
-    leads = base.order_by(Lead.updated_at.asc()).offset(offset).limit(page_size).all()
+    leads = _recycle_sort(page_query).offset(offset).limit(page_size).all()
 
     # For each lead, attach previous assignees (for display in the UI)
     def _with_history(lead):
@@ -1981,19 +2536,38 @@ def recycle_queue():
             .all()
         )
         d['previous_assignee_ids'] = list({r[0] for r in prev if r[0]})
+        d['reassignment_count'] = len(prev)
+        d['callback_state'] = _lead_callback_state(lead)
+        d['eligible'] = view != 'excluded'
+        d['exclusion_reason'] = None
+        if view == 'excluded':
+            if lead.status in TERMINAL_LEAD_STATUSES:
+                d['exclusion_reason'] = 'terminal_status'
+            elif lead.status in PROTECTED_RECYCLE_STATUSES:
+                d['exclusion_reason'] = 'protected_stage'
+            elif any(cb.status == 'pending' and cb.callback_datetime > datetime.utcnow() for cb in (lead.callbacks or [])):
+                d['exclusion_reason'] = 'future_pending_callback'
+            else:
+                d['exclusion_reason'] = 'inside_cooldown_or_other'
         return d
 
     return jsonify({
         'leads':      [_with_history(l) for l in leads],
         'total':      total,
+        'matching':   matching,
+        'eligible':   eligible,
+        'excluded':   excluded,
+        'exclusion_reasons': reasons,
         'page':       page,
         'page_size':  page_size,
-        'total_pages': max(1, (total + page_size - 1) // page_size),
-        'stale_days': stale_days,
+        'total_pages': total_pages,
+        'view': view,
         'stale_mode': stale_mode or 'older_than_days',
-        'selected_range': {
-            'date_from': date_from_str or None,
-            'date_to': date_to_str or None,
+        'filters': {
+            'sources': _allocation_source_options(get_user_visible_leads(user).filter(Lead.is_active == True)),
+            'projects': _allocation_project_options(user),
+            'users': [{'id': u.id, 'name': u.name, 'role': u.role} for u in _assignable_users(user)],
+            'statuses': RECYCLE_STATUSES,
         },
     }), 200
 
@@ -2030,6 +2604,20 @@ def reshuffle_leads():
         return jsonify({'error': 'lead_ids is required'}), 400
     if len(lead_ids) > 500:
         return jsonify({'error': 'Max 500 leads per reshuffle'}), 400
+    visible = get_user_visible_leads(user).filter(
+        Lead.id.in_([int(x) for x in lead_ids if str(x).isdigit()]),
+        Lead.is_active == True,
+    )
+    eligible_q, skip_reasons = _recycle_eligibility_parts(visible, cooldown_days)
+    eligible_ids = [row[0] for row in eligible_q.with_entities(Lead.id).all()]
+    skipped_count = max(0, len(lead_ids) - len(eligible_ids))
+    lead_ids = eligible_ids
+    if not lead_ids:
+        return jsonify({
+            'error': 'No eligible leads selected',
+            'skipped': skipped_count,
+            'skip_reasons': skip_reasons,
+        }), 400
 
     queued = len(lead_ids) > 50 or request.args.get('async', '').strip() == '1'
 
@@ -2048,7 +2636,12 @@ def reshuffle_leads():
 
     if queued:
         db.session.commit()
-        return jsonify({'job': job.to_dict(), 'status': 'queued'}), 202
+        return jsonify({
+            'job': job.to_dict(),
+            'status': 'queued',
+            'skipped': skipped_count,
+            'skip_reasons': skip_reasons,
+        }), 202
 
     # Gather eligible team members
     if user.role == 'sales_manager':
@@ -2060,6 +2653,8 @@ def reshuffle_leads():
         return jsonify({'error': 'No active team members available'}), 400
 
     result = _process_reshuffle_job(job, user, team, strategy, reason, cooldown_days)
+    result['skipped'] = skipped_count
+    result['skip_reasons'] = skip_reasons
     return jsonify(result), 200
 
 
@@ -2172,6 +2767,26 @@ def get_call_activity_timeline(lead_id):
     return jsonify({'call_activities': [log.to_dict() for log in call_logs]}), 200
 
 
+def _timeline_iso(dt_value):
+    if not dt_value:
+        return None
+    if dt_value.tzinfo is None:
+        dt_value = dt_value.replace(tzinfo=timezone.utc)
+    return dt_value.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+
+def _timeline_event(event_type, title, occurred_at, actor_name=None, details=None, payload=None):
+    return {
+        'type': event_type,
+        'title': title,
+        'occurred_at': _timeline_iso(occurred_at),
+        'occurred_at_ist': to_ist_str(occurred_at),
+        'actor_name': actor_name,
+        'details': details,
+        'payload': payload or {},
+    }
+
+
 @leads_bp.route('/<int:lead_id>/detail-bundle', methods=['GET'])
 @require_auth
 def get_lead_detail_bundle(lead_id):
@@ -2240,6 +2855,62 @@ def get_lead_detail_bundle(lead_id):
             'received_at': latest_ingestion.received_at.isoformat() if latest_ingestion.received_at else None,
         }
 
+    timeline_events = []
+    if lead.created_at:
+        timeline_events.append(_timeline_event(
+            'lead_created',
+            'Lead created',
+            lead.created_at,
+            actor_name=lead.creator.name if lead.creator else None,
+            details='Lead entered the LMS',
+        ))
+    for note in notes:
+        timeline_events.append(_timeline_event(
+            'note',
+            'Note added',
+            note.created_at,
+            actor_name=note.creator.name if note.creator else None,
+            details=note.note,
+            payload=note.to_dict(),
+        ))
+    for hist in status_history:
+        timeline_events.append(_timeline_event(
+            'status',
+            'Status changed',
+            hist.changed_at,
+            actor_name=hist.changed_by_user.name if hist.changed_by_user else None,
+            details=f'{hist.old_status or "None"} to {hist.new_status}',
+            payload=hist.to_dict(),
+        ))
+    for hist in assignment_history:
+        timeline_events.append(_timeline_event(
+            'assign',
+            'Lead assigned',
+            hist.assigned_at,
+            actor_name=hist.assigned_by_user.name if hist.assigned_by_user else None,
+            details=f'{hist.assigned_from_user.name if hist.assigned_from_user else "Unassigned"} to {hist.assigned_to_user.name if hist.assigned_to_user else "Unassigned"}',
+            payload=hist.to_dict(),
+        ))
+    for log in call_logs:
+        timeline_events.append(_timeline_event(
+            'activity',
+            'Call activity',
+            log.created_at,
+            actor_name=log.user.name if log.user else None,
+            details=log.description,
+            payload=log.to_dict(),
+        ))
+    for cb in callbacks:
+        timeline_events.append(_timeline_event(
+            'callback',
+            'Callback',
+            cb.callback_datetime,
+            actor_name=cb.creator.name if cb.creator else None,
+            details=cb.notes,
+            payload=cb.to_dict(),
+        ))
+    timeline_events.sort(key=lambda item: item.get('occurred_at') or '', reverse=True)
+
     return jsonify({
         'lead': lead.to_dict(),
         'acquisition': acquisition,
@@ -2248,6 +2919,7 @@ def get_lead_detail_bundle(lead_id):
         'assignment_history': [h.to_dict() for h in assignment_history],
         'callbacks': [c.to_dict() for c in callbacks],
         'call_activities': [log.to_dict() for log in call_logs],
+        'timeline_events': timeline_events,
     }), 200
 
 
@@ -2280,60 +2952,29 @@ def create_callback(lead_id):
         return jsonify({'error': 'callback_datetime is required'}), 400
 
     try:
-        cb_dt = _parse_ist_datetime(raw_dt)
-    except ValueError:
-        return jsonify({'error': 'Invalid datetime format. Use ISO 8601 (YYYY-MM-DDTHH:MM:SS)'}), 400
-
-    if cb_dt <= datetime.utcnow():
-        return jsonify({'error': 'Callback time must be in the future'}), 400
-
-    # Only one pending callback per lead is allowed.
-    existing_pending = (
-        CallbackReminder.query
-        .filter_by(lead_id=lead_id, status='pending')
-        .order_by(CallbackReminder.created_at.asc(), CallbackReminder.id.asc())
-        .first()
-    )
-    if existing_pending:
+        cb, existing_pending, pending_error = create_callback_for_lead(
+            lead,
+            user,
+            raw_dt,
+            notes=data.get('notes', ''),
+        )
+    except ValueError as exc:
+        message = str(exc) or 'Invalid datetime format. Use ISO 8601 (YYYY-MM-DDTHH:MM:SS)'
+        status_code = 400
+        if 'future' in message.lower():
+            return jsonify({'error': message}), status_code
+        return jsonify({'error': 'Invalid datetime format. Use ISO 8601 (YYYY-MM-DDTHH:MM:SS)'}), status_code
+    if pending_error:
         return jsonify({
-            'error': 'A pending callback already exists for this lead. Close it with a note before creating a new one.',
+            'error': pending_error or CALLBACK_PENDING_ERROR,
             'pending_callback': existing_pending.to_dict(),
         }), 409
-
-    # Determine manager_id: from lead's sales_manager, or assigned user's manager
-    manager_id = lead.sales_manager_id
-    if not manager_id and lead.assigned_to:
-        assigned = User.query.get(lead.assigned_to)
-        if assigned:
-            manager_id = assigned.manager_id
-
-    cb = CallbackReminder(
-        lead_id=lead_id,
-        tenant_id=user.tenant_id,
-        assigned_user_id=lead.assigned_to,
-        manager_id=manager_id,
-        callback_datetime=cb_dt,
-        notes=data.get('notes', '').strip() or None,
-        created_by=user.id,
-    )
-    db.session.add(cb)
-
-    # Auto-update lead status to callback_scheduled
-    old_status = lead.status
-    if old_status != 'callback_scheduled':
-        lead.status = 'callback_scheduled'
-        db.session.add(StatusHistory(
-            lead_id=lead_id,
-            old_status=old_status,
-            new_status='callback_scheduled',
-            changed_by=user.id,
-        ))
 
     db.session.commit()
 
     log_activity(
         user.id, 'create_callback', 'leads', lead_id, 'Lead',
-        description=f'Scheduled callback for lead {lead.name} at {_format_ist_datetime(cb_dt)}',
+        description=f'Scheduled callback for lead {lead.name} at {_format_ist_datetime(cb.callback_datetime)}',
     )
     return jsonify({'callback': cb.to_dict()}), 201
 
@@ -2354,13 +2995,7 @@ def complete_callback(callback_id):
     if not closure_note:
         return jsonify({'error': 'closure_note is required to close a callback'}), 400
 
-    from app.utils.time_utils import now_ist
-    closed_at = now_ist().strftime('%d %b %Y %H:%M IST')
-    actor = user.name or user.email or f'User {user.id}'
-    closure_entry = f'[COMPLETED by {actor} at {closed_at}] {closure_note}'
-    cb.notes = f'{cb.notes}\n{closure_entry}'.strip() if cb.notes else closure_entry
-
-    cb.status = 'completed'
+    complete_callback_record(cb, user, closure_note)
     db.session.commit()
     log_activity(
         user.id, 'complete_callback', 'leads', cb.lead_id, 'Lead',
@@ -2392,17 +3027,17 @@ def update_callback(callback_id):
         return jsonify({'error': 'callback_datetime is required'}), 400
 
     try:
-        cb_dt = _parse_ist_datetime(raw_dt)
-    except ValueError:
+        old_dt, cb_dt = reschedule_callback(
+            cb,
+            user,
+            raw_dt,
+            notes_marker=data.get('notes') if 'notes' in data else None,
+        )
+    except ValueError as exc:
+        message = str(exc) or 'Invalid datetime format. Use ISO 8601 (YYYY-MM-DDTHH:MM:SS)'
+        if 'future' in message.lower():
+            return jsonify({'error': message}), 400
         return jsonify({'error': 'Invalid datetime format. Use ISO 8601 (YYYY-MM-DDTHH:MM:SS)'}), 400
-
-    if cb_dt <= datetime.utcnow():
-        return jsonify({'error': 'Callback time must be in the future'}), 400
-
-    old_dt = cb.callback_datetime
-    cb.callback_datetime = cb_dt
-    if 'notes' in data:
-        cb.notes = (data.get('notes') or '').strip() or None
     db.session.commit()
 
     log_activity(
@@ -2436,12 +3071,7 @@ def delete_callback(callback_id):
         if not closure_note:
             return jsonify({'error': 'closure_note is required to cancel a pending callback'}), 400
 
-        from app.utils.time_utils import now_ist
-        closed_at = now_ist().strftime('%d %b %Y %H:%M IST')
-        actor = user.name or user.email or f'User {user.id}'
-        closure_entry = f'[CANCELLED by {actor} at {closed_at}] {closure_note}'
-        cb.notes = f'{cb.notes}\n{closure_entry}'.strip() if cb.notes else closure_entry
-        cb.status = 'cancelled'
+        cancel_callback_record(cb, user, closure_note)
         db.session.commit()
         log_activity(
             user.id, 'cancel_callback', 'leads', cb.lead_id, 'Lead',
