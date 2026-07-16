@@ -15,12 +15,17 @@ assert(workload.includes('AR_LEAD_STATUSES'), 'workload status fallback missing'
 assert(workload.includes('_arWorkloadFilterState'), 'workload filter state persistence missing')
 
 assert(recycle.includes('rqView'), 'recycle eligible/excluded view missing')
+assert(recycle.includes('inside_cooldown'), 'recycle cooldown view missing')
+assert(recycle.includes('previously_reassigned'), 'recycle reassignment history view missing')
 assert(recycle.includes('rqOwner'), 'recycle owner filter missing')
 assert(recycle.includes('rqProject'), 'recycle project filter missing')
 assert(recycle.includes('rqSource'), 'recycle source filter missing')
+assert(recycle.includes('rqLeadAge'), 'recycle lead age filter missing')
 assert(recycle.includes('rqCallbackState'), 'recycle callback filter missing')
+assert(recycle.includes('Highest reassignment count'), 'recycle reassignment sort missing')
 assert(recycle.includes('Excluded view is read-only'), 'excluded view read-only guard missing')
 assert(recycle.includes("params.set('view', 'eligible')"), 'select-all must stay eligible-only')
+assert(recycle.includes('Eligible Leads'), 'select-all label must mention eligible leads')
 assert(recycle.includes('_rqRenderEligibilitySummary'), 'eligibility summary missing')
 
 console.log('Phase 17B allocation frontend contracts passed')

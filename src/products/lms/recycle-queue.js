@@ -100,6 +100,19 @@ function _rqRenderShell(target, showHeader) {
           <select id="rqView" class="dash-filter-ctl">
             <option value="eligible">Eligible only</option>
             <option value="excluded">Excluded</option>
+            <option value="inside_cooldown">Inside cooldown</option>
+            <option value="previously_reassigned">Previously reassigned</option>
+          </select>
+        </div>
+        <div class="rq-filter-field">
+          <label class="sm-label" style="display:block;margin-bottom:5px;">LEAD AGE</label>
+          <select id="rqLeadAge" class="dash-filter-ctl">
+            <option value="">Any age</option>
+            <option value="0_7">0-7 days</option>
+            <option value="8_15">8-15 days</option>
+            <option value="16_30">16-30 days</option>
+            <option value="31_60">31-60 days</option>
+            <option value="60_plus">60+ days</option>
           </select>
         </div>
         <div class="rq-filter-field">
@@ -119,6 +132,7 @@ function _rqRenderShell(target, showHeader) {
             <option value="recently_stale">Recently stale</option>
             <option value="oldest_received">Oldest received</option>
             <option value="newest_received">Newest received</option>
+            <option value="highest_reassignment">Highest reassignment count</option>
           </select>
         </div>
         <div class="rq-filter-field rq-filter-search">
@@ -177,13 +191,16 @@ function _rqRenderShell(target, showHeader) {
       _rqLoad()
     })
   }
-  ;['rqStatus','rqOwner','rqProject','rqSource','rqView','rqCallbackState','rqSort','rqUntouchedOnly'].forEach(function(id) {
+  ;['rqStatus','rqOwner','rqProject','rqSource','rqView','rqLeadAge','rqCallbackState','rqSort','rqUntouchedOnly'].forEach(function(id) {
     const el = document.getElementById(id)
     if (el) el.addEventListener('change', function() { _rqPage = 1; _rqLoad() })
   })
   const strategySel = document.getElementById('rqStrategy')
   if (strategySel) {
-    strategySel.addEventListener('change', _rqUpdateStrategyHelp)
+    strategySel.addEventListener('change', function() {
+      _rqClearSelection()
+      _rqUpdateStrategyHelp()
+    })
   }
   _rqUpdateStrategyHelp()
   const searchInput = document.getElementById('rqSearch')
@@ -220,6 +237,7 @@ async function _rqLoad() {
   const projectVal = document.getElementById('rqProject')?.value    || ''
   const sourceVal  = document.getElementById('rqSource')?.value     || ''
   const viewVal    = document.getElementById('rqView')?.value       || 'eligible'
+  const ageVal     = document.getElementById('rqLeadAge')?.value    || ''
   const cbVal      = document.getElementById('rqCallbackState')?.value || ''
   const sortVal    = document.getElementById('rqSort')?.value       || ''
   const untouched  = document.getElementById('rqUntouchedOnly')?.checked
@@ -240,6 +258,7 @@ async function _rqLoad() {
     if (projectVal) params.set('project_id', projectVal)
     if (sourceVal) params.set('source', sourceVal)
     if (viewVal) params.set('view', viewVal)
+    if (ageVal) params.set('lead_age', ageVal)
     if (cbVal) params.set('callback_state', cbVal)
     if (sortVal) params.set('sort', sortVal)
     if (untouched) params.set('untouched_only', '1')
@@ -274,7 +293,7 @@ async function _rqLoad() {
       <span style="font-size:13px;font-weight:600;color:#475569;">Showing ${leads.length} of ${total} stale lead${total !== 1 ? 's' : ''}</span>
       ${((data.view || 'eligible') === 'eligible') ? `<div style="display:flex;gap:8px;align-items:center;">
         <button onclick="_rqSelectAll()" style="font-size:12px;color:#6366f1;background:none;border:1px solid #c7d2fe;border-radius:6px;padding:4px 10px;cursor:pointer;">Select Page (${leads.length})</button>
-        ${total > leads.length ? `<button onclick="_rqSelectAllPages()" id="rqSelectAllPagesBtn" style="font-size:12px;color:#059669;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:600;">Select All ${total} Leads</button>` : ''}
+        ${total > leads.length ? `<button onclick="_rqSelectAllPages()" id="rqSelectAllPagesBtn" style="font-size:12px;color:#059669;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:600;">Select All ${total} Eligible Leads</button>` : ''}
       </div>` : `<span style="font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:999px;padding:4px 10px;font-weight:700;">Excluded view is read-only</span>`}
     </div>
     ${leads.map((l, i) => _rqLeadRow(l, (_rqPage - 1) * _rqPageSize + i + 1)).join('')}
@@ -387,6 +406,7 @@ function _rqSelectAll() {
     return
   }
   document.querySelectorAll('[id^="rqChk_"]').forEach(chk => {
+    if (chk.disabled) return
     const id = parseInt(chk.id.replace('rqChk_', ''), 10)
     chk.checked = true
     _recycleSelected.add(id)
@@ -405,6 +425,7 @@ async function _rqSelectAllPages() {
   const ownerVal = document.getElementById('rqOwner')?.value || ''
   const projectVal = document.getElementById('rqProject')?.value || ''
   const sourceVal = document.getElementById('rqSource')?.value || ''
+  const ageVal = document.getElementById('rqLeadAge')?.value || ''
   const cbVal = document.getElementById('rqCallbackState')?.value || ''
   const sortVal = document.getElementById('rqSort')?.value || ''
   const untouched = document.getElementById('rqUntouchedOnly')?.checked
@@ -418,6 +439,7 @@ async function _rqSelectAllPages() {
     if (ownerVal) params.set('owner_id', ownerVal)
     if (projectVal) params.set('project_id', projectVal)
     if (sourceVal) params.set('source', sourceVal)
+    if (ageVal) params.set('lead_age', ageVal)
     if (cbVal) params.set('callback_state', cbVal)
     if (sortVal) params.set('sort', sortVal)
     if (untouched) params.set('untouched_only', '1')
@@ -442,7 +464,7 @@ async function _rqSelectAllPages() {
     if (btn) { btn.textContent = `✓ All ${_recycleSelected.size} Selected`; btn.disabled = true }
   } catch (err) {
     showToast('Failed to select all leads.', 'error')
-    if (btn) { btn.textContent = `Select All ${_rqLastLoadTotal} Leads`; btn.disabled = false }
+    if (btn) { btn.textContent = `Select All ${_rqLastLoadTotal} Eligible Leads`; btn.disabled = false }
   }
 }
 
