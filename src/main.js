@@ -110,11 +110,13 @@ function _handleImpToken() {
     // Set in-memory session from impersonation token
     token = impToken
     user  = impUser
+    loginContext = 'tenant'
     availableProducts = []   // backend will refresh via loadMe()
 
     // Persist only in sessionStorage — does NOT affect platform owner's localStorage
     sessionStorage.setItem('lms_token',   impToken)
     sessionStorage.setItem('lms_user',    JSON.stringify(impUser))
+    sessionStorage.setItem('lms_login_context', 'tenant')
     sessionStorage.removeItem('lms_products')
     sessionStorage.setItem('_imp_session', '1')   // flag for authClearSession()
 
@@ -156,7 +158,7 @@ async function init() {
   // Pre-warm the active backend immediately — eliminates cold-start wait.
   // Fires before any user interaction; by the time they authenticate and navigate,
   // the backend is already awake and responsive.
-  try { fetch(API_BASE + '/health', { method: 'HEAD' }).catch(function() {}) } catch (_e) {}
+  try { fetch(API_BASE + '/health', { method: 'GET', cache: 'no-store' }).catch(function() {}) } catch (_e) {}
 
   if (typeof showLoader === 'function') showLoader()
 
@@ -201,10 +203,11 @@ async function init() {
       .then(function () { _sidebarRefreshIfChanged(_beforeHydrateSig) })
       .catch(function () {})
   }
-  // Remind developer how to see the waterfall after full hydration
-  setTimeout(function () {
-    console.log('%c[PERF] Ready. Call _PERF.report() to see the full timing waterfall.', 'color:#3b82f6;font-style:italic')
-  }, 4000)
+  if (window.DEBUG_PERF) {
+    setTimeout(function () {
+      console.log('%c[PERF] Ready. Call _PERF.report() to see the full timing waterfall.', 'color:#3b82f6;font-style:italic')
+    }, 4000)
+  }
 }
 
 init()

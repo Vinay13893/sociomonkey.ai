@@ -103,7 +103,7 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
           <p style="margin:2px 0 0;color:#64748b;font-size:13px;">Good Morning, ${escape(user.name)}</p>
         </div>
         <div class="dash-filters">
-          <div class="dash-filter-group">
+          <div class="dash-filter-group" style="display:none">
             <select id="dashRangeFilter" class="dash-filter-ctl">
               <option value="" selected>All Time</option>
               <option value="today">Today</option>
@@ -113,13 +113,10 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
               <option value="custom">Custom Date</option>
             </select>
           </div>
-          <div id="dashCustomRange" style="display:none;gap:8px;align-items:flex-end;">
-            <div class="dash-filter-group">
-              <input type="date" id="dashDateFrom" class="dash-filter-ctl" />
-            </div>
-            <div class="dash-filter-group">
-              <input type="date" id="dashDateTo" class="dash-filter-ctl" />
-            </div>
+          <div id="dashCustomRange" style="display:none"></div>
+          <div class="dash-filter-group" style="display:none">
+            <input type="hidden" id="dashDateFrom" />
+            <input type="hidden" id="dashDateTo" />
           </div>
           <div class="dash-filter-group">
             <select id="dashProjectFilter" class="dash-filter-ctl">
@@ -297,7 +294,7 @@ async function renderDashboard() {  // ── Dedup: if a render is already in f
     const stages = [
       { value: counts['new'] || 0, label: 'New Leads', color: '#3b82f6' },
         {
-          // "Contacted" should reflect all contacted-stage buckets in current CRM flow.
+          // "Contacted" should reflect all contacted-stage buckets in current LMS flow.
           value: sumCounts(['connected', 'attempted', 'follow_up', 'callback_scheduled', 'no_answer']),
           label: 'Contacted',
           color: '#0f766e',

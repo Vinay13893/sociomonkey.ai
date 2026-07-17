@@ -1,9 +1,9 @@
 {
   "name": "Sociomonkey LMS",
   "short_name": "SM LMS",
-  "description": "Sociomonkey LMS — AI-powered CRM and lead management for modern sales teams.",
-  "start_url": "/apps/lms",
-  "scope": "/apps/lms",
+  "description": "Sociomonkey LMS — AI-powered lead management for modern sales teams.",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#ffffff",

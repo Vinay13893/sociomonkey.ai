@@ -2,7 +2,7 @@
    SOCIOMONKEY DESIGN SYSTEM — Sidebar Component
    ============================================================================
    ONE sidebar used by every Sociomonkey product:
-     Platform · LMS · CRM · Procurement · Inventory · Amazon Intelligence
+     Platform · LMS · Procurement · Inventory · Amazon Intelligence
 
    Class hierarchy:
      .sm-sidebar                  — shell / scroll container
@@ -12,7 +12,6 @@
          .sm-sidebar-company      — tenant company name (max 2 lines)
          .sm-sidebar-product      — product name (small, uppercase)
          .sm-sidebar-tagline      — "AI Powered…" (Platform only)
-       .sm-sidebar-switcher       — product-switcher slot (platform owner only)
        .sm-sidebar-nav            — <nav> scroll area
          .sm-sidebar-nav-item     — <button> per nav link
          .sm-sidebar-divider      — 1px separator
@@ -119,11 +118,6 @@
   line-height: 1.5;
   max-width: 204px;
   margin-top: 2px;
-}
-
-/* ── Product Switcher slot ───────────────────────────────────────────────── */
-.sm-sidebar-switcher {
-  flex-shrink: 0;
 }
 
 /* ── Navigation area ─────────────────────────────────────────────────────── */

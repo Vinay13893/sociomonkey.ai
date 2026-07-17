@@ -30,7 +30,7 @@ function _wizBlank() {
     sidebar_bg_color: '#1e293b',
     login_bg_color:   '#f1f5f9',
     // Step 3
-    products: ['crm'],
+    products: ['lms'],
     // Step 4
     feature_flags: {},
     // Step 5
@@ -55,10 +55,10 @@ async function openOrgWizard() {
     }
   } catch (e) {}
 
-  // Default to CRM pre-selected
+  // Default to LMS pre-selected
   if (_wiz.products.length > 0) {
-    var crm = _wiz.products.find(function(p) { return p.slug === 'crm' })
-    _wiz.data.products = crm ? ['crm'] : [_wiz.products[0].slug]
+    var lms = _wiz.products.find(function(p) { return p.slug === 'lms' })
+    _wiz.data.products = lms ? ['lms'] : [_wiz.products[0].slug]
   }
 
   _wizRender()

@@ -1,15 +1,49 @@
 // ============================================================================
 // LMS (Lead Management System) — Ganga Realty product module
 //
-// The LMS product mirrors the CRM product for Ganga Realty.
-// All lead management, project tracking, pipeline, and reports are shared
-// with the CRM module — this file provides LMS-specific overrides and the
-// LMS home page rendered when activeTab === 'product_home' for this product.
+// LMS is the primary lead management product module.
+// This file provides LMS-specific wrapper surfaces.
 // ============================================================================
 
+var _legacyLeadSourcesPromise = null
+
+function ensureLegacyLeadSourcesLoaded() {
+  if (typeof renderLeadSources === 'function') return Promise.resolve()
+  if (_legacyLeadSourcesPromise) return _legacyLeadSourcesPromise
+
+  _legacyLeadSourcesPromise = new Promise(function(resolve, reject) {
+    var existing = document.querySelector('script[data-module="legacy-lead-sources"]')
+    if (existing) {
+      existing.addEventListener('load', function() { resolve() }, { once: true })
+      existing.addEventListener('error', reject, { once: true })
+      return
+    }
+
+    var script = document.createElement('script')
+    script.src = 'src/products/lms/lead-sources.js?v=20260612istglobal1'
+    script.dataset.module = 'legacy-lead-sources'
+    script.async = false
+    script.onload = function() { resolve() }
+    script.onerror = function() { reject(new Error('Could not load lead source wizard')) }
+    document.body.appendChild(script)
+  })
+
+  return _legacyLeadSourcesPromise
+}
+
+window.ensureLegacyLeadSourcesLoaded = ensureLegacyLeadSourcesLoaded
+
 /**
- * Render the LMS product home / landing page.
- * Called by showContent() when activeTab === 'product_home' and currentProduct === 'lms'.
+ * Render LMS Lead Sources tab.
+ * Wrapper is intentional so routing and product intent stay LMS-explicit.
+ */
+function renderLmsLeadSources() {
+  if (typeof renderLeadSourcesV2 === 'function') return renderLeadSourcesV2()
+  return ensureLegacyLeadSourcesLoaded().then(function() { return renderLeadSources() })
+}
+
+/**
+ * Render the LMS home / landing page.
  */
 function renderLmsHome() {
   const content = document.getElementById('content')

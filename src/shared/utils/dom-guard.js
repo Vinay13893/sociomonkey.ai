@@ -1,5 +1,5 @@
 // ── dom-guard.js: Centralized safe DOM mutation helpers ──────────────────────
-// Loaded once (after helpers.js), available globally for all CRM/tenant modules.
+// Loaded once (after helpers.js), available globally for all LMS/tenant modules.
 // Prevents null-pointer crashes when the user navigates away during async renders.
 
 /**

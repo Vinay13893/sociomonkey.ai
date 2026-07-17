@@ -1,5 +1,5 @@
 {
-  "alias": ["app.sociomonkey.com", "sociomonkey-ai.vercel.app", "gangarealty-lms.vercel.app"],
+  "alias": ["lms.sociomonkey.com", "sociomonkey-ai.vercel.app"],
   "headers": [
     {
       "source": "/env.js",
@@ -29,12 +29,16 @@
     }
   ],
   "redirects": [
-    { "source": "/ganga/lms", "destination": "/apps/lms/ganga-realty", "permanent": true },
-    { "source": "/ganga/lms/login", "destination": "/apps/lms/ganga-realty/login", "permanent": true },
-    { "source": "/:tenant/lms", "destination": "/apps/lms/:tenant", "permanent": true },
-    { "source": "/:tenant/lms/login", "destination": "/apps/lms/:tenant/login", "permanent": true }
+    { "source": "/ganga/lms", "destination": "/ganga-realty", "permanent": true },
+    { "source": "/ganga/lms/login", "destination": "/ganga-realty/login", "permanent": true },
+    { "source": "/:tenant/lms", "destination": "/:tenant", "permanent": true },
+    { "source": "/:tenant/lms/login", "destination": "/:tenant/login", "permanent": true },
+    { "source": "/apps/lms/:tenant/login", "destination": "/:tenant/login", "permanent": true },
+    { "source": "/apps/lms/:tenant/:tab", "destination": "/:tenant/:tab", "permanent": true },
+    { "source": "/apps/lms/:tenant", "destination": "/:tenant", "permanent": true }
   ],
   "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://smk-backend-api.vercel.app/api/$1" },
     { "source": "/privacy", "destination": "/privacy.html" },
     { "source": "/terms", "destination": "/terms.html" },
     { "source": "/data-deletion", "destination": "/data-deletion.html" },

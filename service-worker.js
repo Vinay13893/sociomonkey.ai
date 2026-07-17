@@ -31,7 +31,7 @@ self.addEventListener('push', (event) => {
   const title = n.title || raw.title || 'Sociomonkey'
   const body  = n.body  || raw.body  || ''
   // Deep link: nested data.url > flat data.url > flat url > fallback
-  const url   = d.url   || raw.url   || '/apps/lms'
+  const url   = d.url   || raw.url   || '/'
   const tag   = n.tag   || raw.tag   || 'sm-notification'
 
   const options = {
@@ -48,7 +48,7 @@ self.addEventListener('push', (event) => {
 // Click on notification -> focus existing tab and send navigation message, or open new tab
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/apps/lms'
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/'
   event.waitUntil((async () => {
     const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
     for (const client of allClients) {

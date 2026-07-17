@@ -73,6 +73,12 @@ function _arMetaChip(label, value) {
   return `<span style="display:inline-flex;align-items:center;max-width:180px;min-height:24px;padding:4px 8px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#475569;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escape(String(value))}">${escape(label)}: ${escape(String(value))}</span>`
 }
 
+function _arStatusLabel(value) {
+  var status = String(value || '').trim()
+  var map = (typeof STATUS_COLORS !== 'undefined' ? STATUS_COLORS : {})
+  return (map[status] && map[status].label) || status.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase() })
+}
+
 function _arOptionHtml(options, selected, valueKey, labelKey, placeholder) {
   var html = `<option value="">${escape(placeholder)}</option>`
   ;(options || []).forEach(function (opt) {
@@ -81,6 +87,14 @@ function _arOptionHtml(options, selected, valueKey, labelKey, placeholder) {
     html += `<option value="${escape(value)}" ${String(selected || '') === value ? 'selected' : ''}>${escape(label)}</option>`
   })
   return html
+}
+
+function _arWorkloadMetricCard(label, value, color, help) {
+  return `
+    <div class="ar-workload-metric" title="${escape(help || '')}">
+      <div class="ar-workload-metric-value" style="color:${color};">${value || 0}</div>
+      <div class="ar-workload-metric-label">${escape(label)}</div>
+    </div>`
 }
 
 function _arSimpleOptions(values, selected, placeholder) {
@@ -377,33 +391,35 @@ function _arRenderUnassigned() {
     }).join('')
 
   tabContent.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
-      <div>
+    <div class="ar-filter-shell">
+      <div class="ar-filter-grid">
+      <div class="ar-filter-field">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Source</div>
         <select id="arUnassignedSource" class="dash-filter-ctl">${sourceOptions}</select>
       </div>
-      <div>
+      <div class="ar-filter-field">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Project</div>
         <select id="arUnassignedProject" class="dash-filter-ctl">${projectOptions}</select>
       </div>
-      <div>
+      <div class="ar-filter-field">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Sort</div>
         <select id="arUnassignedSort" class="dash-filter-ctl">
           <option value="received_desc" ${_arUnassignedSort === 'received_desc' ? 'selected' : ''}>Newest received first</option>
           <option value="received_asc" ${_arUnassignedSort === 'received_asc' ? 'selected' : ''}>Oldest received first</option>
         </select>
       </div>
-      <div style="min-width:180px;">
+      <div class="ar-filter-field">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Search</div>
         <input id="arUnassignedSearch" class="dash-filter-ctl" value="${escape(_arUnassignedSearch)}" placeholder="Name, phone, project" onkeydown="if(event.key==='Enter'){event.preventDefault();_arApplyUnassignedFilters()}" />
       </div>
-      <div style="display:flex;align-items:flex-end;gap:8px;">
+      </div>
+      <div class="ar-filter-actions">
         <button onclick="_arApplyUnassignedFilters()" class="button secondary" style="height:36px;font-size:13px;">Apply</button>
         <button onclick="_arResetUnassignedFilters()" style="height:36px;font-size:13px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#334155;padding:0 12px;font-weight:700;cursor:pointer;">Reset</button>
       </div>
     </div>
 
-    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:14px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
+    <div class="ar-action-shell" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
       <div>
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Assign To</div>
         <select id="arUnassignedTarget" class="dash-filter-ctl" style="max-width:240px;">
@@ -608,43 +624,45 @@ function _arRenderStale() {
     }).join('')
 
   tabContent.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:12px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
-      <div>
+    <div class="ar-filter-shell">
+      <div class="ar-filter-grid ar-filter-grid--six">
+      <div class="ar-filter-field">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Not Updated In</div>
         <select id="arStaleDays" class="dash-filter-ctl">
           ${[1,2,3,5,7,10,14,15,21,30,45,60,90].map(function(d) { return `<option value="${d}" ${_arStaleDays === d ? 'selected' : ''}>${d} day${d>1?'s':''}</option>` }).join('')}
         </select>
       </div>
-      <div>
+      <div class="ar-filter-field">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Status</div>
         <select id="arStaleStatus" class="dash-filter-ctl">${statusOptions}</select>
       </div>
-      <div>
+      <div class="ar-filter-field">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Source</div>
         <select id="arStaleSource" class="dash-filter-ctl">${sourceOptions}</select>
       </div>
-      <div>
+      <div class="ar-filter-field">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Project</div>
         <select id="arStaleProject" class="dash-filter-ctl">${projectOptions}</select>
       </div>
-      <div>
+      <div class="ar-filter-field">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Sort</div>
         <select id="arStaleSort" class="dash-filter-ctl">
           <option value="stale_desc" ${_arStaleSort === 'stale_desc' ? 'selected' : ''}>Most stale first</option>
           <option value="stale_asc" ${_arStaleSort === 'stale_asc' ? 'selected' : ''}>Least stale first</option>
         </select>
       </div>
-      <div>
+      <div class="ar-filter-field">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Search</div>
         <input id="arStaleSearch" class="dash-filter-ctl" value="${escape(_arStaleSearch)}" placeholder="Name, phone, project" onkeydown="if(event.key==='Enter'){event.preventDefault();_arApplyStaleFilters()}" />
       </div>
-      <div style="display:flex;align-items:flex-end;gap:8px;">
+      </div>
+      <div class="ar-filter-actions">
         <button onclick="_arApplyStaleFilters()" class="button secondary" style="height:36px;font-size:13px;">Apply</button>
         <button onclick="_arResetStaleFilters()" style="height:36px;font-size:13px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#334155;padding:0 12px;font-weight:700;cursor:pointer;">Reset</button>
       </div>
     </div>
 
-    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:14px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
+    <div class="ar-action-shell" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
       <div style="margin-left:auto;">
         <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Reassign To</div>
         <select id="arStaleTarget" class="dash-filter-ctl" style="max-width:200px;">
@@ -763,48 +781,38 @@ function _arRenderWorkload() {
   var cards = members.map(function (m) {
     var barPct = Math.round(((m.active_leads || 0) / maxActive) * 100)
     var barColor = barPct > 75 ? '#ef4444' : barPct > 50 ? '#f59e0b' : '#22c55e'
-    var cardAssignableOptions = assignable
-      .filter(function (u) { return u.id !== m.id })
-      .map(function (u) { return `<option value="${u.id}">${escape(u.name)}</option>` })
-      .join('')
+    var isSelected = Number(_arWorkloadSelectedFrom || 0) === Number(m.id)
     return `
-      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;">
+      <div id="arWCard_${m.id}" class="ar-workload-card ${isSelected ? 'is-selected' : ''}">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
           <div>
             <div style="font-weight:700;font-size:14px;color:#0f172a;">${escape(m.name)}</div>
             <div style="font-size:11px;color:#64748b;">${(m.role || '').replace(/_/g, ' ')}</div>
           </div>
-          ${m.overdue_callbacks > 0 ? `<span style="background:#fef2f2;color:#dc2626;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;">⚠️ ${m.overdue_callbacks} overdue</span>` : ''}
+          ${m.overdue_callbacks > 0 ? `<span style="background:#fef2f2;color:#dc2626;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;">! ${m.overdue_callbacks} overdue</span>` : ''}
         </div>
         <div class="ar-workload-metrics" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px;">
-          ${[
-            ['Assigned', m.assigned || m.total_leads || 0, '#1e3a5f'],
-            ['Untouched', m.untouched || 0, '#d97706'],
-            ['Callbacks', m.callbacks || 0, '#2563eb'],
-            ['Overdue', m.overdue_callbacks || 0, '#dc2626'],
-            ['Stale', m.stale || 0, '#7c2d12'],
-            ['Follow ups', m.follow_ups || 0, '#7c3aed'],
-          ].map(function(metric) {
-            return `<div style="border:1px solid #e2e8f0;border-radius:9px;padding:8px;background:#f8fafc;">
-              <div style="font-size:18px;font-weight:800;color:${metric[2]};line-height:1;">${metric[1]}</div>
-              <div style="font-size:10px;color:#64748b;font-weight:700;margin-top:3px;">${metric[0]}</div>
-            </div>`
-          }).join('')}
+          ${_arWorkloadMetricCard('Active', m.active_leads || m.assigned || 0, '#1e3a5f', 'Active non-closed leads currently assigned to this person.')}
+          ${_arWorkloadMetricCard('New', m.untouched || 0, '#d97706', 'New leads with no pending callback. These are the cleanest candidates for redistribution.')}
+          ${_arWorkloadMetricCard('Callbacks', m.callbacks || 0, '#2563eb', 'Leads with pending callbacks owned by this person.')}
+          ${_arWorkloadMetricCard('Overdue', m.overdue_callbacks || 0, '#dc2626', 'Pending callbacks whose scheduled time has passed.')}
+          ${_arWorkloadMetricCard('Stale', m.stale || 0, '#7c2d12', 'Active non-closed leads not updated in the configured stale window.')}
+          ${_arWorkloadMetricCard('Follow-up', m.follow_ups || 0, '#7c3aed', 'Leads currently in Follow Up status.')}
         </div>
         <div style="background:#f1f5f9;border-radius:4px;height:6px;margin-bottom:12px;">
           <div style="background:${barColor};height:6px;border-radius:4px;width:${barPct}%;transition:width 0.4s;"></div>
         </div>
-        <button onclick="_arSelectWorkloadMember(${m.id})" class="button secondary" style="font-size:12px;padding:8px;width:100%;">Manage workload</button>
+        <button onclick="_arSelectWorkloadMember(${m.id})" class="button secondary" style="font-size:12px;padding:8px;width:100%;background:${isSelected ? '#0f766e' : ''};color:${isSelected ? '#fff' : ''};">Manage workload</button>
       </div>`
   }).join('')
 
   tabContent.innerHTML = `
     <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;">
-      <p style="font-size:13px;color:#475569;margin:0;">Move leads from one member to another. Use the status filter to target a specific stage.</p>
+      <p style="font-size:13px;color:#475569;margin:0;">Move precise lead cohorts from one member to another using status, source, project, age, callback and stale filters.</p>
       <button onclick="_arLoadWorkload()" class="button secondary" style="font-size:12px;padding:5px 14px;"><i class="fa-solid fa-rotate"></i> Refresh</button>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:14px;">${cards}</div>
-    <div id="arWorkloadPanel" style="margin-top:16px;"></div>
+    <div id="arWorkloadPanel" style="margin-top:18px;"></div>
   `
   if (_arWorkloadSelectedFrom) _arRenderWorkloadPanel()
 }
@@ -847,8 +855,13 @@ function _arSelectWorkloadMember(userId) {
   _arWorkloadPage = 1
   _arWorkloadSelectedLeads = new Set()
   _arWorkloadFilterState = {}
+  _arRenderWorkload()
   _arRenderWorkloadPanel()
   _arLoadWorkloadPreview()
+  setTimeout(function () {
+    var panel = document.getElementById('arWorkloadPanel')
+    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, 60)
 }
 
 function _arWorkloadReadFilters() {
@@ -893,49 +906,65 @@ function _arRenderWorkloadPanel() {
   var projectOptions = _arOptionHtml(filterMeta.projects || [], state.project_id || '', 'id', 'name', 'All Projects')
   var destOptions = _arWorkloadAssignable.filter(function(u){ return Number(u.id) !== Number(_arWorkloadSelectedFrom) }).map(function(u){ return `<option value="${u.id}" ${String(state.to_user_id || '') === String(u.id) ? 'selected' : ''}>${escape(u.name)}</option>` }).join('')
   var rows = (_arWorkloadPreview && _arWorkloadPreview.leads) || []
-  var counters = _arWorkloadPreview ? `
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;">
-      ${[['Matching', _arWorkloadPreview.matching], ['Eligible', _arWorkloadPreview.eligible], ['Excluded', _arWorkloadPreview.excluded]].map(function(x){ return `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;background:#f8fafc;"><div style="font-size:18px;font-weight:800;color:#0f172a;">${x[1] || 0}</div><div style="font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;">${x[0]}</div></div>` }).join('')}
-    </div>` : ''
+  var selectedCount = _arWorkloadSelectedLeads.size
+  var resultSummary = _arWorkloadPreview
+    ? `${_arWorkloadPreview.eligible || 0} movable lead${(_arWorkloadPreview.eligible || 0) === 1 ? '' : 's'}`
+      + ` from ${_arWorkloadPreview.matching || 0} matching`
+      + ((_arWorkloadPreview.excluded || 0) ? `, ${_arWorkloadPreview.excluded} excluded` : '')
+    : 'Preview updates after filters load'
+  var pagerHtml = _arPagerHtml('_arWorkload', _arWorkloadPage, (_arWorkloadPreview && _arWorkloadPreview.eligible) || 0, _arWorkloadPageSize)
   panel.innerHTML = `
-    <div style="background:#fff;border:1px solid #dbeafe;border-radius:12px;padding:14px 16px;box-shadow:0 4px 14px rgba(15,23,42,.06);">
+    <div style="background:#fff;border:1px solid #dbeafe;border-radius:12px;padding:16px;box-shadow:0 8px 24px rgba(15,23,42,.08);">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
-        <div><div style="font-weight:800;color:#0f172a;">Manage workload: ${escape(from.name || '')}</div><div style="font-size:12px;color:#64748b;">Filter, preview and move a precise cohort.</div></div>
+        <div><div style="font-weight:800;color:#0f172a;font-size:15px;">Manage workload: ${escape(from.name || '')}</div><div style="font-size:12px;color:#64748b;">Filter by status, condition, source, project and age before moving leads.</div></div>
         <button onclick="_arWorkloadSelectedFrom=null;_arWorkloadPreview=null;_arRenderWorkload()" class="ar-page-btn">Close</button>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;">
-        <select id="arW_status" class="dash-filter-ctl">${_arSimpleOptions(statuses, state.status || '', 'Active statuses')}</select>
-        <select id="arW_project_id" class="dash-filter-ctl">${projectOptions}</select>
-        <select id="arW_source" class="dash-filter-ctl">${sourceOptions}</select>
-        <select id="arW_callback_state" class="dash-filter-ctl"><option value="">Any Callback</option><option value="none" ${state.callback_state === 'none' ? 'selected' : ''}>None</option><option value="pending" ${state.callback_state === 'pending' ? 'selected' : ''}>Pending</option><option value="today" ${state.callback_state === 'today' ? 'selected' : ''}>Today</option><option value="overdue" ${state.callback_state === 'overdue' ? 'selected' : ''}>Overdue</option><option value="future" ${state.callback_state === 'future' ? 'selected' : ''}>Future</option></select>
-        <select id="arW_lead_age" class="dash-filter-ctl"><option value="">Any Age</option><option value="0_3" ${state.lead_age === '0_3' ? 'selected' : ''}>0-3 days</option><option value="4_7" ${state.lead_age === '4_7' ? 'selected' : ''}>4-7 days</option><option value="8_15" ${state.lead_age === '8_15' ? 'selected' : ''}>8-15 days</option><option value="16_30" ${state.lead_age === '16_30' ? 'selected' : ''}>16-30 days</option><option value="31_plus" ${state.lead_age === '31_plus' ? 'selected' : ''}>31+ days</option></select>
-        <select id="arW_last_updated" class="dash-filter-ctl"><option value="">Any Last Updated</option><option value="today" ${state.last_updated === 'today' ? 'selected' : ''}>Today</option><option value="1_plus" ${state.last_updated === '1_plus' ? 'selected' : ''}>1+ day ago</option><option value="3_plus" ${state.last_updated === '3_plus' ? 'selected' : ''}>3+ days ago</option><option value="7_plus" ${state.last_updated === '7_plus' ? 'selected' : ''}>7+ days ago</option><option value="15_plus" ${state.last_updated === '15_plus' ? 'selected' : ''}>15+ days ago</option><option value="30_plus" ${state.last_updated === '30_plus' ? 'selected' : ''}>30+ days ago</option></select>
-        <select id="arW_sort" class="dash-filter-ctl"><option value="oldest_received" ${state.sort === 'oldest_received' || !state.sort ? 'selected' : ''}>Oldest received</option><option value="newest_received" ${state.sort === 'newest_received' ? 'selected' : ''}>Newest received</option><option value="least_recently_updated" ${state.sort === 'least_recently_updated' ? 'selected' : ''}>Least recently updated</option><option value="most_recently_updated" ${state.sort === 'most_recently_updated' ? 'selected' : ''}>Most recently updated</option><option value="oldest_callback" ${state.sort === 'oldest_callback' ? 'selected' : ''}>Oldest callback</option></select>
-        <input id="arW_search" class="dash-filter-ctl" placeholder="Search name, phone, project" value="${escape(state.search || '')}" />
+      <div class="ar-filter-grid">
+        <div class="ar-filter-field"><label class="sm-label" style="display:block;margin-bottom:5px;">Status</label><select id="arW_status" class="dash-filter-ctl">${_arSimpleOptions(statuses, state.status || '', 'Any active status')}</select></div>
+        <div class="ar-filter-field"><label class="sm-label" style="display:block;margin-bottom:5px;">Project</label><select id="arW_project_id" class="dash-filter-ctl">${projectOptions}</select></div>
+        <div class="ar-filter-field"><label class="sm-label" style="display:block;margin-bottom:5px;">Source</label><select id="arW_source" class="dash-filter-ctl">${sourceOptions}</select></div>
+        <div class="ar-filter-field"><label class="sm-label" style="display:block;margin-bottom:5px;">Callback</label><select id="arW_callback_state" class="dash-filter-ctl"><option value="">Any callback</option><option value="none" ${state.callback_state === 'none' ? 'selected' : ''}>No callback</option><option value="pending" ${state.callback_state === 'pending' ? 'selected' : ''}>Any pending</option><option value="today" ${state.callback_state === 'today' ? 'selected' : ''}>Due today</option><option value="overdue" ${state.callback_state === 'overdue' ? 'selected' : ''}>Overdue</option><option value="future" ${state.callback_state === 'future' ? 'selected' : ''}>Future</option></select></div>
+        <div class="ar-filter-field"><label class="sm-label" style="display:block;margin-bottom:5px;">Lead age</label><select id="arW_lead_age" class="dash-filter-ctl"><option value="">Any age</option><option value="0_3" ${state.lead_age === '0_3' ? 'selected' : ''}>0-3 days</option><option value="4_7" ${state.lead_age === '4_7' ? 'selected' : ''}>4-7 days</option><option value="8_15" ${state.lead_age === '8_15' ? 'selected' : ''}>8-15 days</option><option value="16_30" ${state.lead_age === '16_30' ? 'selected' : ''}>16-30 days</option><option value="31_plus" ${state.lead_age === '31_plus' ? 'selected' : ''}>31+ days</option></select></div>
+        <div class="ar-filter-field"><label class="sm-label" style="display:block;margin-bottom:5px;">Last update</label><select id="arW_last_updated" class="dash-filter-ctl"><option value="">Any last update</option><option value="today" ${state.last_updated === 'today' ? 'selected' : ''}>Today</option><option value="1_plus" ${state.last_updated === '1_plus' ? 'selected' : ''}>1+ day ago</option><option value="3_plus" ${state.last_updated === '3_plus' ? 'selected' : ''}>3+ days ago</option><option value="7_plus" ${state.last_updated === '7_plus' ? 'selected' : ''}>7+ days ago</option><option value="15_plus" ${state.last_updated === '15_plus' ? 'selected' : ''}>15+ days ago</option><option value="30_plus" ${state.last_updated === '30_plus' ? 'selected' : ''}>30+ days ago</option></select></div>
+        <div class="ar-filter-field"><label class="sm-label" style="display:block;margin-bottom:5px;">Sort</label><select id="arW_sort" class="dash-filter-ctl"><option value="oldest_received" ${state.sort === 'oldest_received' || !state.sort ? 'selected' : ''}>Oldest received</option><option value="newest_received" ${state.sort === 'newest_received' ? 'selected' : ''}>Newest received</option><option value="least_recently_updated" ${state.sort === 'least_recently_updated' ? 'selected' : ''}>Least recently updated</option><option value="most_recently_updated" ${state.sort === 'most_recently_updated' ? 'selected' : ''}>Most recently updated</option><option value="oldest_callback" ${state.sort === 'oldest_callback' ? 'selected' : ''}>Oldest callback</option></select></div>
+        <div class="ar-filter-field"><label class="sm-label" style="display:block;margin-bottom:5px;">Search</label><input id="arW_search" class="dash-filter-ctl" placeholder="Name, phone, project" value="${escape(state.search || '')}" onkeydown="if(event.key==='Enter'){event.preventDefault();_arWorkloadPage=1;_arWorkloadSelectedLeads=new Set();_arLoadWorkloadPreview(true)}" /></div>
       </div>
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:10px;">
-        <label style="font-size:12px;color:#475569;"><input id="arW_untouched" type="checkbox" ${state.untouched_only ? 'checked' : ''}> Untouched only</label>
-        <label style="font-size:12px;color:#475569;"><input id="arW_stale" type="checkbox" ${state.stale_only ? 'checked' : ''}> Stale only</label>
-        <button onclick="_arWorkloadPage=1;_arWorkloadSelectedLeads=new Set();_arLoadWorkloadPreview(true)" class="button secondary" style="height:34px;font-size:12px;">Apply filters</button>
-      </div>
-      ${counters}
-      <div style="overflow:auto;border:1px solid #e2e8f0;border-radius:10px;">
-        <table style="width:100%;border-collapse:collapse;font-size:12px;">
-          <thead style="background:#f8fafc;"><tr><th style="padding:8px;"><input type="checkbox" onchange="_arWSelectPage(this.checked)"></th><th>Lead</th><th>Status</th><th>Project</th><th>Source</th><th>Age</th><th>Last update</th><th>Callback</th><th>Owner</th></tr></thead>
-          <tbody>${rows.length ? rows.map(function(l){ return `<tr style="border-top:1px solid #e2e8f0;"><td style="padding:8px;text-align:center;"><input id="arWChk_${l.id}" type="checkbox" onchange="_arWToggle(${l.id})"></td><td style="padding:8px;font-weight:700;color:#1d4ed8;">${escape(l.name || '')}</td><td>${escape(l.status || '')}</td><td>${escape(l.project_name || '-')}</td><td>${escape(l.source || '-')}</td><td>${escape(_arLeadAgeLabel(l))}</td><td>${escape(_arWhenLabel(l.last_action_at || l.updated_at))}</td><td>${escape(l.callback_state || 'none')}</td><td>${escape(l.assigned_user_name || '-')}</td></tr>` }).join('') : `<tr><td colspan="9" style="padding:18px;text-align:center;color:#94a3b8;">No eligible leads match these filters.</td></tr>`}</tbody>
-        </table>
-      </div>
-      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">
-        <div><select id="arW_to_user_id" class="dash-filter-ctl" style="min-width:180px;"><option value="">Move to...</option>${destOptions}</select></div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <input id="arW_count" type="number" min="1" max="500" value="1" class="dash-filter-ctl" style="width:80px;">
-          <button onclick="_arExecuteWorkloadMove('selected')" class="button secondary" style="font-size:12px;">Move Selected (${_arWorkloadSelectedLeads.size})</button>
-          <button onclick="_arExecuteWorkloadMove('current_page')" class="button secondary" style="font-size:12px;">Move Page</button>
-          <button onclick="_arExecuteWorkloadMove('first_n')" class="button secondary" style="font-size:12px;">First N</button>
-          <button onclick="_arExecuteWorkloadMove('random_n')" class="button secondary" style="font-size:12px;">Random N</button>
+      <div class="ar-workload-filterbar">
+        <div class="ar-workload-result">${escape(resultSummary)}</div>
+        <div class="ar-workload-filter-actions">
+          <label><input id="arW_untouched" type="checkbox" ${state.untouched_only ? 'checked' : ''}> Untouched only</label>
+          <label><input id="arW_stale" type="checkbox" ${state.stale_only ? 'checked' : ''}> Stale only</label>
+          <button onclick="_arWorkloadPage=1;_arWorkloadSelectedLeads=new Set();_arLoadWorkloadPreview(true)" class="button secondary" style="height:34px;font-size:12px;">Apply filters</button>
         </div>
       </div>
-      <div style="margin-top:10px;">${_arPagerHtml('_arWorkload', _arWorkloadPage, (_arWorkloadPreview && _arWorkloadPreview.eligible) || 0, _arWorkloadPageSize)}</div>
+      <div style="overflow:auto;border:1px solid #e2e8f0;border-radius:10px;">
+        <table style="width:100%;min-width:980px;border-collapse:collapse;font-size:12px;table-layout:fixed;">
+          <colgroup><col style="width:42px;"><col style="width:230px;"><col style="width:110px;"><col style="width:120px;"><col style="width:190px;"><col style="width:82px;"><col style="width:120px;"><col style="width:105px;"><col style="width:120px;"></colgroup>
+          <thead style="background:#f8fafc;"><tr><th style="padding:9px 8px;text-align:center;"><input type="checkbox" onchange="_arWSelectPage(this.checked)" ${rows.length && rows.every(function(l){ return _arWorkloadSelectedLeads.has(l.id) }) ? 'checked' : ''}></th><th style="padding:9px 8px;text-align:left;">Lead</th><th style="padding:9px 8px;text-align:left;">Status</th><th style="padding:9px 8px;text-align:left;">Project</th><th style="padding:9px 8px;text-align:left;">Source</th><th style="padding:9px 8px;text-align:left;">Age</th><th style="padding:9px 8px;text-align:left;">Last update</th><th style="padding:9px 8px;text-align:left;">Callback</th><th style="padding:9px 8px;text-align:left;">Owner</th></tr></thead>
+          <tbody>${rows.length ? rows.map(function(l){ return `<tr style="border-top:1px solid #e2e8f0;"><td style="padding:9px 8px;text-align:center;"><input id="arWChk_${l.id}" type="checkbox" onchange="_arWToggle(${l.id})" ${_arWorkloadSelectedLeads.has(l.id) ? 'checked' : ''}></td><td style="padding:9px 8px;font-weight:700;color:#1d4ed8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><button onclick="viewLeadDetails(${l.id})" style="border:none;background:none;padding:0;color:#1d4ed8;font:inherit;font-weight:800;cursor:pointer;text-align:left;">${escape(l.name || '')}</button></td><td style="padding:9px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escape(_arStatusLabel(l.status))}</td><td style="padding:9px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escape(l.project_name || '-')}</td><td style="padding:9px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escape(l.source || '-')}">${escape(l.source || '-')}</td><td style="padding:9px 8px;">${escape(_arLeadAgeLabel(l))}</td><td style="padding:9px 8px;">${escape(_arWhenLabel(l.last_action_at || l.updated_at))}</td><td style="padding:9px 8px;">${escape((l.callback_state || 'none').replace(/_/g, ' '))}</td><td style="padding:9px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escape(l.assigned_user_name || '-')}</td></tr>` }).join('') : `<tr><td colspan="9" style="padding:22px;text-align:center;color:#94a3b8;">No eligible leads match these filters.</td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="ar-workload-commandbar">
+        <div class="ar-workload-command-left">
+          <div class="ar-filter-field"><label class="sm-label" style="display:block;margin-bottom:5px;">Destination</label><select id="arW_to_user_id" class="dash-filter-ctl"><option value="">Move to...</option>${destOptions}</select></div>
+          <div class="ar-filter-field ar-workload-count-field"><label class="sm-label" style="display:block;margin-bottom:5px;">Bulk count</label><input id="arW_count" type="number" min="1" max="500" value="1" class="dash-filter-ctl"></div>
+        </div>
+        <div class="ar-workload-command-right">
+          <div class="ar-workload-panel-buttons">
+            <button id="arWMoveSelectedBtn" onclick="_arExecuteWorkloadMove('selected')" class="button secondary" style="font-size:12px;" ${selectedCount ? '' : 'disabled'}>Move Selected (${selectedCount})</button>
+            <button onclick="_arExecuteWorkloadMove('current_page')" class="button secondary" style="font-size:12px;">Move Page</button>
+            <button onclick="_arToggleAdvancedWorkloadMove()" class="ar-page-btn" style="font-size:12px;">Advanced bulk</button>
+          </div>
+          <div class="ar-workload-pager">${pagerHtml}</div>
+        </div>
+      </div>
+      <div id="arWAdvancedBulk" style="display:none;margin-top:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;">
+        <div style="font-size:12px;color:#475569;margin-bottom:8px;">Advanced bulk moves use the current filters and the N value above.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="_arExecuteWorkloadMove('first_n')" class="button secondary" style="font-size:12px;">Move first N matching</button>
+          <button onclick="_arExecuteWorkloadMove('random_n')" class="button secondary" style="font-size:12px;">Move random N matching</button>
+        </div>
+      </div>
     </div>`
 }
 
@@ -954,10 +983,25 @@ function _arWorkloadSetPage(page) {
   _arLoadWorkloadPreview()
 }
 
+function _arToggleAdvancedWorkloadMove() {
+  var el = document.getElementById('arWAdvancedBulk')
+  if (!el) return
+  el.style.display = el.style.display === 'none' || !el.style.display ? 'block' : 'none'
+}
+
+function _arWorkloadUpdateMoveButtons() {
+  var btn = document.getElementById('arWMoveSelectedBtn')
+  if (!btn) return
+  var n = _arWorkloadSelectedLeads.size
+  btn.textContent = `Move Selected (${n})`
+  btn.disabled = n === 0
+}
+
 function _arWToggle(id) {
   var chk = document.getElementById('arWChk_' + id)
   if (chk && chk.checked) _arWorkloadSelectedLeads.add(id)
   else _arWorkloadSelectedLeads.delete(id)
+  _arWorkloadUpdateMoveButtons()
 }
 
 function _arWSelectPage(checked) {
@@ -967,7 +1011,7 @@ function _arWSelectPage(checked) {
     if (checked) _arWorkloadSelectedLeads.add(l.id)
     else _arWorkloadSelectedLeads.delete(l.id)
   })
-  _arRenderWorkloadPanel()
+  _arWorkloadUpdateMoveButtons()
 }
 
 async function _arExecuteWorkloadMove(mode) {
@@ -976,7 +1020,16 @@ async function _arExecuteWorkloadMove(mode) {
   var count = Math.max(1, Math.min(500, Number(document.getElementById('arW_count')?.value || 1)))
   if (mode === 'selected' && !_arWorkloadSelectedLeads.size) { showToast('Select at least one preview row.', 'warning'); return }
   var label = mode === 'selected' ? _arWorkloadSelectedLeads.size : mode === 'current_page' ? ((_arWorkloadPreview && _arWorkloadPreview.leads || []).length) : count
-  if (!confirm(`Move ${label} lead${label !== 1 ? 's' : ''}?`)) return
+  var from = _arWorkloadMembers.find(function(m){ return Number(m.id) === Number(_arWorkloadSelectedFrom) }) || {}
+  var to = _arWorkloadAssignable.find(function(u){ return String(u.id) === String(toId) }) || {}
+  var ok = await _arConfirmWorkloadMove({
+    mode: mode,
+    count: label,
+    fromName: from.name || 'Selected member',
+    toName: to.name || 'destination member',
+    filters: _arWorkloadReadFilters(),
+  })
+  if (!ok) return
   var body = Object.fromEntries(_arWorkloadParams({}, true).entries())
   body.from_user_id = _arWorkloadSelectedFrom
   body.to_user_id = Number(toId)
@@ -992,4 +1045,60 @@ async function _arExecuteWorkloadMove(mode) {
   showToast(`Moved ${result.moved || 0} lead${result.moved === 1 ? '' : 's'}.`, 'success')
   _arWorkloadSelectedLeads = new Set()
   await _arLoadWorkload()
+}
+
+function _arConfirmWorkloadMove(details) {
+  return new Promise(function(resolve) {
+    var modeLabels = {
+      selected: 'selected leads',
+      current_page: 'current filtered page',
+      first_n: 'first N matching leads',
+      random_n: 'random N matching leads',
+    }
+    var filters = details.filters || {}
+    var filterBits = []
+    if (filters.status) filterBits.push('Status: ' + _arStatusLabel(filters.status))
+    if (filters.callback_state) filterBits.push('Callback: ' + filters.callback_state.replace(/_/g, ' '))
+    if (filters.untouched_only) filterBits.push('Untouched only')
+    if (filters.stale_only) filterBits.push('Stale only')
+    if (filters.search) filterBits.push('Search: ' + filters.search)
+
+    var overlay = document.createElement('div')
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.48);z-index:11000;display:flex;align-items:center;justify-content:center;padding:20px;'
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:14px;max-width:520px;width:100%;box-shadow:0 24px 70px rgba(15,23,42,.28);overflow:hidden;">
+        <div style="padding:18px 20px;border-bottom:1px solid #e2e8f0;">
+          <div style="font-size:16px;font-weight:800;color:#0f172a;">Confirm workload move</div>
+          <div style="font-size:12px;color:#64748b;margin-top:4px;">Review the cohort before moving ownership.</div>
+        </div>
+        <div style="padding:18px 20px;display:grid;gap:12px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;">
+              <div style="font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;">From</div>
+              <div style="font-size:14px;font-weight:800;color:#0f172a;margin-top:3px;">${escape(details.fromName)}</div>
+            </div>
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px;">
+              <div style="font-size:10px;font-weight:800;color:#15803d;text-transform:uppercase;">To</div>
+              <div style="font-size:14px;font-weight:800;color:#0f172a;margin-top:3px;">${escape(details.toName)}</div>
+            </div>
+          </div>
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px;">
+            <div style="font-size:10px;font-weight:800;color:#1d4ed8;text-transform:uppercase;">Move type</div>
+            <div style="font-size:14px;font-weight:800;color:#0f172a;margin-top:3px;">${escape(modeLabels[details.mode] || details.mode)} - ${details.count} lead${details.count === 1 ? '' : 's'}</div>
+          </div>
+          <div style="font-size:12px;color:#475569;">
+            ${filterBits.length ? 'Filters: ' + escape(filterBits.join(' - ')) : 'Filters: current active workload view'}
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;background:#f8fafc;border-top:1px solid #e2e8f0;">
+          <button id="arMoveCancel" style="padding:8px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-size:13px;font-weight:700;cursor:pointer;">Cancel</button>
+          <button id="arMoveConfirm" style="padding:8px 16px;border-radius:8px;border:none;background:#0f766e;color:#fff;font-size:13px;font-weight:800;cursor:pointer;">Move leads</button>
+        </div>
+      </div>`
+    document.body.appendChild(overlay)
+    function cleanup(ok) { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); resolve(ok) }
+    overlay.querySelector('#arMoveCancel').addEventListener('click', function(){ cleanup(false) })
+    overlay.querySelector('#arMoveConfirm').addEventListener('click', function(){ cleanup(true) })
+    overlay.addEventListener('click', function(e){ if (e.target === overlay) cleanup(false) })
+  })
 }

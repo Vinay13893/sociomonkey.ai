@@ -13,7 +13,7 @@ let leadsPage = 1
 let leadsPageSize = 25
 let activityLogs = []
 let availableProducts = []
-let currentProduct = localStorage.getItem('current_product') || 'crm'
+let currentProduct = localStorage.getItem('current_product') || 'lms'
 
 // ============================================================================
 // MAIN RENDER LOGIC
@@ -292,7 +292,7 @@ function renderApp() {
 }
 
 function getNavItems() {
-  // Platform owner always sees Platform Admin (and CRM if they want)
+  // Platform owner always sees Platform Admin and profile.
   if (user.role === 'platform_owner') {
     return [
       { key: 'platform', label: '🌐 Platform Admin' },
@@ -300,8 +300,8 @@ function getNavItems() {
     ]
   }
 
-  // Non-CRM product → single "Coming Soon" page
-  if (currentProduct !== 'crm') {
+  // Non-LMS product -> single "Coming Soon" page
+  if (currentProduct !== 'lms') {
     const prod = availableProducts.find(p => p.slug === currentProduct)
     return [
       { key: 'product_home', label: `${prod?.icon || '📦'} Overview` },
@@ -309,7 +309,7 @@ function getNavItems() {
     ]
   }
 
-  // CRM product (default)
+  // LMS product (default)
   const items = [
     { key: 'dashboard', label: '📊 Dashboard' },
     { key: 'leads', label: '👥 Leads' },
@@ -324,6 +324,7 @@ function getNavItems() {
   
   if (user.role === 'superadmin' || user.role === 'sales_manager') {
     items.push({ key: 'reports', label: '📊 Reports' })
+    items.push({ key: 'lead-sources', label: '🔗 Lead Sources' })
   }
   
   if (user.role === 'superadmin') {
@@ -363,6 +364,7 @@ function showContent() {
   if (activeTab === 'pipeline') return renderPipeline()
   if (activeTab === 'excel') return renderExcelUpload()
   if (activeTab === 'reports') return renderReports()
+  if (activeTab === 'lead-sources') return renderLeadSources()
   if (activeTab === 'export') return renderExportLeads()
   if (activeTab === 'platform') return renderPlatformAdmin()
   if (activeTab === 'activitylogs') return renderActivityLogs()
@@ -373,7 +375,7 @@ function showContent() {
 function switchProduct(slug) {
   currentProduct = slug
   localStorage.setItem('current_product', slug)
-  activeTab = slug === 'crm' ? 'dashboard' : 'product_home'
+  activeTab = slug === 'lms' ? 'dashboard' : 'product_home'
   renderApp()
 }
 
@@ -392,8 +394,8 @@ function renderProductHome() {
         This module is under active development.<br/>
         Check back soon for updates.
       </p>
-      <button class="button" onclick="switchProduct('crm')" style="margin-top:24px;">
-        ← Back to CRM
+      <button class="button" onclick="switchProduct('lms')" style="margin-top:24px;">
+        ← Back to LMS
       </button>
     </div>
   `
@@ -2704,10 +2706,10 @@ async function login(email, password) {
   token = data.token
   window.localStorage.setItem('lms_token', token)
   availableProducts = data.products || []
-  // Stay on CRM if available, else first available product
+  // Stay on LMS if available, else first available product
   if (availableProducts.length > 0) {
-    const hasCrm = availableProducts.find(p => p.slug === 'crm')
-    currentProduct = hasCrm ? 'crm' : (availableProducts[0]?.slug || 'crm')
+    const hasLms = availableProducts.find(p => p.slug === 'lms')
+    currentProduct = hasLms ? 'lms' : (availableProducts[0]?.slug || 'lms')
     localStorage.setItem('current_product', currentProduct)
   }
   await loadMe()
@@ -3370,6 +3372,23 @@ async function downloadLeadReport() {
 
 // ============================================================================
 // EXPORT LEADS
+// ============================================================================
+
+async function renderLeadSources() {
+  const content = document.getElementById('content')
+  content.innerHTML = `
+    <div style="padding:20px;">
+      <h2 style="font-size:20px;font-weight:700;color:#0f172a;margin-bottom:20px;">🔗 Lead Sources</h2>
+      <div class="card">
+        <p style="color:#64748b;font-size:14px;margin-bottom:20px;">
+          Manage your lead integrations with Meta, Google Ads, and other sources.
+        </p>
+        <iframe src="${API_BASE.replace('/api', '')}/lead-sources" style="width:100%;height:800px;border:none;border-radius:8px;" title="Lead Sources Management"></iframe>
+      </div>
+    </div>
+  `
+}
+
 // ============================================================================
 
 async function renderExportLeads() {

@@ -148,7 +148,7 @@ function _renderTenantConfigUI() {
           _tcField('Brand Name', 'tcBrandName', t.brand_name || t.name, 'text', 'Display name shown in the sidebar and login page') +
           _tcField('Logo URL', 'tcLogoUrl', t.logo_url || '', 'url', 'Full URL to company logo (PNG/JPG, 300×300 recommended)') +
           _tcField('Favicon URL', 'tcFaviconUrl', t.favicon_url || '', 'url', 'Full URL to 32×32 favicon (.ico or PNG)') +
-          _tcField('Custom Domain', 'tcCustomDomain', t.custom_domain || '', 'text', 'e.g. crm.yourcompany.com (optional)') +
+          _tcField('Custom Domain', 'tcCustomDomain', t.custom_domain || '', 'text', 'e.g. lms.yourcompany.com (optional)') +
         '</div>' +
         // Color row
         '<div style="margin-top:16px;">' +

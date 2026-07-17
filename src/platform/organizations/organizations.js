@@ -332,7 +332,7 @@ async function platImpersonateOrg(tenantId, tenantName, slug) {
     sessionStorage.setItem('_platform_token', token)
     sessionStorage.setItem('_platform_user', JSON.stringify(currentUser))
 
-    var loginUrl = authBuildTenantAppPath(slug, 'lms') + '?imp=' + encodeURIComponent(data.token) +
+    var loginUrl = authBuildTenantAppUrl(slug, 'lms') + '?imp=' + encodeURIComponent(data.token) +
                    '&user=' + encodeURIComponent(JSON.stringify(data.user))
     window.open(loginUrl, '_blank')
 

@@ -77,7 +77,7 @@ async function loadTenantConfig(slug) {
 async function _fetchTenantConfig(slug, background) {
   var trace = null
   try {
-    if (typeof performance !== 'undefined') {
+    if (window.DEBUG_PERF && typeof performance !== 'undefined') {
       trace = {
         traceId: 'tenant-config-' + Date.now(),
         browserRequestStartPerf: performance.now(),
@@ -295,7 +295,7 @@ function getTenantEnabledProducts() {
   if (typeof availableProducts !== 'undefined' && availableProducts.length > 0) {
     return availableProducts.map(function (p) { return p.slug })
   }
-  return ['crm']
+  return ['lms']
 }
 
 /**

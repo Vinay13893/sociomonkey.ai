@@ -16,7 +16,7 @@ async function renderPlatformAnalytics() {
     { label: 'Total Users',      value: (stats.total_users   || 0).toLocaleString(), icon: '👤', bg: '#ede9fe' },
     { label: 'Total Tenants',    value: (stats.total_tenants || 0).toLocaleString(), icon: '🏢', bg: '#dcfce7' },
     { label: 'Active Tenants',   value: (stats.active_tenants|| 0).toLocaleString(), icon: '✅', bg: '#fff7ed' },
-    { label: 'Total Leads (CRM)',value: (stats.total_leads   || 0).toLocaleString(), icon: '📋', bg: '#eff6ff' },
+    { label: 'Total Leads (LMS)',value: (stats.total_leads   || 0).toLocaleString(), icon: '📋', bg: '#eff6ff' },
   ];
 
   const kpiHtml = kpis.map(k => `
@@ -46,9 +46,9 @@ async function renderPlatformAnalytics() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
       <div class="plat-card">
         <div class="plat-chart-title" style="margin-bottom:14px;">Top Products by Usage</div>
-        ${['CRM', 'LMS', 'Procurement', '3D Inventory', 'Amazon Intelligence'].map((p, i) => {
-          const pcts = [38, 27, 18, 11, 6];
-          const colors = ['#6366f1','#22c55e','#f59e0b','#3b82f6','#8b5cf6'];
+        ${['LMS', 'Procurement', '3D Inventory', 'Amazon Intelligence', 'ERP'].map((p, i) => {
+          const pcts = [46, 22, 16, 10, 6];
+          const colors = ['#6366f1','#f59e0b','#3b82f6','#8b5cf6','#22c55e'];
           return `<div style="margin-bottom:10px;">
             <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
               <span style="color:#374151;font-weight:500;">${p}</span>

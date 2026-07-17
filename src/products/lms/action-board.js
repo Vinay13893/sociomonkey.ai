@@ -756,6 +756,8 @@ function _abNormalizeActionRow(section, item) {
     phone: isCallback ? (item.lead_phone || item.phone || '') : (item.phone || ''),
     status: status,
     project: isCallback ? (item.project_name || item.project || item.project_title || '—') : (item.project_name || '—'),
+    source: isCallback ? (item.lead_source || item.source || '') : (item.source || ''),
+    untouchedDays: Number(isCallback ? (item.lead_untouched_days || item.days_untouched || 0) : (item.days_untouched || item.untouched_days || 0)),
     latestNote: isCallback ? (item.latest_note || '') : (item.latest_note || ''),
     nextCallback: nextCallback,
   }
@@ -773,12 +775,15 @@ function _abRenderActionRow(section, item, serialNum) {
       <td>
         <div class="ab-action-name-cell">
           <button type="button" class="ab-action-name-btn" onclick="_abOpenLead(${row.leadId})">${escape(row.name)}</button>
-          <div class="ab-action-name-meta">${escape(row.age)} • ${escape(row.priority)}</div>
+          <div class="ab-action-name-meta">${escape(row.age)} | ${escape(row.priority)}${row.untouchedDays ? ' | ' + row.untouchedDays + 'd untouched' : ''}</div>
         </div>
       </td>
       <td><span class="ab-cell-text">${escape(row.phone || '—')}</span></td>
       <td data-ab-no-open="1"><div class="ab-action-status" data-ab-no-open="1">${_abStatusControl(row.leadId, row.status)}</div></td>
-      <td><span class="ab-cell-text" title="${escape(row.project)}">${escape(row.project)}</span></td>
+      <td>
+        <span class="ab-cell-text" title="${escape(row.project)}">${escape(row.project)}</span>
+        ${row.source ? `<div style="font-size:10px;color:#64748b;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escape(row.source)}">${escape(row.source)}</div>` : ''}
+      </td>
       <td>
         <div class="ab-note-cell" title="${escape(row.latestNote || 'No notes')}">
           <span class="ab-note-preview">${escape(notePreview)}</span>

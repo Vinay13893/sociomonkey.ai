@@ -2,6 +2,37 @@
 // SHARED UTILITY FUNCTIONS
 // ============================================================================
 
+// ── Global display timezone policy (Gurugram / IST) ───────────────────────
+// Enforce this for all user-facing locale date/time rendering across modules.
+const DISPLAY_LOCALE = 'en-IN'
+const DISPLAY_TIMEZONE = 'Asia/Kolkata'
+
+function _installISTDateLocaleGuards() {
+  if (window.__IST_LOCALE_GUARD_INSTALLED__) return
+  window.__IST_LOCALE_GUARD_INSTALLED__ = true
+
+  var _origToLocaleString = Date.prototype.toLocaleString
+  var _origToLocaleDateString = Date.prototype.toLocaleDateString
+  var _origToLocaleTimeString = Date.prototype.toLocaleTimeString
+
+  Date.prototype.toLocaleString = function (locales, options) {
+    var opts = Object.assign({}, options || {}, { timeZone: DISPLAY_TIMEZONE })
+    return _origToLocaleString.call(this, locales || DISPLAY_LOCALE, opts)
+  }
+
+  Date.prototype.toLocaleDateString = function (locales, options) {
+    var opts = Object.assign({}, options || {}, { timeZone: DISPLAY_TIMEZONE })
+    return _origToLocaleDateString.call(this, locales || DISPLAY_LOCALE, opts)
+  }
+
+  Date.prototype.toLocaleTimeString = function (locales, options) {
+    var opts = Object.assign({}, options || {}, { timeZone: DISPLAY_TIMEZONE })
+    return _origToLocaleTimeString.call(this, locales || DISPLAY_LOCALE, opts)
+  }
+}
+
+_installISTDateLocaleGuards()
+
 function getRoleDisplay(role) {
   const roles = {
     'superadmin': '🔐 Super Admin',
@@ -64,8 +95,8 @@ function escape(text) {
 function _fmtIST(isoStr) {
   if (!isoStr) return '—'
   try {
-    return new Date(isoStr).toLocaleString('en-IN', {
-      timeZone: 'Asia/Kolkata',
+    return new Date(isoStr).toLocaleString(DISPLAY_LOCALE, {
+      timeZone: DISPLAY_TIMEZONE,
       day: '2-digit', month: 'short', year: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: true
     }) + ' IST'

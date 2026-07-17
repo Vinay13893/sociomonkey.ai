@@ -13,7 +13,7 @@
 
   // Capture absolute page-start reference as early as possible
   var _t0 = performance.now()
-  var _enabled = true
+  var _enabled = !!window.DEBUG_PERF
   var _timeline = []   // { label, t, dur?, type: 'start'|'end'|'lap' }
   var _open = {}       // label → start_t (for mark/end pairs)
   var _counts = {}     // label → call count (duplicate detection)

@@ -10,64 +10,64 @@
 // ============================================================================
 
 var FEATURE_FLAGS = [
-  // ── CRM Core ───────────────────────────────────────────────────────────────
+  // ── LMS Core ───────────────────────────────────────────────────────────────
   {
     key: 'pipeline',
     label: 'Sales Pipeline',
     description: 'Kanban board for tracking leads through sales stages.',
     default: true,
-    product: 'crm',
+    product: 'lms',
   },
   {
     key: 'reports',
     label: 'Analytics & Reports',
     description: 'Charts and performance analytics for sales teams.',
     default: true,
-    product: 'crm',
+    product: 'lms',
   },
   {
     key: 'bulk_import',
     label: 'Bulk Lead Import',
     description: 'Import leads in bulk from Excel / CSV files.',
     default: true,
-    product: 'crm',
+    product: 'lms',
   },
   {
     key: 'export',
     label: 'Data Export',
     description: 'Export leads and reports to Excel / CSV.',
     default: true,
-    product: 'crm',
+    product: 'lms',
   },
   {
     key: 'team_management',
     label: 'Team Management',
     description: 'Add and manage team members, roles, and assignments.',
     default: true,
-    product: 'crm',
+    product: 'lms',
   },
   {
     key: 'activity_logs',
     label: 'Activity Logs',
     description: 'Detailed audit trail of all user actions.',
     default: true,
-    product: 'crm',
+    product: 'lms',
   },
 
-  // ── CRM Advanced (may require higher plan) ─────────────────────────────────
+  // ── LMS Advanced (may require higher plan) ─────────────────────────────────
   {
     key: 'automation',
     label: 'Automation Rules',
     description: 'Set up automated workflows and triggers. (Coming soon)',
     default: false,
-    product: 'crm',
+    product: 'lms',
   },
   {
     key: 'ai_assist',
     label: 'AI Assistant',
     description: 'AI-powered lead scoring and recommendations. (Coming soon)',
     default: false,
-    product: 'crm',
+    product: 'lms',
   },
 
   // ── Platform-wide ──────────────────────────────────────────────────────────

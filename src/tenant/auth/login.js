@@ -15,12 +15,12 @@ function renderLogin(context) {
     var appTenantLoginM = path.match(/^\/apps\/([^\/]+)\/([^\/]+)\/login$/)
     var appTenantM = path.match(/^\/apps\/([^\/]+)\/([^\/]+)$/)
     var tenantSimpleLoginM = path.match(/^\/([^\/]+)\/login$/)
-    var tenantM = path.match(/^\/([^\/]+)\/([^\/]+)(?:\/login)?$/)
+    var tenantM = path.match(/^\/([^\/]+)(?:\/([^\/]+))?$/)
     var platformPaths = ['applications', 'organizations', 'analytics', 'settings', 'products', 'login']
-    var demoLoginM = path.match(/^\/demo\/([^\/]+)\/login$/)
-    var isPlatformPath = (!tenantM && !tenantSimpleLoginM && !appTenantLoginM && !appTenantM) || path === '/login' || platformPaths.indexOf((tenantM || [])[1]) !== -1
+    var demoLoginM = (path === '/demo/login') ? ['demo/login', 'lms'] : path.match(/^\/demo\/([^\/]+)\/login$/)
+    var isPlatformPath = path === '/login' || platformPaths.indexOf((tenantM || [])[1]) !== -1
     if (demoLoginM) {
-      context = { type: 'demo', product: demoLoginM[1] }
+      context = { type: 'demo', product: 'lms' }
     } else
     if (!isPlatformPath && appTenantLoginM) {
       context = { type: 'tenant', slug: authCanonicalTenantSlug(appTenantLoginM[2]), product: appTenantLoginM[1] }
@@ -29,10 +29,12 @@ function renderLogin(context) {
       context = { type: 'tenant', slug: authCanonicalTenantSlug(appTenantM[2]), product: appTenantM[1] }
     } else
     if (!isPlatformPath && tenantSimpleLoginM) {
-      context = { type: 'tenant', slug: authCanonicalTenantSlug(tenantSimpleLoginM[1]), product: 'lms' }
+      if (tenantSimpleLoginM[1] === 'demo') context = { type: 'demo', product: 'lms' }
+      else context = { type: 'tenant', slug: authCanonicalTenantSlug(tenantSimpleLoginM[1]), product: 'lms' }
     } else
     if (!isPlatformPath && tenantM) {
-      context = { type: 'tenant', slug: authCanonicalTenantSlug(tenantM[1]), product: tenantM[2] }
+      if (tenantM[1] === 'demo') context = { type: 'demo', product: 'lms' }
+      else context = { type: 'tenant', slug: authCanonicalTenantSlug(tenantM[1]), product: 'lms' }
     } else {
       context = { type: 'platform' }
     }
@@ -58,11 +60,15 @@ function renderLogin(context) {
   }
 
   // Resolve tenant branding (tenantConfig may have been loaded by dispatch())
-  var tenantLogoSrc  = (typeof tenantConfig !== 'undefined' && tenantConfig && tenantConfig.logo_url)
-                       ? tenantConfig.logo_url : 'logo.jpg'
-  var _tenantFallbackBrand = tenantSlug
-    ? authCanonicalTenantSlug(tenantSlug).replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase() })
-    : 'Enterprise Lead Management'
+  var tenantLogoSrc  = isDemo
+    ? 'Assets/credentials-card-logo.png'
+    : ((typeof tenantConfig !== 'undefined' && tenantConfig && tenantConfig.logo_url)
+      ? tenantConfig.logo_url : 'logo.jpg')
+  var _tenantFallbackBrand = isDemo
+    ? 'LMS Demo'
+    : (tenantSlug
+      ? authCanonicalTenantSlug(tenantSlug).replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase() })
+      : 'Enterprise Lead Management')
   var tenantBrandName = (typeof tenantConfig !== 'undefined' && tenantConfig && (tenantConfig.brand_name || tenantConfig.name))
                        ? (tenantConfig.brand_name || tenantConfig.name) : _tenantFallbackBrand
   var loginBg = (typeof tenantConfig !== 'undefined' && tenantConfig && tenantConfig.login_bg_color)
@@ -350,7 +356,7 @@ function renderLogin(context) {
       } else if ((data.login_context || loginContext) === 'tenant' && data.user && data.user.tenant_slug) {
         history.replaceState({}, '', authBuildTenantAppPath(data.user.tenant_slug, productSlug || 'lms'))
       } else if ((data.login_context || loginContext) === 'demo') {
-        history.replaceState({}, '', '/demo/' + (productSlug || 'lms'))
+        history.replaceState({}, '', '/demo')
       }
       dispatch()
     } catch (err) {

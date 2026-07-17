@@ -180,6 +180,7 @@ async function renderReports(dateFrom = '', dateTo = '', projectFilter = '') {
   const teamGroups  = teamData.team_groups || []
   const unassignedMembers = teamData.unassigned_members || []
   const comparison = compareData.comparison || {}
+  const operationalHealth = leadsData.operational_health || {}
 
   // ---- helpers ----
   const maxOf  = obj => Math.max(1, ...Object.values(obj))
@@ -516,6 +517,26 @@ async function renderReports(dateFrom = '', dateTo = '', projectFilter = '') {
         <div class="analytics-kpi-label">Warm Rate</div>
         <div class="analytics-kpi-value">${warmRate}%</div>
         <div style="font-size:11px;color:#94a3b8;margin-top:2px;">(Interested + Site Visit Planned) / Total</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin:0;">
+      <h3 class="analytics-section-title">Management Health</h3>
+      <div class="rpt-kpi-grid">
+        ${[
+          ['Allocation Pending', operationalHealth.allocation_unassigned || 0],
+          ['Assigned Workload', operationalHealth.workload_assigned || 0],
+          ['Carry Forward', operationalHealth.carry_forward || 0],
+          ['Pending Callbacks', operationalHealth.pending_callbacks || 0],
+          ['Overdue Callbacks', operationalHealth.overdue_callbacks || 0],
+          ['Untouched New', operationalHealth.untouched || 0],
+          ['Stale Leads', operationalHealth.stale || 0],
+        ].map(function (metric) {
+          return `<div class="analytics-kpi">
+            <div class="analytics-kpi-label">${metric[0]}</div>
+            <div class="analytics-kpi-value">${Number(metric[1] || 0).toLocaleString()}</div>
+          </div>`
+        }).join('')}
       </div>
     </div>
 

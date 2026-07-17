@@ -273,8 +273,7 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
       </div>
 
       <div class="dash-filters ab-filter-bar" style="margin-bottom:8px;">
-        <div class="dash-filter-group">
-          <label class="dash-filter-label">Range</label>
+        <div class="dash-filter-group" style="display:none">
           <select id="abRangeFilter" class="dash-filter-ctl">
             <option value="" ${_abRange === '' ? 'selected' : ''}>All Time</option>
             <option value="today" ${_abRange === 'today' ? 'selected' : ''}>Today</option>
@@ -294,15 +293,10 @@ async function renderActionBoard(dateFrom, dateTo, rangeKey) {
             }).join('')}
           </select>
         </div>` : ''}
-        <div id="abCustomRange" class="ab-custom-range" style="display:${_abRange === 'custom' ? 'flex' : 'none'};gap:8px;align-items:flex-end;">
-          <div class="dash-filter-group">
-            <label class="dash-filter-label">From Date</label>
-            <input type="date" id="abDateFrom" class="dash-filter-ctl" value="${_abDateFrom}" />
-          </div>
-          <div class="dash-filter-group">
-            <label class="dash-filter-label">To Date</label>
-            <input type="date" id="abDateTo" class="dash-filter-ctl" value="${_abDateTo}" />
-          </div>
+        <div id="abCustomRange" class="ab-custom-range" style="display:none"></div>
+        <div class="dash-filter-group" style="display:none">
+          <input type="hidden" id="abDateFrom" value="${_abDateFrom}" />
+          <input type="hidden" id="abDateTo" value="${_abDateTo}" />
         </div>
         <div class="dash-filter-group ab-search-group">
           <label class="dash-filter-label">Lead Search</label>

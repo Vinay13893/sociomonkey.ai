@@ -139,7 +139,9 @@ function _rqRenderShell(target, showHeader) {
           <label class="sm-label" style="display:block;">SEARCH</label>
           <input id="rqSearch" class="dash-filter-ctl" type="text" placeholder="Name, mobile, project, assigned user" value="${escape(_rqSearchQuery)}" />
         </div>
-        <button onclick="_rqLoad()" class="button rq-filter-btn">Load Queue</button>
+        </div>
+        <div class="rq-filter-actions">
+          <button onclick="_rqLoad()" class="button rq-filter-btn">Load Queue</button>
         </div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
           <label style="font-size:12px;color:#475569;"><input id="rqUntouchedOnly" type="checkbox"> Untouched only</label>

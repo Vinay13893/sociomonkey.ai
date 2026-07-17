@@ -350,7 +350,11 @@ function _notifFmtTime(value) {
   if (!value) return ''
   var d = new Date(value)
   if (isNaN(d.getTime())) return String(value)
-  return d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  })
 }
 
 function _notifEsc(value) {

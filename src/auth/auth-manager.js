@@ -28,12 +28,16 @@ var AUTH_TENANT_DATA_SLUG_OVERRIDES = Object.freeze({
 
 var AUTH_TENANT_TAB_ALIASES = Object.freeze({
   action_board: 'action-board',
+  assign_reassign: 'allocation',
   recycle_queue: 'recycle-queue',
   activitylogs: 'activity-logs',
+  lead_sources: 'lead-sources',
 })
 
 var AUTH_TENANT_TAB_ROUTE_ALIASES = Object.freeze({
   'action-board':  'action_board',
+  'assign-reassign': 'assign_reassign',
+  'allocation': 'assign_reassign',
   'recycle-queue': 'recycle_queue',
   'activity-logs': 'activitylogs',
   'lead-sources':  'lead_sources',
@@ -53,15 +57,18 @@ function authTenantDataSlug(slug) {
 
 function authBuildTenantAppPath(slug, product) {
   var tenant = authCanonicalTenantSlug(slug)
-  var prod = String(product || 'lms').trim().toLowerCase() || 'lms'
   if (!tenant) return '/login'
-  return '/apps/' + prod + '/' + tenant
+  return '/' + tenant
 }
 
 function authBuildTenantLoginPath(slug, product) {
   var appPath = authBuildTenantAppPath(slug, product)
   if (appPath === '/login') return appPath
   return appPath + '/login'
+}
+
+function authBuildDemoLoginPath(product) {
+  return '/demo/login'
 }
 
 function authCanonicalTenantTab(tab) {
@@ -72,9 +79,60 @@ function authCanonicalTenantTab(tab) {
 
 function authBuildTenantTabPath(slug, product, tab) {
   var appPath = authBuildTenantAppPath(slug, product)
-  var page = authCanonicalTenantTab(tab)
+  var canonical = authCanonicalTenantTab(tab)
+  var page = AUTH_TENANT_TAB_ALIASES[canonical] || canonical
   if (!page) page = 'dashboard'
+  if (page === 'dashboard') return appPath
   return appPath + '/' + page
+}
+
+function _authNormalizeOrigin(origin) {
+  var raw = String(origin || '').trim()
+  if (!raw) return ''
+  return raw.replace(/\/+$/, '')
+}
+
+function _authRuntimeOrigin(key, fallback) {
+  try {
+    var cfg = window.SOCIOMONKEY_ENV || {}
+    var value = _authNormalizeOrigin(cfg[key])
+    if (value) return value
+  } catch (_e) {}
+  return _authNormalizeOrigin(fallback)
+}
+
+function _authIsLocalHost() {
+  var host = String((window.location && window.location.hostname) || '').toLowerCase()
+  return host === 'localhost' || host === '127.0.0.1'
+}
+
+function authLmsOrigin() {
+  if (_authIsLocalHost()) return ''
+  return _authRuntimeOrigin('LMS_ORIGIN', 'https://lms.sociomonkey.com')
+}
+
+function authPlatformOrigin() {
+  if (_authIsLocalHost()) return ''
+  return _authRuntimeOrigin('PLATFORM_ORIGIN', 'https://app.sociomonkey.com')
+}
+
+function authBuildTenantAppUrl(slug, product) {
+  var path = authBuildTenantAppPath(slug, product)
+  var origin = authLmsOrigin()
+  return origin ? (origin + path) : path
+}
+
+function authBuildTenantLoginUrl(slug, product) {
+  var path = authBuildTenantLoginPath(slug, product)
+  var origin = authLmsOrigin()
+  return origin ? (origin + path) : path
+}
+
+function authBuildPlatformUrl(path) {
+  var normalizedPath = String(path || '/').trim() || '/'
+  if (normalizedPath.charAt(0) !== '/') normalizedPath = '/' + normalizedPath
+  var origin = authPlatformOrigin()
+  return origin ? (origin + normalizedPath) : normalizedPath
 }
 
 // ── JWT Utilities ─────────────────────────────────────────────────────────────
@@ -117,6 +175,30 @@ function authHasRole(role) {
   return !!(user && user.role === role)
 }
 
+function authNormalizeLoginContext(ctx) {
+  var value = String(ctx || '').trim().toLowerCase()
+  return (value === 'platform' || value === 'tenant' || value === 'demo') ? value : ''
+}
+
+function authGetLoginContext() {
+  if (loginContext) return authNormalizeLoginContext(loginContext)
+  var payload = authParseJwt(token)
+  return authNormalizeLoginContext(payload && payload.ctx)
+}
+
+function authRequiresContext(route) {
+  if (!route) return ''
+  if (route.layer === 'platform' || route.layer === 'platform-login' || route.layer === 'product-hub') return 'platform'
+  if (route.layer === 'tenant' || route.layer === 'tenant-login') return 'tenant'
+  if (route.layer === 'demo' || route.layer === 'demo-login') return 'demo'
+  return ''
+}
+
+function authHasLoginContext(requiredContext) {
+  if (!requiredContext) return true
+  return authGetLoginContext() === requiredContext
+}
+
 // ── Access Control ────────────────────────────────────────────────────────────
 
 /**
@@ -131,6 +213,8 @@ function authHasRole(role) {
 function authCanAccess(route) {
   if (!user) return false
   var layer = route.layer
+  var requiredContext = authRequiresContext(route)
+  if (requiredContext && !authHasLoginContext(requiredContext)) return false
 
   if (layer === 'platform' || layer === 'product-hub') {
     return authIsPlatformUser()
@@ -146,6 +230,10 @@ function authCanAccess(route) {
     }
   }
 
+  if (layer === 'demo') {
+    return !!(authHasLoginContext('demo') && user && user.tenant_slug === 'demo')
+  }
+
   return false
 }
 
@@ -158,6 +246,12 @@ function authGetLoginPath(route) {
   if (route && route.layer === 'tenant' && route.slug) {
     return authBuildTenantLoginPath(route.slug, route.product || 'lms')
   }
+  if (route && route.layer === 'demo-login' && route.product) {
+    return authBuildDemoLoginPath(route.product)
+  }
+  if (route && route.layer === 'demo' && route.product) {
+    return authBuildDemoLoginPath(route.product)
+  }
   return '/login'
 }
 
@@ -168,19 +262,24 @@ function authGetLoginPath(route) {
  * remember=true  → localStorage  (survives browser close)
  * remember=false → sessionStorage (cleared when tab closes)
  */
-function authSetSession(newToken, newUser, remember, refreshToken) {
+function authSetSession(newToken, newUser, remember, refreshToken, newLoginContext) {
   token = newToken
   user  = newUser
+  loginContext = authNormalizeLoginContext(newLoginContext) || authNormalizeLoginContext(authParseJwt(newToken) && authParseJwt(newToken).ctx)
   if (remember) {
     localStorage.setItem('lms_token', newToken)
     localStorage.setItem('lms_user',  JSON.stringify(newUser))
+    localStorage.setItem('lms_login_context', loginContext)
     sessionStorage.removeItem('lms_token')
     sessionStorage.removeItem('lms_user')
+    sessionStorage.removeItem('lms_login_context')
   } else {
     sessionStorage.setItem('lms_token', newToken)
     sessionStorage.setItem('lms_user',  JSON.stringify(newUser))
+    sessionStorage.setItem('lms_login_context', loginContext)
     localStorage.removeItem('lms_token')
     localStorage.removeItem('lms_user')
+    localStorage.removeItem('lms_login_context')
   }
   // Refresh token is long-lived (30d) and only ever stored in localStorage,
   // and only when the caller passes one ("Keep me signed in" flow).
@@ -202,21 +301,25 @@ function authSetSession(newToken, newUser, remember, refreshToken) {
 function authClearSession() {
   token = null
   user  = null
+  loginContext = ''
   if (sessionStorage.getItem('_imp_session')) {
     // Impersonation session — protect platform owner's localStorage
     sessionStorage.removeItem('lms_token')
     sessionStorage.removeItem('lms_user')
     sessionStorage.removeItem('lms_products')
+    sessionStorage.removeItem('lms_login_context')
     sessionStorage.removeItem('_imp_session')
     // Do NOT broadcast logout — it would log out the platform owner's tab
   } else {
     localStorage.removeItem('lms_token')
     localStorage.removeItem('lms_user')
     localStorage.removeItem('lms_products')
+    localStorage.removeItem('lms_login_context')
     localStorage.removeItem('lms_refresh_token')
     sessionStorage.removeItem('lms_token')
     sessionStorage.removeItem('lms_user')
     sessionStorage.removeItem('lms_products')
+    sessionStorage.removeItem('lms_login_context')
     try {
       localStorage.setItem('_auth_sync', JSON.stringify({ type: 'logout', ts: Date.now() }))
     } catch (e) {}
@@ -244,6 +347,8 @@ function authRestoreSession() {
     return false
   }
   token = tok
+  loginContext = authNormalizeLoginContext(localStorage.getItem('lms_login_context') || sessionStorage.getItem('lms_login_context'))
+  if (!loginContext) loginContext = authNormalizeLoginContext(authParseJwt(tok) && authParseJwt(tok).ctx)
   try {
     var rawUser = localStorage.getItem('lms_user') || sessionStorage.getItem('lms_user')
     if (rawUser) user = JSON.parse(rawUser)
@@ -289,7 +394,7 @@ function authExchangeRefresh() {
   }).then(function (data) {
     if (data && data.token) {
       var nextUser = data.user || user
-      authSetSession(data.token, nextUser, true, data.refresh_token || null)
+      authSetSession(data.token, nextUser, true, data.refresh_token || null, data.login_context || authGetLoginContext())
       authScheduleExpiry()
       return true
     }
@@ -369,7 +474,7 @@ async function authExtendSession() {
       var data = await resp.json()
       if (data.token) {
         var remember = !!localStorage.getItem('lms_token')
-        authSetSession(data.token, user, remember)
+        authSetSession(data.token, user, remember, null, data.login_context || authGetLoginContext())
         authScheduleExpiry()
         var b = document.getElementById('_authExpiryBanner')
         if (b) b.remove()
@@ -414,11 +519,29 @@ window.addEventListener('storage', function (e) {
       user  = null
       if (typeof dispatch === 'function') dispatch()
     } else if (d.type === 'login') {
-      // Another tab just logged in with localStorage — pick up the token
+      // Another tab just logged in with localStorage. Only adopt that session
+      // when it belongs to the portal currently open in this tab. Without this
+      // guard, a demo/platform tab can adopt a tenant token, reject it during
+      // dispatch, and clear the newly-created shared session — producing an
+      // immediate login -> login redirect loop in the tenant tab.
       var newTok = localStorage.getItem('lms_token')
       if (newTok && newTok !== token) {
+        var newContext = authNormalizeLoginContext(localStorage.getItem('lms_login_context')) || authNormalizeLoginContext(authParseJwt(newTok) && authParseJwt(newTok).ctx)
+        var currentRoute = (typeof parseRoute === 'function') ? parseRoute() : null
+        var requiredContext = currentRoute ? authRequiresContext(currentRoute) : ''
+        if (requiredContext && newContext !== requiredContext) return
+
+        var newUser = null
+        try { newUser = JSON.parse(localStorage.getItem('lms_user')) } catch (ex) {}
+        if (currentRoute && (currentRoute.layer === 'tenant' || currentRoute.layer === 'tenant-login')) {
+          var sessionTenant = authCanonicalTenantSlug(newUser && newUser.tenant_slug)
+          var routeTenant = authCanonicalTenantSlug(currentRoute.slug)
+          if (sessionTenant && routeTenant && sessionTenant !== routeTenant) return
+        }
+
         token = newTok
-        try { user = JSON.parse(localStorage.getItem('lms_user')) } catch (ex) {}
+        loginContext = newContext
+        user = newUser
         if (typeof dispatch === 'function') dispatch()
       }
     }

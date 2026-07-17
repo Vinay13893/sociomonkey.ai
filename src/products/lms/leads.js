@@ -242,9 +242,9 @@ async function renderLeads() {
             <select id="filterProject" class="dash-filter-ctl"><option value="">All Projects</option></select>
           </div>
           <div class="dash-filter-group">
-            <label class="dash-filter-label">Team Member</label>
+            <label class="dash-filter-label">Assigned To</label>
             <select id="filterTeamMember" class="dash-filter-ctl">
-              <option value="">All Members</option>
+              <option value="">All Assignees</option>
               <option value="unassigned">Unassigned</option>
             </select>
           </div>
@@ -334,12 +334,12 @@ async function renderLeads() {
       teamSelect.value = String(user.id)
       teamSelect.disabled = true
     } else {
-      let teamMembers = users.filter(u => u.role === 'team_member')
+      let teamMembers = users.filter(u => u.role === 'team_member' || u.role === 'sales_manager')
       if (user.role === 'sales_manager') {
-        teamMembers = teamMembers.filter(u => String(u.manager_id) === String(user.id))
+        teamMembers = teamMembers.filter(u => String(u.id) === String(user.id) || String(u.manager_id) === String(user.id))
       }
-      teamSelect.innerHTML = '<option value="">All Members</option><option value="unassigned">Unassigned</option>' +
-        teamMembers.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
+      teamSelect.innerHTML = '<option value="">All Assignees</option><option value="unassigned">Unassigned</option>' +
+        teamMembers.map(u => `<option value="${u.id}">${escape(u.name)}${u.role === 'sales_manager' ? ' (manager)' : ''}</option>`).join('')
     }
   }
 
@@ -367,14 +367,17 @@ async function renderLeads() {
     const teamSelect = document.getElementById('filterTeamMember')
     if (!teamSelect) return
     const allMembers = users.filter(u => u.role === 'team_member')
+    const selectedManager = users.find(u => String(u.id) === String(managerId) && u.role === 'sales_manager')
     const filtered = managerId
       ? allMembers.filter(u => String(u.manager_id) === String(managerId))
       : allMembers
     const prevVal = teamSelect.value
-    teamSelect.innerHTML = '<option value="">All Members</option><option value="unassigned">Unassigned</option>' +
+    const managerOption = selectedManager ? `<option value="${selectedManager.id}">${escape(selectedManager.name)} (manager)</option>` : ''
+    teamSelect.innerHTML = '<option value="">All Assignees</option><option value="unassigned">Unassigned</option>' +
+      managerOption +
       filtered.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
     // restore previous selection if still valid
-    if (prevVal && filtered.some(u => String(u.id) === String(prevVal))) {
+    if (prevVal && (String(prevVal) === 'unassigned' || (selectedManager && String(selectedManager.id) === String(prevVal)) || filtered.some(u => String(u.id) === String(prevVal)))) {
       teamSelect.value = prevVal
     }
   }
@@ -451,15 +454,15 @@ function clearLeadsFilters() {
   var quickSort = document.getElementById('quickSortOrder')
   if (quickSort) quickSort.value = 'new_old'
 
-  // Restore team member list (respecting role-based filtering)
+  // Restore assignee list (respecting role-based filtering)
   const teamSelect = document.getElementById('filterTeamMember')
   if (teamSelect && !teamSelect.disabled && Array.isArray(users)) {
-    let teamMembers = users.filter(function (u) { return u.role === 'team_member' })
+    let teamMembers = users.filter(function (u) { return u.role === 'team_member' || u.role === 'sales_manager' })
     if (user.role === 'sales_manager') {
-      teamMembers = teamMembers.filter(function (u) { return String(u.manager_id) === String(user.id) })
+      teamMembers = teamMembers.filter(function (u) { return String(u.id) === String(user.id) || String(u.manager_id) === String(user.id) })
     }
-    teamSelect.innerHTML = '<option value="">All Members</option><option value="unassigned">Unassigned</option>' +
-      teamMembers.map(function (u) { return `<option value="${u.id}">${escape(u.name)}</option>` }).join('')
+    teamSelect.innerHTML = '<option value="">All Assignees</option><option value="unassigned">Unassigned</option>' +
+      teamMembers.map(function (u) { return `<option value="${u.id}">${escape(u.name)}${u.role === 'sales_manager' ? ' (manager)' : ''}</option>` }).join('')
   }
 
   _leadsSyncQuickFilterChips('')
@@ -651,9 +654,11 @@ async function filterAndRenderLeads(resetPage = true) {
     return false
   })
   const assignableMembers = (user.role === 'superadmin' || user.role === 'platform_owner')
-    ? users.filter(u => u.role === 'team_member')
+    ? users
+      .filter(u => u.role === 'team_member' || u.role === 'sales_manager')
+      .map(u => ({ id: u.id, name: u.role === 'sales_manager' ? `${u.name} (manager)` : u.name }))
     : user.role === 'sales_manager'
-      ? [{ id: user.id, name: `${user.name} (me)` }, ...users.filter(u => u.manager_id === user.id)]
+      ? [{ id: user.id, name: `${user.name} (me)` }, ...users.filter(u => u.role === 'team_member' && u.manager_id === user.id)]
       : []
 
   const VALID_STATUSES_LIST = ['new','no_answer','follow_up','callback_scheduled','interested','site_visit_planned','site_visit_done','negotiation','booking_done','not_interested','lost','junk']
@@ -718,7 +723,7 @@ async function filterAndRenderLeads(resetPage = true) {
             <th class="ta-center">Source</th>
             <th class="ta-center">Project</th>
             <th class="ta-center">Status</th>
-            <th class="ta-center">Manager</th>
+            <th class="ta-center">Owner</th>
             <th class="ta-center leads-note-col">Latest Note</th>
             <th class="ta-center leads-actions-col">Actions</th>
           </tr>
@@ -743,7 +748,10 @@ async function filterAndRenderLeads(resetPage = true) {
               <td class="ta-center" data-label="Source" style="padding:6px 3px;"><span class="leads-source-badge">${escape(_sourceBadgeLabel(l.source))}</span></td>
               <td class="ta-center" data-label="Project" style="font-size:11px;padding:6px 4px;">${escape(projectMap[l.project_id] || '-')}</td>
               <td class="ta-center" data-label="Status" style="padding:6px 3px;">${buildStatusControl(l)}</td>
-              <td class="ta-center" data-label="Manager" style="font-size:11px;padding:6px 4px;"><span class="leads-cell-text leads-cell-text-center">${escape(l.sales_manager_name || '—')}</span></td>
+              <td class="ta-center" data-label="Owner" style="font-size:11px;padding:6px 4px;">
+                <span class="leads-cell-text leads-cell-text-center" style="display:block;font-weight:700;">${escape(l.sales_manager_name || '—')}</span>
+                <span class="leads-cell-text leads-cell-text-center" style="display:block;font-style:italic;font-weight:400;color:#64748b;margin-top:2px;">${escape(l.assigned_to_name || 'Unassigned')}</span>
+              </td>
               <td class="leads-note-col" data-label="Latest Note" style="padding:6px 4px;">
                 <div class="leads-note-cell">
                   ${l.latest_note
@@ -831,10 +839,13 @@ async function filterAndRenderLeads(resetPage = true) {
     const allBulkMembers = users.filter(u => u.role === 'team_member')
     bulkMgrSel.addEventListener('change', () => {
       const mid = bulkMgrSel.value
+      const selectedManager = users.find(u => String(u.id) === String(mid) && u.role === 'sales_manager')
       const filtered = mid
         ? allBulkMembers.filter(u => String(u.manager_id) === String(mid))
         : allBulkMembers
+      const managerOption = selectedManager ? `<option value="${selectedManager.id}">${escape(selectedManager.name)} (manager)</option>` : ''
       bulkMemSel.innerHTML = '<option value="">— Select member —</option>' +
+        managerOption +
         filtered.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
     })
   }
@@ -1045,8 +1056,10 @@ async function openLeadAssignModal(leadId) {
   var id = Number(leadId || 0)
   if (!id) return
   var assignable = (user.role === 'superadmin' || user.role === 'platform_owner')
-    ? users.filter(function (u) { return u.role === 'team_member' })
-    : users.filter(function (u) { return u.role === 'team_member' && (u.manager_id === user.id || u.id === user.id) })
+    ? users
+      .filter(function (u) { return u.role === 'team_member' || u.role === 'sales_manager' })
+      .map(function (u) { return { id: u.id, name: u.role === 'sales_manager' ? u.name + ' (manager)' : u.name } })
+    : [{ id: user.id, name: user.name + ' (me)' }].concat(users.filter(function (u) { return u.role === 'team_member' && u.manager_id === user.id }))
   if (!assignable.length) {
     showToast('No assignable team members available.', 'warning')
     return
@@ -1723,6 +1736,24 @@ async function viewLeadDetails(leadId) {
 
   const fmtDate  = d => d ? new Date(d).toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric'}) : '—'
   const fmtDT    = d => d ? new Date(d).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'
+  const fmtTimelineDT = d => {
+    if (!d) return 'â€”'
+    const dt = new Date(d)
+    if (Number.isNaN(dt.getTime())) return 'â€”'
+    const parts = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    }).formatToParts(dt).reduce((acc, part) => {
+      acc[part.type] = part.value
+      return acc
+    }, {})
+    return `${parts.day} ${parts.month} ${parts.year} at ${parts.hour}:${parts.minute} ${(parts.dayPeriod || '').toUpperCase()}`
+  }
   const statusLabel = s => {
     const labels = {
       new:'New', no_answer:'No Answer', follow_up:'Follow Up',
@@ -1737,14 +1768,22 @@ async function viewLeadDetails(leadId) {
   }
   const budgetStr = L.budget_min ? (fmtBudget(L.budget_min) + (L.budget_max ? ' – ' + fmtBudget(L.budget_max) : '')) : '—'
 
-  // Build timeline items (notes + status changes merged)
-  const timelineItems = [
-    ...notes.map(n => ({ type:'note', ts: new Date(n.created_at), data: n })),
-    ...statusHistory.map(h => ({ type:'status', ts: new Date(h.changed_at), data: h })),
-    ...assignmentHistory.map(a => ({ type:'assign', ts: new Date(a.assigned_at), data: a })),
-    ...callActivities.map(a => ({ type:'activity', ts: new Date(a.created_at), data: a })),
-    ...callbacks.map(cb => ({ type:'callback', ts: new Date(cb.callback_datetime), data: cb })),
-  ].sort((a,b) => b.ts - a.ts)
+  // Prefer backend-normalized timeline events. Fallback keeps older cached bundles usable.
+  const canonicalTimeline = Array.isArray(detailBundle.timeline_events) ? detailBundle.timeline_events : []
+  const timelineItems = canonicalTimeline.length
+    ? canonicalTimeline.map(e => ({
+        type: e.type,
+        ts: new Date(e.occurred_at || e.occurred_at_ist),
+        data: e.payload || {},
+        event: e,
+      })).sort((a,b) => b.ts - a.ts)
+    : [
+      ...notes.map(n => ({ type:'note', ts: new Date(n.created_at), data: n })),
+      ...statusHistory.map(h => ({ type:'status', ts: new Date(h.changed_at), data: h })),
+      ...assignmentHistory.map(a => ({ type:'assign', ts: new Date(a.assigned_at), data: a })),
+      ...callActivities.map(a => ({ type:'activity', ts: new Date(a.created_at), data: a })),
+      ...callbacks.map(cb => ({ type:'callback', ts: new Date(cb.callback_datetime), data: cb })),
+    ].sort((a,b) => b.ts - a.ts)
 
   const upcomingCallbacks = callbacks.filter(c => c.status === 'pending')
     .sort((a,b) => new Date(a.callback_datetime) - new Date(b.callback_datetime))
@@ -1945,6 +1984,17 @@ async function viewLeadDetails(leadId) {
                 ${timelineItems.length === 0
                   ? `<div style="color:#94a3b8;font-size:13px;text-align:center;padding:20px 0;">No activity yet.</div>`
                   : timelineItems.map(item => {
+                    if (item.type === 'lead_created') {
+                      const e = item.event || {}
+                      return `
+                      <div style="position:relative;padding:0 0 20px;">
+                        <div style="position:absolute;left:-25px;top:4px;width:10px;height:10px;border-radius:50%;background:#0f766e;border:2px solid #fff;box-shadow:0 0 0 2px #0f766e;"></div>
+                        <div style="background:#fafafa;border:1px solid #e2e8f0;border-radius:10px;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                          <span style="font-size:13px;color:#475569;">Lead created</span>
+                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${e.actor_name ? escape(e.actor_name) + ' Â· ' : ''}${fmtTimelineDT(e.occurred_at || e.occurred_at_ist)}</span>
+                        </div>
+                      </div>`
+                    }
                     if (item.type === 'note') {
                       const n = item.data
                       return `
@@ -1953,7 +2003,7 @@ async function viewLeadDetails(leadId) {
                         <div style="background:#fafafa;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;">
                           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
                             <span style="font-size:12px;font-weight:700;color:#6366f1;">📝 Note</span>
-                            <span style="font-size:11px;color:#94a3b8;">${escape(n.created_by_name||'?')} · ${fmtDT(n.created_at)}</span>
+                            <span style="font-size:11px;color:#94a3b8;">${escape(n.created_by_name||'?')} · ${fmtTimelineDT(n.created_at)}</span>
                           </div>
                           <p style="margin:0;font-size:13px;color:#1e293b;line-height:1.6;">${escape(n.note)}</p>
                         </div>
@@ -1966,7 +2016,7 @@ async function viewLeadDetails(leadId) {
                         <div style="position:absolute;left:-25px;top:4px;width:10px;height:10px;border-radius:50%;background:${STATUS_COLORS[h.new_status]||'#94a3b8'};border:2px solid #fff;box-shadow:0 0 0 2px ${STATUS_COLORS[h.new_status]||'#94a3b8'};"></div>
                         <div style="background:#fafafa;border:1px solid #e2e8f0;border-radius:10px;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;">
                           <span style="font-size:13px;color:#475569;">Status changed: <strong style="color:${STATUS_COLORS[h.new_status]||'#374151'};">${statusLabel(h.new_status)}</strong></span>
-                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${escape(h.changed_by_name||'?')} · ${fmtDate(h.changed_at)}</span>
+                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${escape(h.changed_by_name||'?')} · ${fmtTimelineDT(h.changed_at)}</span>
                         </div>
                       </div>`
                     }
@@ -1977,7 +2027,7 @@ async function viewLeadDetails(leadId) {
                         <div style="position:absolute;left:-25px;top:4px;width:10px;height:10px;border-radius:50%;background:#8b5cf6;border:2px solid #fff;box-shadow:0 0 0 2px #8b5cf6;"></div>
                         <div style="background:#fafafa;border:1px solid #e2e8f0;border-radius:10px;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;">
                           <span style="font-size:13px;color:#475569;">Assigned to <strong>${escape(a.assigned_to_name||'?')}</strong></span>
-                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${fmtDate(a.assigned_at)}</span>
+                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${fmtTimelineDT(a.assigned_at)}</span>
                         </div>
                       </div>`
                     }
@@ -1989,7 +2039,7 @@ async function viewLeadDetails(leadId) {
                         <div style="position:absolute;left:-25px;top:4px;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #fff;box-shadow:0 0 0 2px #f59e0b;"></div>
                         <div style="background:#fafafa;border:1px solid #e2e8f0;border-radius:10px;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
                           <span style="font-size:13px;color:#475569;">✏️ ${escape(a.description || 'Lead updated')}</span>
-                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${escape(a.user_name || '?')} · ${fmtDT(a.created_at)}</span>
+                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${escape(a.user_name || '?')} · ${fmtTimelineDT(a.created_at)}</span>
                         </div>
                       </div>`
                       }
@@ -2002,7 +2052,7 @@ async function viewLeadDetails(leadId) {
                         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;">
                           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;gap:10px;">
                             <span style="font-size:12px;font-weight:700;color:${activityColor};">📞 ${escape(outcome)}</span>
-                            <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${escape(a.user_name || '?')} · ${fmtDT(a.created_at)}</span>
+                            <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${escape(a.user_name || '?')} · ${fmtTimelineDT(a.created_at)}</span>
                           </div>
                           <p style="margin:0;font-size:13px;color:#1e293b;line-height:1.6;">${escape(a.description || 'Call activity logged.')}</p>
                         </div>
@@ -2022,7 +2072,7 @@ async function viewLeadDetails(leadId) {
                         <div style="position:absolute;left:-25px;top:4px;width:10px;height:10px;border-radius:50%;background:${dotColor};border:2px solid #fff;box-shadow:0 0 0 2px ${dotColor};"></div>
                         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
                           <span style="font-size:13px;font-weight:600;color:${lblColor};">🔔 ${lbl}${cb.notes ? ': ' + escape(cb.notes) : ''}</span>
-                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${fmtDT(cb.callback_datetime)}</span>
+                          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${fmtTimelineDT(cb.callback_datetime)}</span>
                         </div>
                       </div>`
                     }
@@ -2057,7 +2107,7 @@ async function viewLeadDetails(leadId) {
                     <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;align-items:flex-start;">
                       <div style="width:10px;height:10px;border-radius:50%;background:${dotColor};flex-shrink:0;margin-top:4px;"></div>
                       <div style="flex:1;">
-                        <div style="font-size:13px;font-weight:600;color:#0f172a;">${fmtDT(cb.callback_datetime)}</div>
+                        <div style="font-size:13px;font-weight:600;color:#0f172a;">${fmtTimelineDT(cb.callback_datetime)}</div>
                         ${cb.notes ? `<div style="font-size:12px;color:#64748b;margin-top:2px;">${escape(cb.notes)}</div>` : ''}
                         <div style="display:flex;gap:6px;align-items:center;margin-top:5px;">
                           <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:${badgeBg};color:${badgeTxt};">${statusTxt}</span>
@@ -2089,7 +2139,7 @@ async function viewLeadDetails(leadId) {
                           <span style="color:#cbd5e1;"> → </span>
                           <span style="color:${STATUS_COLORS[h.new_status]||'#64748b'};">${statusLabel(h.new_status)}</span>
                         </div>
-                        <div style="font-size:11px;color:#94a3b8;margin-top:1px;">${escape(h.changed_by_name||'Unknown')} · ${fmtDate(h.changed_at)}</div>
+                        <div style="font-size:11px;color:#94a3b8;margin-top:1px;">${escape(h.changed_by_name||'Unknown')} · ${fmtTimelineDT(h.changed_at)}</div>
                       </div>
                     </div>
                   `).join('')}
@@ -2111,7 +2161,7 @@ async function viewLeadDetails(leadId) {
                           <span style="color:#cbd5e1;"> → </span>
                           <span>${escape(a.assigned_to_name||'Unassigned')}</span>
                         </div>
-                        <div style="font-size:11px;color:#94a3b8;margin-top:1px;">${escape(a.assigned_by_name||'?')} · ${fmtDate(a.assigned_at)}</div>
+                        <div style="font-size:11px;color:#94a3b8;margin-top:1px;">${escape(a.assigned_by_name||'?')} · ${fmtTimelineDT(a.assigned_at)}</div>
                         ${a.reason ? `<div style="font-size:11px;color:#64748b;margin-top:2px;font-style:italic;">${escape(a.reason)}</div>` : ''}
                       </div>
                     </div>
@@ -2260,9 +2310,11 @@ async function viewLeadDetails(leadId) {
     function updateAssignToOptions(managerId) {
       const allTM = users.filter(u => u.role === 'team_member')
       const filtered = managerId ? allTM.filter(u => String(u.manager_id) === String(managerId)) : allTM
-      const selfOption = user.role === 'sales_manager'
-        ? `<option value="${user.id}">${escape(user.name)} (me)</option>` : ''
-      assignSelect.innerHTML = '<option value="">Select team member</option>' + selfOption +
+      const managerUser = managerId ? users.find(u => String(u.id) === String(managerId) && u.role === 'sales_manager') : null
+      const managerOption = managerUser
+        ? `<option value="${managerUser.id}">${escape(managerUser.name)} (manager)</option>`
+        : (user.role === 'sales_manager' ? `<option value="${user.id}">${escape(user.name)} (me)</option>` : '')
+      assignSelect.innerHTML = '<option value="">Select member</option>' + managerOption +
         filtered.map(u => `<option value="${u.id}">${escape(u.name)}</option>`).join('')
       if (L.assigned_to) assignSelect.value = L.assigned_to
     }

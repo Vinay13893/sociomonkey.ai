@@ -235,12 +235,11 @@ async function renderLeads() {
               <option value="TP">TP</option>
             </select>
           </div>
-          <div class="dash-filter-group"><label class="dash-filter-label">Lead Created From</label><input type="date" id="filterDateFrom" class="dash-filter-ctl" /></div>
-          <div class="dash-filter-group"><label class="dash-filter-label">Lead Created To</label><input type="date" id="filterDateTo" class="dash-filter-ctl" /></div>
-          <div class="dash-filter-group"><label class="dash-filter-label">Status Updated From</label><input type="date" id="filterUpdatedFrom" class="dash-filter-ctl" /></div>
-          <div class="dash-filter-group"><label class="dash-filter-label">Status Updated To</label><input type="date" id="filterUpdatedTo" class="dash-filter-ctl" /></div>
-          <div class="dash-filter-group">
-            <label class="dash-filter-label">Time Range</label>
+          <div class="dash-filter-group" style="display:none"><input type="hidden" id="filterDateFrom" /></div>
+          <div class="dash-filter-group" style="display:none"><input type="hidden" id="filterDateTo" /></div>
+          <div class="dash-filter-group" style="display:none"><input type="hidden" id="filterUpdatedFrom" /></div>
+          <div class="dash-filter-group" style="display:none"><input type="hidden" id="filterUpdatedTo" /></div>
+          <div class="dash-filter-group" style="display:none">
             <select id="filterTimeRange" class="dash-filter-ctl">
               <option value="">All Time</option>
               <option value="today">Today</option>
@@ -252,8 +251,8 @@ async function renderLeads() {
               <option value="year_to_date">Year to Date</option>
               <option value="custom">Custom</option>
             </select>
-            <div id="filterTimeRangeDisplay" style="display:none;font-size:11px;color:#475569;margin-top:5px;font-weight:600;"></div>
           </div>
+          <div id="filterTimeRangeDisplay" style="display:none;font-size:11px;color:#475569;margin-top:5px;font-weight:600;"></div>
         </div>
       </div>
 

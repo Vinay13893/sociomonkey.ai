@@ -197,7 +197,7 @@ async function platHubLaunch(productCode, slug, tenantId, tenantName) {
       })
       var data = await res.json()
       if (res.ok && data && data.token && data.user) {
-        var impUrl = authBuildTenantAppPath(slug, productCode) + '?imp=' + encodeURIComponent(data.token) +
+        var impUrl = authBuildTenantAppUrl(slug, productCode) + '?imp=' + encodeURIComponent(data.token) +
           '&user=' + encodeURIComponent(JSON.stringify(data.user))
         window.location.href = impUrl
         return
@@ -211,9 +211,7 @@ async function platHubLaunch(productCode, slug, tenantId, tenantName) {
   if (typeof launchTenantApp === 'function') {
     launchTenantApp(productCode, slug)
   } else {
-    var path = authBuildTenantAppPath(slug, productCode)
-    history.pushState({}, '', path)
-    if (typeof dispatch === 'function') dispatch()
+    window.location.href = authBuildTenantAppUrl(slug, productCode)
   }
 }
 
@@ -239,7 +237,7 @@ async function platOpenDemoAccount(productCode) {
       return
     }
 
-    var demoUrl = authBuildTenantAppPath(data.tenant_slug, data.product_slug) + '?imp=' + encodeURIComponent(data.token) +
+    var demoUrl = authBuildTenantAppUrl(data.tenant_slug, data.product_slug) + '?imp=' + encodeURIComponent(data.token) +
       '&user=' + encodeURIComponent(JSON.stringify(data.user))
     window.location.href = demoUrl
   } catch (e) {

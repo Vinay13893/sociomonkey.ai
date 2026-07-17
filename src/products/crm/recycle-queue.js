@@ -59,6 +59,7 @@ function _rqRenderShell(target, showHeader) {
             <option value="junk">Junk</option>
           </select>
         </div>
+        <div class="rq-filter-field" id="rqDateRangeAnchor"></div>
         <div class="rq-filter-field rq-filter-search">
           <label class="sm-label" style="display:block;">SEARCH</label>
           <input id="rqSearch" class="dash-filter-ctl" type="text" placeholder="Name, mobile, project, assigned user" value="${escape(_rqSearchQuery)}" />
@@ -66,10 +67,8 @@ function _rqRenderShell(target, showHeader) {
         <button onclick="_rqLoad()" class="button rq-filter-btn">Load Queue</button>
         </div>
         <div id="rqDateRangeRow" style="display:none;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
-          <span style="font-size:12px;font-weight:700;color:#475569;white-space:nowrap;">Date Range:</span>
-          <input id="rqDateFrom" type="date" class="dash-filter-ctl" style="font-size:13px;width:150px;" />
-          <span style="color:#94a3b8;font-size:15px;">→</span>
-          <input id="rqDateTo" type="date" class="dash-filter-ctl" style="font-size:13px;width:150px;" />
+          <input id="rqDateFrom" type="hidden" />
+          <input id="rqDateTo" type="hidden" />
           <button onclick="_rqLoad()" class="button secondary" style="height:34px;font-size:12px;padding:0 14px;white-space:nowrap;">Apply</button>
         </div>
       </div>
@@ -112,12 +111,10 @@ function _rqRenderShell(target, showHeader) {
 
   // Wire change events
   const staleModeSel = document.getElementById('rqStaleMode')
-  const dateRangeRow = document.getElementById('rqDateRangeRow')
   const dateFromInput = document.getElementById('rqDateFrom')
   const dateToInput = document.getElementById('rqDateTo')
   if (staleModeSel) {
     staleModeSel.addEventListener('change', function () {
-      if (dateRangeRow) dateRangeRow.style.display = staleModeSel.value === 'custom' ? 'flex' : 'none'
       if (staleModeSel.value !== 'custom') _rqLoad()
     })
   }
@@ -142,6 +139,7 @@ function _rqRenderShell(target, showHeader) {
   // Auto-load
   _rqLoad()
 }
+
 
 async function renderRecycleQueue() {
   if (_recycleRenderInFlight) return

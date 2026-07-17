@@ -46,6 +46,8 @@ const ASSIGN_STRATEGY_LABELS = {
 let _lsTab     = 'sources';
 let _lsEditId  = null;
 let _lsSources = [];
+let _lsArchivedSources = [];
+let _lsSourcesLoaded = false;
 let _lsLogPage = 1;
 let _lsLogTotal = 0;
 const _lsLogPerPage = 25;
@@ -63,6 +65,7 @@ let _metaWizard   = {};
 let _googleWizard = {};
 
 const _LS_META_WIZARD_STORAGE_KEY = 'ls_meta_wizard';
+const _LS_GOOGLE_WIZARD_STORAGE_KEY = 'ls_google_wizard';
 
 function _lsPersistMetaWizard() {
     try {
@@ -87,6 +90,72 @@ function _lsClearPersistedMetaWizard() {
     } catch (_err) {}
 }
 
+function _lsPersistGoogleWizard() {
+    try {
+        sessionStorage.setItem(_LS_GOOGLE_WIZARD_STORAGE_KEY, JSON.stringify(_googleWizard || {}));
+    } catch (_err) {}
+}
+
+function _lsLoadPersistedGoogleWizard() {
+    try {
+        var raw = sessionStorage.getItem(_LS_GOOGLE_WIZARD_STORAGE_KEY);
+        if (!raw) return null;
+        var data = JSON.parse(raw);
+        return data && typeof data === 'object' ? data : null;
+    } catch (_err) {
+        return null;
+    }
+}
+
+function _lsClearPersistedGoogleWizard() {
+    try {
+        sessionStorage.removeItem(_LS_GOOGLE_WIZARD_STORAGE_KEY);
+    } catch (_err) {}
+}
+
+async function _lsReadJsonSafe(res) {
+    try {
+        return await res.json();
+    } catch (_err) {
+        return {};
+    }
+}
+
+async function _lsApiErrorMessage(res, fallback) {
+    var data = await _lsReadJsonSafe(res);
+    return (data && (data.error || data.message)) || fallback;
+}
+
+async function _lsEnsureSourcesLoaded() {
+    if (_lsSourcesLoaded) return true;
+    try {
+        var res = await authFetch('/api/lead-sources');
+        if (!res.ok) {
+            showToast(await _lsApiErrorMessage(res, 'Failed to load sources.'), 'danger');
+            return false;
+        }
+        var data = await _lsReadJsonSafe(res);
+        _lsSources = (data.sources || []).filter(function(s) { return s && s.is_active !== false; });
+        _lsSourcesLoaded = true;
+        return true;
+    } catch (err) {
+        showToast((err && err.message) || 'Failed to load sources.', 'danger');
+        return false;
+    }
+}
+
+async function _lsOpenTestLeadTab() {
+    var ok = await _lsEnsureSourcesLoaded();
+    if (!ok) return;
+    _lsRenderTestLead();
+}
+
+async function _lsOpenValidateTab() {
+    var ok = await _lsEnsureSourcesLoaded();
+    if (!ok) return;
+    _lsRenderValidate();
+}
+
 // Entry Point
 
 function renderLeadSources() {
@@ -103,6 +172,7 @@ function renderLeadSources() {
 
     <ul class="nav nav-tabs mb-4" id="ls-tabs">
         <li class="nav-item"><a class="nav-link active" href="#" data-tab="sources">Sources</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" data-tab="archived">Archived</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="connect">+ Connect</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="add">Manual / Webhook</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="testlead">Test Lead</a></li>
@@ -126,7 +196,14 @@ function renderLeadSources() {
     // Auto-switch to connect tab if returning from OAuth callback
     var urlParams = new URLSearchParams(window.location.search);
     var persistedMetaWizard = _lsLoadPersistedMetaWizard();
-    var startTab = (urlParams.get('meta_session') || urlParams.get('google_session') || urlParams.get('meta_tab') === 'connect' || (persistedMetaWizard && persistedMetaWizard.step >= 3)) ? 'connect' : 'sources';
+    var persistedGoogleWizard = _lsLoadPersistedGoogleWizard();
+    var startTab = (
+        urlParams.get('meta_session') ||
+        urlParams.get('google_session') ||
+        urlParams.get('meta_tab') === 'connect' ||
+        (persistedMetaWizard && persistedMetaWizard.step >= 3) ||
+        (persistedGoogleWizard && persistedGoogleWizard.step >= 2)
+    ) ? 'connect' : 'sources';
     _lsRenderTab(startTab);
     if (startTab === 'connect') {
         document.querySelectorAll('#ls-tabs .nav-link').forEach(function(a) {
@@ -152,10 +229,11 @@ function _lsRenderTab(tab) {
     const el = document.getElementById('ls-body');
     if (!el) return;
     if (tab === 'sources')  return _lsLoadSources();
+    if (tab === 'archived') return _lsLoadArchivedSources();
     if (tab === 'connect')  return _lsRenderConnect();
     if (tab === 'add')      return _lsRenderForm(null);
-    if (tab === 'testlead') return _lsRenderTestLead();
-    if (tab === 'validate') return _lsRenderValidate();
+    if (tab === 'testlead') return _lsOpenTestLeadTab();
+    if (tab === 'validate') return _lsOpenValidateTab();
     if (tab === 'tiertest') return _lsRenderTierTest();
     if (tab === 'logs')     return _lsLoadLogs(1);
     if (tab === 'reports')  return _lsLoadReports();
@@ -166,11 +244,38 @@ function _lsRenderTab(tab) {
 async function _lsLoadSources() {
     const el = document.getElementById('ls-body');
     el.innerHTML = '<div class="text-center py-5 text-muted">Loading...</div>';
-    const res = await authFetch('/api/lead-sources');
-    if (!res.ok) { el.innerHTML = '<p class="text-danger">Failed to load sources.</p>'; return; }
-    const data = await res.json();
-    _lsSources = (data.sources || []).filter(function(s) { return s && s.is_active !== false; });
+    try {
+        const res = await authFetch('/api/lead-sources');
+        if (!res.ok) {
+            el.innerHTML = '<p class="text-danger">' + _esc(await _lsApiErrorMessage(res, 'Failed to load sources.')) + '</p>';
+            return;
+        }
+        const data = await _lsReadJsonSafe(res);
+        _lsSources = (data.sources || []).filter(function(s) { return s && s.is_active !== false; });
+        _lsSourcesLoaded = true;
+    } catch (err) {
+        el.innerHTML = '<p class="text-danger">' + _esc((err && err.message) || 'Failed to load sources.') + '</p>';
+        return;
+    }
     _lsRenderSources();
+}
+
+async function _lsLoadArchivedSources() {
+    const el = document.getElementById('ls-body');
+    el.innerHTML = '<div class="text-center py-5 text-muted">Loading...</div>';
+    try {
+        const res = await authFetch('/api/lead-sources?include_inactive=true');
+        if (!res.ok) {
+            el.innerHTML = '<p class="text-danger">' + _esc(await _lsApiErrorMessage(res, 'Failed to load archived sources.')) + '</p>';
+            return;
+        }
+        const data = await _lsReadJsonSafe(res);
+        _lsArchivedSources = (data.sources || []).filter(function(s) { return s && s.is_active === false; });
+    } catch (err) {
+        el.innerHTML = '<p class="text-danger">' + _esc((err && err.message) || 'Failed to load archived sources.') + '</p>';
+        return;
+    }
+    _lsRenderArchivedSources();
 }
 
 function _lsRenderSources() {
@@ -211,6 +316,44 @@ function _lsRenderSources() {
 
     _lsRenderSourceCards();
     _lsBindSourceFilters();
+}
+
+function _lsRenderArchivedSources() {
+    const el = document.getElementById('ls-body');
+    if (!_lsArchivedSources.length) {
+        el.innerHTML = '<div class="text-center py-5 border rounded bg-white"><h4 class="mb-2">No Archived Sources</h4><p class="text-muted mb-0">Disabled or disconnected sources appear here for cleanup and restore.</p></div>';
+        return;
+    }
+
+    el.innerHTML =
+        '<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">' +
+            '<div><h5 class="mb-1">Archived Sources</h5><span class="text-muted small">' + _lsArchivedSources.length + ' source(s) archived</span></div>' +
+            '<div><button class="btn btn-outline-secondary btn-sm" onclick="_lsSwitchTab(\'sources\')">Back to Active Sources</button></div>' +
+        '</div>' +
+        '<div class="row g-3" id="ls-archived-card-grid"></div>';
+
+    var host = document.getElementById('ls-archived-card-grid');
+    host.innerHTML = _lsArchivedSources.map(function(s) {
+        return '<div class="col-xl-4 col-md-6">' +
+            '<div class="card h-100 shadow-sm border">' +
+                '<div class="card-body d-flex flex-column">' +
+                    '<div class="d-flex justify-content-between align-items-start mb-2">' +
+                        '<div><h6 class="mb-1">' + _esc(s.name || 'Unnamed Source') + '</h6><div class="text-muted small">' + _esc(SOURCE_TYPE_LABELS[s.source_type] || s.source_type || 'Source') + '</div></div>' +
+                        '<span class="badge bg-secondary">Archived</span>' +
+                    '</div>' +
+                    '<div class="small mb-3">' +
+                        '<div>Total Leads: ' + (s.total_leads_ingested || 0) + '</div>' +
+                        '<div>Last Lead: ' + (s.last_lead_at ? _lsRelTime(s.last_lead_at) : 'No lead yet') + '</div>' +
+                        '<div>Last Updated: ' + (s.updated_at ? _lsRelTime(s.updated_at) : 'N/A') + '</div>' +
+                    '</div>' +
+                    '<div class="mt-auto d-flex flex-wrap gap-1">' +
+                        '<button class="btn btn-sm btn-outline-secondary" onclick="_lsOpenSourceDetails(' + s.id + ')">View Details</button>' +
+                        '<button class="btn btn-sm btn-outline-success" onclick="_lsRestoreSource(' + s.id + ')">Restore</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+    }).join('');
 }
 
 function _lsSourceHealthState(s) {
@@ -340,11 +483,8 @@ async function _lsToggleSource(id, enable) {
         if (!confirm('Disconnect this account from the source?')) return;
         var res = await authFetch('/api/lead-sources/' + id + '/disconnect', { method: 'POST' });
         if (!res.ok) {
-            var msg = 'Disconnect failed';
-            try {
-                var d = await res.json();
-                msg = (d && d.error) || msg;
-            } catch (_e) {}
+            var msg = await _lsApiErrorMessage(res, 'Disconnect failed');
+            msg = 'Disconnect failed (HTTP ' + res.status + '): ' + msg;
             showToast(msg, 'danger');
             return;
         }
@@ -354,9 +494,19 @@ async function _lsToggleSource(id, enable) {
 
 function _lsOpenEdit(id) {
     _lsEditId = id;
-    var source = _lsSources.find(function(s) { return s.id === id; });
+    var source = _lsSources.find(function(s) { return s.id === id; }) || _lsArchivedSources.find(function(s) { return s.id === id; });
     _lsSwitchTab('add');
     if (source) _lsRenderForm(source);
+}
+
+async function _lsRestoreSource(id) {
+    var res = await authFetch('/api/lead-sources/' + id + '/enable', { method: 'POST' });
+    if (!res.ok) {
+        showToast(await _lsApiErrorMessage(res, 'Restore failed'), 'danger');
+        return;
+    }
+    showToast('Source restored', 'success');
+    await _lsLoadArchivedSources();
 }
 
 function _lsCloseSourceDetails() {
@@ -437,7 +587,7 @@ async function _lsLoadLiveSourceForms(source) {
 }
 
 function _lsOpenSourceDetails(id) {
-    var source = _lsSources.find(function(s) { return s.id === id; });
+    var source = _lsSources.find(function(s) { return s.id === id; }) || _lsArchivedSources.find(function(s) { return s.id === id; });
     if (!source) {
         showToast('Source not found', 'danger');
         return;
@@ -531,10 +681,16 @@ function _lsRenderConnect() {
     var metaSession   = urlParams.get('meta_session');
     var googleSession = urlParams.get('google_session');
     var persistedMetaWizard = _lsLoadPersistedMetaWizard();
+    var persistedGoogleWizard = _lsLoadPersistedGoogleWizard();
     if (metaSession || googleSession) {
         el.innerHTML = `<div class="row g-4"><div class="col-12"><div id="ls-wizard-area"></div></div></div>`;
         if (metaSession)   _lsStartMetaWizard();
         if (googleSession) _lsStartGoogleWizard();
+        return;
+    }
+    if (persistedGoogleWizard && persistedGoogleWizard.step >= 2) {
+        el.innerHTML = `<div class="row g-4"><div class="col-12"><div id="ls-wizard-area"></div></div></div>`;
+        _lsStartGoogleWizard();
         return;
     }
     if (persistedMetaWizard && persistedMetaWizard.step >= 3) {
@@ -805,10 +961,10 @@ async function _lsDisconnectExistingMetaSource() {
     if (!confirm('Disconnect all existing Meta source connections for this tenant?')) return;
     var listRes = await authFetch('/api/lead-sources');
     if (!listRes.ok) {
-        showToast('Could not load sources', 'danger');
+        showToast(await _lsApiErrorMessage(listRes, 'Could not load sources'), 'danger');
         return;
     }
-    var listData = await listRes.json();
+    var listData = await _lsReadJsonSafe(listRes);
     var metaSources = (listData.sources || []).filter(function(s) { return s.source_type === 'meta'; });
     if (!metaSources.length) {
         showToast('No Meta source found to disconnect', 'warning');
@@ -816,13 +972,24 @@ async function _lsDisconnectExistingMetaSource() {
     }
 
     var disconnected = 0;
+    var failed = [];
     for (var i = 0; i < metaSources.length; i++) {
         var s = metaSources[i];
         var res = await authFetch('/api/lead-sources/' + s.id + '/disconnect', { method: 'POST' });
-        if (res.ok) disconnected += 1;
+        if (res.ok) {
+            disconnected += 1;
+        } else {
+            failed.push({
+                id: s.id,
+                name: s.name,
+                status: res.status,
+                error: await _lsApiErrorMessage(res, 'Disconnect failed')
+            });
+        }
     }
     if (!disconnected) {
-        showToast('Disconnect failed', 'danger');
+        var firstFail = failed[0] || {};
+        showToast('Disconnect failed: ' + (firstFail.error || 'No source could be disconnected'), 'danger');
         return;
     }
 
@@ -830,7 +997,11 @@ async function _lsDisconnectExistingMetaSource() {
     var cleanUrl = window.location.pathname;
     window.history.replaceState({}, '', cleanUrl + '?meta_tab=connect');
     _lsStartMetaWizard(true);
-    showToast('Disconnected ' + disconnected + ' Meta source(s)', 'success');
+    if (failed.length) {
+        showToast('Disconnected ' + disconnected + ' source(s). ' + failed.length + ' failed. Check Logs/Network for details.', 'warning');
+    } else {
+        showToast('Disconnected ' + disconnected + ' Meta source(s)', 'success');
+    }
 }
 
 async function _lsMetaStep3Next(evt) {
@@ -893,6 +1064,7 @@ async function _lsMetaSave(evt) {
             body: JSON.stringify({
                 name:              name,
                 user_token:        _metaWizard.longToken,
+                business_id:        _metaWizard.businessId,
                 page_id:           _metaWizard.selectedPage.id,
                 page_name:         _metaWizard.selectedPage.name,
                 page_access_token: _metaWizard.selectedPage.access_token,
@@ -916,33 +1088,106 @@ async function _lsMetaSave(evt) {
 
 // â”€â”€â”€ GOOGLE WIZARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function _lsStartGoogleWizard() {
+function _lsStartGoogleWizard(forceFresh) {
     // Check if returning from OAuth callback
     var urlParams = new URLSearchParams(window.location.search);
     var sessionKey = urlParams.get('google_session');
-    if (sessionKey) {
-        _googleWizard = { step: 2, sessionKey: sessionKey, user: null, accessToken: '', refreshToken: '' };
+    var persistedGoogleWizard = _lsLoadPersistedGoogleWizard();
+    if (!forceFresh && sessionKey) {
+        _googleWizard = {
+            step: 2,
+            sessionKey: sessionKey,
+            user: null,
+            accessToken: '',
+            refreshToken: '',
+            accessibleAccounts: [],
+            discoveryError: '',
+            oauthHealthy: false,
+        };
+        _lsPersistGoogleWizard();
         _lsRenderGoogleWizard();
         _lsGoogleLoadSession(sessionKey);
         return;
     }
-    _googleWizard = { step: 1, sessionKey: '', user: null, accessToken: '', refreshToken: '' };
+    if (!forceFresh && persistedGoogleWizard && persistedGoogleWizard.step >= 2) {
+        _googleWizard = Object.assign({
+            step: 2,
+            sessionKey: '',
+            user: null,
+            accessToken: '',
+            refreshToken: '',
+            accessibleAccounts: [],
+            discoveryError: '',
+            oauthHealthy: false,
+        }, persistedGoogleWizard);
+        _lsRenderGoogleWizard();
+        return;
+    }
+
+    if (forceFresh) {
+        _lsClearPersistedGoogleWizard();
+        var cleanUrl = window.location.pathname;
+        window.history.replaceState({}, '', cleanUrl + '?meta_tab=connect');
+    }
+
+    _googleWizard = {
+        step: 1,
+        sessionKey: '',
+        user: null,
+        accessToken: '',
+        refreshToken: '',
+        accessibleAccounts: [],
+        discoveryError: '',
+        oauthHealthy: false,
+    };
+    _lsPersistGoogleWizard();
     _lsRenderGoogleWizard();
+}
+
+function _lsGoogleManualAccounts() {
+    var input = document.getElementById('gw-manual-customer-ids');
+    if (!input) return [];
+    var raw = String(input.value || '');
+    var ids = raw.split(/[\n,\s;]+/).map(function(v) {
+        return String(v || '').replace(/\D/g, '');
+    }).filter(Boolean);
+    var out = [];
+    var seen = {};
+    ids.forEach(function(cid) {
+        if (seen[cid]) return;
+        seen[cid] = true;
+        out.push({
+            customer_id: cid,
+            customer_name: 'Google Ads ' + cid,
+            resource_name: 'customers/' + cid,
+        });
+    });
+    return out;
 }
 
 async function _lsGoogleLoadSession(sessionKey) {
     var el = document.getElementById('ls-wizard-area');
-    var res = await authFetch('/api/lead-sources/google/auth-session/' + encodeURIComponent(sessionKey));
-    if (!res.ok) {
-        var data = await res.json();
-        if (el) el.innerHTML = '<div class="alert alert-danger">' + _esc(data.error || 'Session expired') + ' - <a href="#" onclick="event.preventDefault();_lsStartGoogleWizard()">Start over</a></div>';
+    var res;
+    try {
+        res = await authFetch('/api/lead-sources/google/auth-session/' + encodeURIComponent(sessionKey));
+    } catch (err) {
+        if (el) el.innerHTML = '<div class="alert alert-danger">' + _esc((err && err.message) || 'Could not restore Google session') + ' - <a href="#" onclick="event.preventDefault();_lsStartGoogleWizard()">Start over</a></div>';
         return;
     }
-    var data = await res.json();
+    if (!res.ok) {
+        var errMsg = await _lsApiErrorMessage(res, 'Session expired');
+        if (el) el.innerHTML = '<div class="alert alert-danger">' + _esc(errMsg) + ' - <a href="#" onclick="event.preventDefault();_lsStartGoogleWizard()">Start over</a></div>';
+        return;
+    }
+    var data = await _lsReadJsonSafe(res);
     _googleWizard.user         = data.user;
     _googleWizard.accessToken  = data.access_token || '';
     _googleWizard.refreshToken = data.refresh_token || '';
+    _googleWizard.accessibleAccounts = Array.isArray(data.accessible_accounts) ? data.accessible_accounts : [];
+    _googleWizard.discoveryError = data.account_discovery_error || '';
+    _googleWizard.oauthHealthy = !!data.oauth_healthy;
     _googleWizard.step         = 2;
+    _lsPersistGoogleWizard();
     var cleanUrl = window.location.pathname;
     window.history.replaceState({}, '', cleanUrl);
     _lsRenderGoogleWizard();
@@ -973,18 +1218,44 @@ function _lsRenderGoogleWizard() {
         <p class="text-muted small">You'll be redirected to Google to authorize access to your Google Ads Lead Forms.</p>`;
 
     } else if (w.step === 2) {
+        var accounts = Array.isArray(w.accessibleAccounts) ? w.accessibleAccounts : [];
+        var accountRows = accounts.map(function(acc, idx) {
+            var cid = _esc(acc.customer_id || '');
+            var cname = _esc(acc.customer_name || ('Google Ads ' + cid));
+            return '<label class="list-group-item d-flex align-items-center gap-2">' +
+                '<input class="form-check-input me-2" type="checkbox" value="' + cid + '" data-name="' + cname + '" data-resource="' + _esc(acc.resource_name || ('customers/' + cid)) + '" ' + (idx === 0 ? 'checked' : '') + '>' +
+                '<span><strong>' + cname + '</strong><br><small class="text-muted">Customer ID: ' + cid + '</small></span>' +
+            '</label>';
+        }).join('');
+
+        var oauthBadge = w.oauthHealthy
+            ? '<span class="badge bg-success">OAuth Healthy</span>'
+            : '<span class="badge bg-warning text-dark">OAuth Needs Attention</span>';
+
         body = `
         <p class="text-muted small">Connected as <strong>${_esc(w.user ? (w.user.name || w.user.email) : '')}</strong>.</p>
+        <div class="mb-2">${oauthBadge}</div>
+        ${w.discoveryError ? '<div class="alert alert-warning py-2 small">Account discovery warning: ' + _esc(w.discoveryError) + '</div>' : ''}
         <div class="mb-3">
-            <label class="form-label">Google Ads Customer ID <small class="text-muted">(optional)</small></label>
-            <input class="form-control" id="gw-customer-id" placeholder="123-456-7890">
-            <div class="form-text">Find this in Google Ads -> top bar next to your account name.</div>
+            <label class="form-label">Google Ads Accounts <span class="text-danger">*</span></label>
+            ${accounts.length
+                ? '<div id="gw-account-list" class="list-group" style="max-height:220px; overflow:auto">' + accountRows + '</div>'
+                : '<div class="alert alert-danger py-2 small mb-0">No accessible Google Ads accounts found. Ensure GOOGLE_DEVELOPER_TOKEN is configured and this Google user has Ads account access.</div>'
+            }
         </div>
+        ${accounts.length ? '' : `
+        <div class="mb-3">
+            <label class="form-label">Manual Customer IDs (fallback)</label>
+            <textarea id="gw-manual-customer-ids" class="form-control" rows="3" placeholder="Paste one or more Google Ads Customer IDs, comma/newline separated. Example: 1234567890, 9988776655"></textarea>
+            <div class="form-text">Use this if account discovery fails but access is shared to this Google login.</div>
+        </div>
+        `}
         <div class="mb-3">
             <label class="form-label">Source Name</label>
             <input class="form-control" id="gw-source-name" value="${_esc('Google - ' + (w.user ? (w.user.email || '') : ''))}">
         </div>
         <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary" onclick="_lsStartGoogleWizard(true)">Start Over</button>
             <button class="btn btn-success" onclick="_lsGoogleSave(event)">Save &amp; Activate</button>
         </div>`;
     }
@@ -995,33 +1266,67 @@ function _lsRenderGoogleWizard() {
 async function _lsGoogleOpenLogin(evt) {
     var btn = _lsEventButton(evt);
     if (btn) { btn.disabled = true; btn.innerHTML = 'Loading...'; }
-    var res = await authFetch('/api/lead-sources/google/start-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    var data = await res.json();
-    if (btn) { btn.disabled = false; }
-    if (!res.ok) { showToast(data.error || 'Could not start OAuth', 'danger'); return; }
+    var res;
+    try {
+        res = await authFetch('/api/lead-sources/google/start-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.innerHTML = 'Login with Google'; }
+        showToast((err && err.message) || 'Could not start OAuth', 'danger');
+        return;
+    }
+    var data = await _lsReadJsonSafe(res);
+    if (btn) { btn.disabled = false; btn.innerHTML = 'Login with Google'; }
+    if (!res.ok) { showToast((data && data.error) || 'Could not start OAuth', 'danger'); return; }
     window.location.href = data.auth_url;
 }
 
 async function _lsGoogleSave(evt) {
     var name       = ((document.getElementById('gw-source-name') || {}).value || '').trim();
-    var customerId = ((document.getElementById('gw-customer-id') || {}).value || '').trim();
+    var selectedAccounts = [];
+    var listRoot = document.getElementById('gw-account-list');
+    if (listRoot) {
+        listRoot.querySelectorAll('input[type="checkbox"]:checked').forEach(function(cb) {
+            var cid = (cb.value || '').trim();
+            if (!cid) return;
+            selectedAccounts.push({
+                customer_id: cid,
+                customer_name: (cb.getAttribute('data-name') || '').trim(),
+                resource_name: (cb.getAttribute('data-resource') || '').trim(),
+            });
+        });
+    }
+    if (!selectedAccounts.length) {
+        selectedAccounts = _lsGoogleManualAccounts();
+    }
+    if (!selectedAccounts.length) {
+        showToast('Select at least one Google Ads account or provide manual Customer IDs', 'danger');
+        return;
+    }
     var btn = _lsEventButton(evt);
     if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-    var res = await authFetch('/api/lead-sources/google/save-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name:          name || ('Google - ' + (_googleWizard.user ? _googleWizard.user.email : '')),
-            client_id:     '__platform__',
-            client_secret: '__platform__',
-            refresh_token: _googleWizard.refreshToken,
-            customer_id:   customerId,
-            user_email:    _googleWizard.user ? _googleWizard.user.email : '',
-        }),
-    });
+    var res;
+    try {
+        res = await authFetch('/api/lead-sources/google/save-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name:          name || ('Google - ' + (_googleWizard.user ? _googleWizard.user.email : '')),
+                client_id:     '__platform__',
+                client_secret: '__platform__',
+                refresh_token: _googleWizard.refreshToken,
+                user_email:    _googleWizard.user ? _googleWizard.user.email : '',
+                selected_accounts: selectedAccounts,
+            }),
+        });
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save & Activate'; }
+        showToast((err && err.message) || 'Save failed', 'danger');
+        return;
+    }
     if (btn) { btn.disabled = false; btn.textContent = 'Save & Activate'; }
-    var data = await res.json();
+    var data = await _lsReadJsonSafe(res);
     if (!res.ok) { showToast(data.error || 'Save failed', 'danger'); return; }
+    _lsClearPersistedGoogleWizard();
     showToast('Google source connected!', 'success');
     await _lsLoadSources();
     _lsSwitchTab('sources');
@@ -1199,11 +1504,15 @@ async function _lsDeleteSource(id) {
     if (!res.ok && (res.status === 404 || res.status === 405)) {
         res = await authFetch('/api/lead-sources/' + id, { method: 'DELETE' });
     }
-    if (!res.ok) { showToast('Remove failed', 'danger'); return; }
+    if (!res.ok) { showToast(await _lsApiErrorMessage(res, 'Remove failed'), 'danger'); return; }
     showToast('Source removed from active list', 'success');
     _lsEditId = null;
-    await _lsLoadSources();
-    _lsSwitchTab('sources');
+    if (_lsTab === 'archived') {
+        await _lsLoadArchivedSources();
+    } else {
+        await _lsLoadSources();
+        _lsSwitchTab('sources');
+    }
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1268,14 +1577,22 @@ async function _lsRunTestLead(evt) {
     if (emailVal) body.email = emailVal;
     if (campVal)  body.campaign_name = campVal;
 
-    var res = await authFetch('/api/lead-sources/' + sourceId + '/inject-test-lead', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-    });
+    var res;
+    try {
+        res = await authFetch('/api/lead-sources/' + sourceId + '/inject-test-lead', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Run Test Lead'; }
+        var netEl = document.getElementById('ls-test-result');
+        if (netEl) netEl.innerHTML = '<div class="alert alert-danger">' + _esc((err && err.message) || 'Network error while running test lead') + '</div>';
+        return;
+    }
     if (btn) { btn.disabled = false; btn.textContent = 'Run Test Lead'; }
 
-    var data = await res.json();
+    var data = await _lsReadJsonSafe(res);
     var el = document.getElementById('ls-test-result');
 
     if (!res.ok) {
@@ -1359,11 +1676,21 @@ function _lsRenderValidate() {
             </div>
             <button class="btn btn-dark w-100" onclick="_lsRunValidation(event)">Run Validation</button>
             <p class="text-muted small mt-2">Test leads will be created in your database.</p>
+
+            <hr>
+            <h6 class="mb-2">Google Foundation Status</h6>
+            <p class="text-muted small mb-2">Checks attribution capture + account connection health.</p>
+            <button class="btn btn-outline-primary w-100" onclick="_lsRunFoundationValidation(event)">Check Foundation</button>
         </div>
-        <div class="col-md-8" id="ls-val-result">
-            <div class="text-muted small pt-4 text-center">Select sources and click Run Validation.</div>
+        <div class="col-md-8">
+            <div id="ls-foundation-result" class="mb-3"></div>
+            <div id="ls-val-result">
+                <div class="text-muted small pt-4 text-center">Select sources and click Run Validation.</div>
+            </div>
         </div>
     </div>`;
+
+    _lsRenderFoundationStatus(null, 'Click "Check Foundation" to validate GCLID/UTM capture and Google OAuth/account setup.');
 }
 
 async function _lsRunValidation(evt) {
@@ -1375,17 +1702,24 @@ async function _lsRunValidation(evt) {
     var el = document.getElementById('ls-val-result');
     el.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary mb-3"></div><p class="text-muted">Running 7 validation checks...</p></div>';
 
-    var res = await authFetch('/api/lead-sources/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            meta_source_id:   metaId   ? parseInt(metaId)   : null,
-            google_source_id: googleId ? parseInt(googleId) : null,
-        }),
-    });
+    var res;
+    try {
+        res = await authFetch('/api/lead-sources/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                meta_source_id:   metaId   ? parseInt(metaId)   : null,
+                google_source_id: googleId ? parseInt(googleId) : null,
+            }),
+        });
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Run Validation'; }
+        el.innerHTML = '<div class="alert alert-danger">' + _esc((err && err.message) || 'Validation request failed') + '</div>';
+        return;
+    }
     if (btn) { btn.disabled = false; btn.textContent = 'Run Validation'; }
 
-    var data = await res.json();
+    var data = await _lsReadJsonSafe(res);
     if (!res.ok) {
         el.innerHTML = '<div class="alert alert-danger">' + _esc(data.error || 'Validation request failed') + '</div>';
         return;
@@ -1488,6 +1822,82 @@ async function _lsRunValidation(evt) {
 
 function _lsSubBadge(label, passed) {
     return '<span class="badge bg-' + (passed ? 'success' : 'danger') + ' text-wrap">' + _esc(label) + ' ' + (passed ? '[OK]' : '[X]') + '</span>';
+}
+
+function _lsRenderFoundationStatus(status, hint) {
+    var el = document.getElementById('ls-foundation-result');
+    if (!el) return;
+
+    if (!status) {
+        el.innerHTML = '<div class="alert alert-light border mb-0"><small class="text-muted">' + _esc(hint || 'No data yet') + '</small></div>';
+        return;
+    }
+
+    function row(label, ok, detail) {
+        return '<tr>' +
+            '<td>' + _esc(label) + '</td>' +
+            '<td><span class="badge bg-' + (ok ? 'success' : 'danger') + '">' + (ok ? 'YES' : 'NO') + '</span></td>' +
+            '<td><small class="text-muted">' + _esc(detail || '') + '</small></td>' +
+        '</tr>';
+    }
+
+    var accounts = status.connected_accounts || [];
+    var accountText = accounts.length ? accounts.map(function(a) { return a.customer_id; }).join(', ') : 'No accounts selected';
+    var oauthDetail = (status.oauth_test && status.oauth_test.message) || '';
+
+    el.innerHTML =
+        '<div class="card border-primary-subtle">' +
+            '<div class="card-header bg-light"><strong>Google Foundation Validation</strong></div>' +
+            '<div class="card-body p-0">' +
+                '<table class="table table-sm mb-0">' +
+                    '<thead class="table-light"><tr><th>Check</th><th style="width:90px">Status</th><th>Details</th></tr></thead>' +
+                    '<tbody>' +
+                        row('GCLID detected', !!status.gclid_detected, status.gclid_detected ? 'Detected in tracking snapshot or ingestion logs' : 'Not detected yet') +
+                        row('UTM detected', !!status.utm_detected, status.utm_detected ? 'UTM parameters available' : 'No UTM values found yet') +
+                        row('Account connected', !!status.account_connected, accountText) +
+                        row('OAuth healthy', !!status.oauth_healthy, oauthDetail) +
+                    '</tbody>' +
+                '</table>' +
+            '</div>' +
+        '</div>';
+}
+
+async function _lsRunFoundationValidation(evt) {
+    var btn = _lsEventButton(evt);
+    var googleId = (document.getElementById('ls-val-google') || {}).value;
+    if (!googleId) {
+        showToast('Select a Google source first', 'danger');
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
+
+    var tracker = window.smAttributionTracker;
+    var snapshot = tracker && typeof tracker.captureFromLocation === 'function'
+        ? tracker.captureFromLocation()
+        : {};
+
+    var res;
+    try {
+        res = await authFetch('/api/lead-sources/google/foundation-status?source_id=' + encodeURIComponent(String(googleId)));
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Check Foundation'; }
+        _lsRenderFoundationStatus(null, (err && err.message) || 'Failed to load foundation status');
+        return;
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Check Foundation'; }
+
+    var data = await _lsReadJsonSafe(res);
+    if (!res.ok) {
+        _lsRenderFoundationStatus(null, data.error || 'Foundation check failed');
+        return;
+    }
+
+    var snapshotGclid = !!(snapshot && snapshot.gclid);
+    var snapshotUtm = !!(snapshot && (snapshot.utm_source || snapshot.utm_medium || snapshot.utm_campaign || snapshot.utm_content || snapshot.utm_term));
+    data.gclid_detected = !!data.gclid_detected || snapshotGclid;
+    data.utm_detected = !!data.utm_detected || snapshotUtm;
+
+    _lsRenderFoundationStatus(data, '');
 }
 
 async function _lsRenderTierTest() {
@@ -1691,9 +2101,15 @@ async function _lsLoadLogs(page) {
     var el = document.getElementById('ls-body');
     el.innerHTML = '<div class="text-center py-5 text-muted">Loading logs...</div>';
 
-    var res = await authFetch('/api/lead-sources/logs?page=' + page + '&per_page=' + _lsLogPerPage);
-    if (!res.ok) { el.innerHTML = '<p class="text-danger">Failed to load logs.</p>'; return; }
-    var data = await res.json();
+    var res;
+    try {
+        res = await authFetch('/api/lead-sources/logs?page=' + page + '&per_page=' + _lsLogPerPage);
+    } catch (err) {
+        el.innerHTML = '<p class="text-danger">' + _esc((err && err.message) || 'Failed to load logs.') + '</p>';
+        return;
+    }
+    if (!res.ok) { el.innerHTML = '<p class="text-danger">' + _esc(await _lsApiErrorMessage(res, 'Failed to load logs.')) + '</p>'; return; }
+    var data = await _lsReadJsonSafe(res);
     _lsLogTotal = data.total || 0;
 
     function statusBadge(s) {
@@ -1704,11 +2120,11 @@ async function _lsLoadLogs(page) {
 
     var rows = (data.logs || []).map(function(l) {
         return '<tr>' +
-            '<td>' + new Date(l.received_at).toLocaleString() + '</td>' +
+            '<td>' + (_lsDateFromIso(l.received_at) ? _lsDateFromIso(l.received_at).toLocaleString() : '-') + '</td>' +
             '<td>' + (SOURCE_TYPE_LABELS[l.source_type] || l.source_type) + '</td>' +
             '<td>' + _esc(l.campaign_name || '-') + '</td>' +
             '<td>' + statusBadge(l.status) + '</td>' +
-            '<td>' + (l.lead_id ? '#' + l.lead_id : 'â€”') + '</td>' +
+            '<td>' + (l.lead_id ? '#' + l.lead_id : '-') + '</td>' +
             '<td class="text-muted small text-truncate" style="max-width:200px">' + _esc((l.error_message || '').substring(0, 80)) + '</td>' +
         '</tr>';
     }).join('') || '<tr><td colspan="6" class="text-center text-muted">No logs yet</td></tr>';
@@ -1739,12 +2155,22 @@ async function _lsLoadReports() {
     var el = document.getElementById('ls-body');
     el.innerHTML = '<div class="text-center py-5 text-muted">Loading reports...</div>';
 
-    var results = await Promise.all([
-        authFetch('/api/lead-sources/reports/by-source'),
-        authFetch('/api/lead-sources/reports/by-campaign'),
-    ]);
-    var bySource   = results[0].ok   ? (await results[0].json()).rows || [] : [];
-    var byCampaign = results[1].ok   ? (await results[1].json()).rows || [] : [];
+    var results;
+    try {
+        results = await Promise.all([
+            authFetch('/api/lead-sources/reports/by-source'),
+            authFetch('/api/lead-sources/reports/by-campaign'),
+        ]);
+    } catch (err) {
+        el.innerHTML = '<p class="text-danger">' + _esc((err && err.message) || 'Failed to load reports.') + '</p>';
+        return;
+    }
+    if (!results[0].ok && !results[1].ok) {
+        el.innerHTML = '<p class="text-danger">Could not load reports right now.</p>';
+        return;
+    }
+    var bySource   = results[0].ok   ? ((await _lsReadJsonSafe(results[0])).rows || []) : [];
+    var byCampaign = results[1].ok   ? ((await _lsReadJsonSafe(results[1])).rows || []) : [];
 
     var srcRows = bySource.map(function(r) {
         return '<tr><td>' + _esc(r.source_name) + '</td><td>' + (SOURCE_TYPE_LABELS[r.source_type] || r.source_type) + '</td>' +
@@ -1789,11 +2215,24 @@ function _esc(s) {
         .replace(/"/g, '&quot;');
 }
 
+function _lsDateFromIso(iso) {
+    if (!iso) return null;
+    var text = String(iso).trim();
+    if (!text) return null;
+    // Backend stores UTC datetimes without timezone; treat naive timestamps as UTC.
+    if (!/(Z|[+-]\d\d:\d\d)$/i.test(text)) text += 'Z';
+    var d = new Date(text);
+    return isNaN(d.getTime()) ? null : d;
+}
+
 function _lsRelTime(iso) {
     if (!iso) return '-';
-    var diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    var d = _lsDateFromIso(iso);
+    if (!d) return '-';
+    var diff = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (diff < 0) diff = 0;
     if (diff < 60)    return diff + 's ago';
     if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
     if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-    return new Date(iso).toLocaleDateString();
+    return d.toLocaleDateString();
 }

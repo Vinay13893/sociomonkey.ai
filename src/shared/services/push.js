@@ -41,7 +41,7 @@ async function pushRegisterServiceWorker() {
   if (!('serviceWorker' in navigator)) return null
   if (_swRegistration) return _swRegistration
   try {
-    _swRegistration = await navigator.serviceWorker.register('/service-worker.js', { scope: '/apps/lms/' })
+    _swRegistration = await navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
     return _swRegistration
   } catch (err) {
     console.warn('[push] SW registration failed:', err)

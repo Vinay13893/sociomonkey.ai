@@ -19,8 +19,12 @@ includes('/api/lead-sources/reports/by-source/export.', 'Source performance expo
 includes('/api/lead-sources/', 'Lead Sources API usage')
 includes('/meta/pull-recent', 'Manual Refresh Forms lead pull path')
 includes('full_history: false', 'Refresh Forms must remain bounded')
+includes('Submissions', 'Source card must show ingestion submissions')
+includes('LMS leads', 'Source card must show accepted LMS lead rows')
+includes('s.ingestion_events_count', 'Source card must use canonical submission count')
+includes('s.lms_leads_count', 'Source card must use LMS lead-row count')
 
-for (const header of ['Source', 'Form', 'Spend', 'Total Leads', 'Unique Leads', 'Processed', 'Duplicate', 'Errors', 'Conversion %', 'CPL']) {
+for (const header of ['Source', 'Form', 'Spend', 'Submissions', 'Source Created', 'Last Sync', 'Unique Leads', 'Processed', 'Duplicate', 'Errors', 'Conversion %', 'CPL']) {
   includes(`<th>${header}</th>`, `Performance Snapshot header ${header}`)
 }
 
