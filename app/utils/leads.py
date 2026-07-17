@@ -35,6 +35,83 @@ STATUS_LABELS = {
     'connected':           'Follow Up (legacy)',
 }
 
+def should_include_test_leads():
+    try:
+        raw = str(flask_request.args.get('show_test_data', '')).strip().lower()
+    except RuntimeError:
+        return False
+    return raw in {'1', 'true', 'yes', 'on'}
+
+def apply_test_lead_filter(query):
+    if should_include_test_leads():
+        return query
+    return query.filter(Lead.is_test == False)
+
+
+def _nonblank(column):
+    return db.func.trim(db.func.coalesce(column, '')) != ''
+
+
+def apply_valid_lead_capture_scope(query, tenant_id):
+    """Apply the canonical LMS definition of a countable lead.
+
+    Countable leads must be active, non-test unless explicitly requested by the
+    caller, have a name and at least one contact channel, and have trustworthy
+    provenance:
+    - connected Meta/Google/etc. source rows require a processed ingestion log
+    - manual/import rows are accepted only when they are user-created and not
+      labelled as one of the connected source names
+    """
+    from app.models.ingestion import IngestedLeadLog, LeadSource
+    from app.utils.lead_source_cutoff import lead_source_cutoff_for
+
+    tenant_cutoff = lead_source_cutoff_for(tenant_id=tenant_id)
+
+    processed_source_lead_ids = (
+        db.session.query(IngestedLeadLog.lead_id)
+        .join(LeadSource, IngestedLeadLog.source_id == LeadSource.id)
+        .filter(IngestedLeadLog.tenant_id == tenant_id)
+        .filter(LeadSource.tenant_id == tenant_id)
+        .filter(LeadSource.is_active == True)
+        .filter(IngestedLeadLog.status == 'processed')
+        .filter(IngestedLeadLog.lead_id.isnot(None))
+    )
+    if tenant_cutoff:
+        processed_source_lead_ids = processed_source_lead_ids.filter(
+            IngestedLeadLog.received_at >= tenant_cutoff
+        )
+
+    connected_source_names = (
+        db.session.query(db.func.lower(db.func.trim(LeadSource.name)))
+        .filter(LeadSource.tenant_id == tenant_id)
+        .filter(LeadSource.is_active == True)
+        .filter(LeadSource.name.isnot(None))
+        .filter(db.func.trim(LeadSource.name) != '')
+        .distinct()
+    )
+
+    has_required_fields = db.and_(
+        _nonblank(Lead.name),
+        db.or_(
+            _nonblank(Lead.phone),
+            _nonblank(Lead.alternate_phone),
+            _nonblank(Lead.email),
+        ),
+    )
+    valid_manual_or_import = db.and_(
+        Lead.created_by.isnot(None),
+        db.or_(
+            Lead.source.is_(None),
+            db.func.trim(db.func.coalesce(Lead.source, '')) == '',
+            ~db.func.lower(db.func.trim(Lead.source)).in_(connected_source_names),
+        ),
+    )
+
+    return query.filter(has_required_fields).filter(db.or_(
+        Lead.id.in_(processed_source_lead_ids.distinct()),
+        valid_manual_or_import,
+    ))
+
 
 def get_user_visible_leads(user):
     """Return a SQLAlchemy query filtered to leads visible to *user*, scoped by tenant.
@@ -51,17 +128,19 @@ def get_user_visible_leads(user):
         try:
             scoped_tid = flask_request.current_tenant_id
             if scoped_tid and scoped_tid != user.tenant_id:
-                return Lead.query.filter_by(is_active=True, tenant_id=scoped_tid)
+                query = Lead.query.filter_by(is_active=True, tenant_id=scoped_tid)
+                return apply_valid_lead_capture_scope(apply_test_lead_filter(query), scoped_tid)
         except RuntimeError:
             pass  # Outside of request context (tests, scripts)
-        return Lead.query.filter_by(is_active=True)
+        return apply_test_lead_filter(Lead.query.filter_by(is_active=True))
 
     if user.role == 'superadmin':
-        return Lead.query.filter_by(is_active=True, tenant_id=tid)
+        query = Lead.query.filter_by(is_active=True, tenant_id=tid)
+        return apply_valid_lead_capture_scope(apply_test_lead_filter(query), tid)
 
     if user.role == 'sales_manager':
         team_ids = [tm.id for tm in user.team_members]
-        return Lead.query.filter(
+        query = Lead.query.filter(
             Lead.is_active == True,
             Lead.tenant_id == tid,
             db.or_(
@@ -70,12 +149,14 @@ def get_user_visible_leads(user):
                 Lead.assigned_to.in_(team_ids),
             )
         )
+        return apply_valid_lead_capture_scope(apply_test_lead_filter(query), tid)
 
     if user.role == 'team_member':
-        return Lead.query.filter(
+        query = Lead.query.filter(
             Lead.is_active == True,
             Lead.tenant_id == tid,
             Lead.assigned_to == user.id,
         )
+        return apply_valid_lead_capture_scope(apply_test_lead_filter(query), tid)
 
     return Lead.query.filter(Lead.id == -1)

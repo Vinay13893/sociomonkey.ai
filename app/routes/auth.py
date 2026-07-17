@@ -14,6 +14,75 @@ from app.utils.activity import log_activity
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
+LOGIN_CONTEXTS = frozenset(['platform', 'tenant', 'demo'])
+PLATFORM_ROLES = frozenset(['platform_owner', 'platform_admin', 'product_admin'])
+
+
+def _invalid_login_context(message, status=403):
+    return jsonify({
+        'code': 'INVALID_LOGIN_CONTEXT',
+        'message': message,
+        'error': message,
+    }), status
+
+
+def _is_platform_user(user):
+    return user and (
+        user.role in PLATFORM_ROLES
+        or (user.role == 'superadmin' and not user.tenant_id)
+    )
+
+
+def _is_demo_user(user):
+    return bool(user and getattr(user, 'tenant', None) and user.tenant.slug == 'demo')
+
+
+def _validate_login_context(user, login_context, tenant_slug='', product_slug=''):
+    login_context = (login_context or '').strip().lower()
+    tenant_slug = (tenant_slug or '').strip().lower()
+    product_slug = (product_slug or '').strip().lower()
+
+    if login_context not in LOGIN_CONTEXTS:
+        return None, _invalid_login_context('A valid login_context is required.', 400)
+
+    if login_context == 'platform':
+        if not _is_platform_user(user):
+            return None, _invalid_login_context('This account must sign in through the tenant portal.')
+        return login_context, None
+
+    if login_context == 'tenant':
+        if not tenant_slug:
+            return None, _invalid_login_context('tenant_slug is required for tenant login.', 400)
+        if _is_platform_user(user):
+            return None, _invalid_login_context('This account must sign in through the platform portal.')
+        if _is_demo_user(user):
+            return None, _invalid_login_context('This account must sign in through the demo portal.')
+
+        from app.models.tenant import Tenant
+        tenant = Tenant.query.filter_by(slug=tenant_slug).first()
+        if not tenant or user.tenant_id != tenant.id:
+            return None, _invalid_login_context('Access denied for this tenant.')
+        return login_context, None
+
+    if login_context == 'demo':
+        if not _is_demo_user(user):
+            return None, _invalid_login_context('This account must sign in through the demo portal.')
+        if product_slug:
+            from app.models.product import Product, TenantProduct
+            product = Product.query.filter_by(slug=product_slug, is_active=True).first()
+            if not product:
+                return None, _invalid_login_context('Demo access is not available for this product.')
+            subscription = TenantProduct.query.filter_by(
+                tenant_id=user.tenant_id,
+                product_id=product.id,
+                status='active',
+            ).first()
+            if not subscription:
+                return None, _invalid_login_context('Demo access is not available for this product.')
+        return login_context, None
+
+    return None, _invalid_login_context('A valid login_context is required.', 400)
+
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
@@ -21,6 +90,8 @@ def login():
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
     remember = bool(data.get('remember', False))
+    login_context = (data.get('login_context') or '').strip().lower()
+    product_slug = (data.get('product_slug') or data.get('product') or '').strip().lower()
 
     if not email or not password:
         return jsonify({'error': 'Invalid credentials'}), 401
@@ -39,13 +110,10 @@ def login():
     if not user.is_active:
         return jsonify({'error': 'Account is inactive'}), 403
 
-    # If a tenant slug is provided (from subdomain), validate the user belongs to that tenant
     tenant_slug = data.get('tenant_slug', '').strip().lower()
-    if tenant_slug and user.role != 'platform_owner':
-        from app.models.tenant import Tenant
-        tenant = Tenant.query.filter_by(slug=tenant_slug).first()
-        if tenant and user.tenant_id != tenant.id:
-            return jsonify({'error': 'Invalid credentials'}), 401
+    login_context, context_error = _validate_login_context(user, login_context, tenant_slug, product_slug)
+    if context_error:
+        return context_error
 
     user.last_login = datetime.utcnow()
     from app.models.base import db
@@ -54,10 +122,20 @@ def login():
     # 30 days for "Keep me signed in", else default 24h
     # Access token: always short-lived (24h). Refresh token: 30d, issued only
     # when the user opted in to "Keep me signed in".
-    token = create_token(user.id, user.role, tenant_id=user.tenant_id)
-    response = {'token': token, 'user': user.to_dict(), 'products': _get_user_products(user)}
+    token = create_token(user.id, user.role, tenant_id=user.tenant_id, login_context=login_context)
+    response = {
+        'token': token,
+        'user': user.to_dict(),
+        'products': _get_user_products(user),
+        'login_context': login_context,
+    }
     if remember:
-        response['refresh_token'] = create_refresh_token(user.id, user.role, tenant_id=user.tenant_id)
+        response['refresh_token'] = create_refresh_token(
+            user.id,
+            user.role,
+            tenant_id=user.tenant_id,
+            login_context=login_context,
+        )
     log_activity(user.id, 'login', 'auth', description=f'{user.email} logged in')
 
     return jsonify(response), 200
@@ -67,7 +145,11 @@ def login():
 @require_auth
 def me():
     user = request.current_user
-    return jsonify({'user': user.to_dict(), 'products': _get_user_products(user)}), 200
+    return jsonify({
+        'user': user.to_dict(),
+        'products': _get_user_products(user),
+        'login_context': getattr(request, 'current_login_context', None),
+    }), 200
 
 
 @auth_bp.route('/logout', methods=['POST'])
@@ -100,15 +182,30 @@ def refresh():
     if not user or not user.is_active:
         return jsonify({'error': 'Account not found or inactive'}), 401
 
-    new_access = create_token(user.id, user.role, tenant_id=user.tenant_id)
+    login_context = payload.get('ctx')
+    if login_context not in LOGIN_CONTEXTS:
+        return jsonify({'error': 'Invalid refresh token'}), 401
+
+    new_access = create_token(
+        user.id,
+        user.role,
+        tenant_id=user.tenant_id,
+        login_context=login_context,
+    )
     # Rolling refresh: also rotate the refresh token so an active user keeps
     # their 30-day window extending. Old refresh token stays valid until exp
     # (no server-side blacklist in Phase M1 — acceptable for this threat model).
-    new_refresh = create_refresh_token(user.id, user.role, tenant_id=user.tenant_id)
+    new_refresh = create_refresh_token(
+        user.id,
+        user.role,
+        tenant_id=user.tenant_id,
+        login_context=login_context,
+    )
     return jsonify({
         'token': new_access,
         'refresh_token': new_refresh,
         'user': user.to_dict(),
+        'login_context': login_context,
     }), 200
 
 
@@ -232,6 +329,8 @@ def send_otp():
     data        = request.get_json() or {}
     email       = (data.get('email')       or '').strip().lower()
     tenant_slug = (data.get('tenant_slug') or '').strip().lower()
+    login_context = (data.get('login_context') or '').strip().lower()
+    product_slug = (data.get('product_slug') or data.get('product') or '').strip().lower()
 
     if not email:
         return jsonify({'error': 'Email is required'}), 400
@@ -243,14 +342,9 @@ def send_otp():
     if not user or not user.is_active:
         return jsonify({'message': 'If this email is registered, an OTP has been sent.'}), 200
 
-    # Validate tenant_slug when provided
-    if tenant_slug and user.role != 'platform_owner':
-        from app.models.tenant import Tenant
-        tenant = Tenant.query.filter_by(slug=tenant_slug).first()
-        if not tenant:
-            return jsonify({'error': 'Tenant not found'}), 400
-        if user.tenant and user.tenant.slug != tenant_slug:
-            return jsonify({'message': 'If this email is registered, an OTP has been sent.'}), 200
+    login_context, context_error = _validate_login_context(user, login_context, tenant_slug, product_slug)
+    if context_error:
+        return context_error
 
     from app.models.base import db as _db
     from app.models.otp import OtpCode
@@ -476,6 +570,8 @@ def verify_otp():
     otp         = (data.get('otp')         or '').strip()
     tenant_slug = (data.get('tenant_slug') or '').strip().lower()
     remember    = bool(data.get('remember', False))
+    login_context = (data.get('login_context') or '').strip().lower()
+    product_slug = (data.get('product_slug') or data.get('product') or '').strip().lower()
 
     if not email or not otp:
         return jsonify({'error': 'Email and OTP are required'}), 400
@@ -529,23 +625,33 @@ def verify_otp():
     if not user or not user.is_active:
         return jsonify({'error': 'Account not found or inactive'}), 403
 
-    if tenant_slug and user.role != 'platform_owner':
-        if user.tenant and user.tenant.slug != tenant_slug:
-            return jsonify({'error': 'Access denied for this tenant'}), 403
+    otp_tenant_slug = (code_row.tenant_slug or '').strip().lower()
+    if otp_tenant_slug != tenant_slug:
+        return _invalid_login_context('This OTP was requested for a different login context.')
+
+    login_context, context_error = _validate_login_context(user, login_context, tenant_slug, product_slug)
+    if context_error:
+        return context_error
 
     user.last_login = datetime.utcnow()
     _db.session.commit()
 
-    jwt_token = create_token(user.id, user.role, tenant_id=user.tenant_id)
+    jwt_token = create_token(user.id, user.role, tenant_id=user.tenant_id, login_context=login_context)
     log_activity(user.id, 'login_otp', 'auth', description=f'{user.email} logged in via OTP')
 
     response = {
         'token':    jwt_token,
         'user':     user.to_dict(),
         'products': _get_user_products(user),
+        'login_context': login_context,
     }
     if remember:
-        response['refresh_token'] = create_refresh_token(user.id, user.role, tenant_id=user.tenant_id)
+        response['refresh_token'] = create_refresh_token(
+            user.id,
+            user.role,
+            tenant_id=user.tenant_id,
+            login_context=login_context,
+        )
     return jsonify(response), 200
 
 
@@ -601,7 +707,7 @@ def get_tenant_branding():
     if not slug:
         # Default SocioMonkey branding
         return jsonify({'branding': {
-            'name': 'SocioMonkey CRM',
+            'name': 'SocioMonkey LMS',
             'logo_url': None,
             'primary_color': '#1e3a5f',
             'secondary_color': '#3b82f6',

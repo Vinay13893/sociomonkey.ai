@@ -1,3 +1,5 @@
+import logging
+import os
 from functools import wraps
 
 from flask import jsonify, request
@@ -6,6 +8,10 @@ from sqlalchemy import and_
 from app.models.base import db
 from app.models.user import User
 from app.utils.jwt import decode_token
+
+
+logger = logging.getLogger(__name__)
+AUTH_DEBUG_ENABLED = str(os.getenv('AUTH_DEBUG', '')).strip().lower() in ('1', 'true', 'yes', 'on')
 
 
 ROLES_HIERARCHY = ['team_member', 'sales_manager', 'superadmin', 'platform_owner']
@@ -19,33 +25,123 @@ def _auth_cache():
     return cache
 
 
+def _runtime_instance_id():
+    return (
+        request.headers.get('X-Vercel-Id')
+        or request.environ.get('VERCEL_DEPLOYMENT_ID')
+        or request.environ.get('VERCEL_REGION')
+        or request.environ.get('VERCEL_URL')
+        or request.environ.get('VERCEL_ENV')
+        or 'unknown'
+    )
+
+
+def _log_auth_state(stage, **fields):
+    if not AUTH_DEBUG_ENABLED:
+        return
+    payload = {
+        'stage': stage,
+        'path': request.path,
+        'method': request.method,
+        'instance': _runtime_instance_id(),
+    }
+    payload.update(fields)
+    logger.info('AUTH_DEBUG %s', payload)
+
+
 def get_auth_user():
     """Extract and validate JWT token from Authorization header, return User or None."""
     cache = _auth_cache()
     if 'user' in cache:
+        user = cache['user']
+        _log_auth_state(
+            'cache_hit',
+            authorization_present=bool(request.headers.get('Authorization')),
+            bearer_prefix_present=str(request.headers.get('Authorization', '')).startswith('Bearer '),
+            jwt_decoded=bool(user),
+            user_id=bool(getattr(user, 'id', None)) if user else False,
+            user_active=bool(getattr(user, 'is_active', False)) if user else False,
+            tenant_id=getattr(user, 'tenant_id', None) if user else None,
+            role=getattr(user, 'role', None) if user else None,
+            cache_hit=True,
+        )
         return cache['user']
 
     auth = request.headers.get('Authorization', '')
-    if not auth.startswith('Bearer '):
+    auth_present = bool(auth)
+    bearer_prefix_present = auth.startswith('Bearer ')
+    if not bearer_prefix_present:
+        _log_auth_state(
+            'auth_header_missing_or_invalid',
+            authorization_present=auth_present,
+            bearer_prefix_present=bearer_prefix_present,
+            jwt_decoded=False,
+            user_id=False,
+            user_active=False,
+            tenant_id=None,
+            role=None,
+        )
         cache['user'] = None
         return None
     token = auth.split(' ', 1)[1]
     payload = decode_token(token)
     if not payload:
+        _log_auth_state(
+            'jwt_decode_failed',
+            authorization_present=auth_present,
+            bearer_prefix_present=bearer_prefix_present,
+            jwt_decoded=False,
+            user_id=False,
+            user_active=False,
+            tenant_id=None,
+            role=None,
+        )
         cache['user'] = None
         return None
 
     # Refresh tokens are NEVER valid for API auth — only for /auth/refresh body.
     if payload.get('typ') == 'refresh':
+        _log_auth_state(
+            'refresh_token_rejected',
+            authorization_present=auth_present,
+            bearer_prefix_present=bearer_prefix_present,
+            jwt_decoded=True,
+            user_id=False,
+            user_active=False,
+            tenant_id=None,
+            role=None,
+        )
         cache['user'] = None
         return None
 
+    cache['login_context'] = payload.get('ctx')
+
     user_id = payload.get('sub')
     if user_id is None:
+        _log_auth_state(
+            'missing_sub',
+            authorization_present=auth_present,
+            bearer_prefix_present=bearer_prefix_present,
+            jwt_decoded=True,
+            user_id=False,
+            user_active=False,
+            tenant_id=None,
+            role=None,
+        )
         cache['user'] = None
         return None
 
     user = db.session.get(User, user_id)
+    _log_auth_state(
+        'user_lookup',
+        authorization_present=auth_present,
+        bearer_prefix_present=bearer_prefix_present,
+        jwt_decoded=True,
+        user_id=bool(getattr(user, 'id', None)) if user else False,
+        user_active=bool(getattr(user, 'is_active', False)) if user else False,
+        tenant_id=getattr(user, 'tenant_id', None) if user else None,
+        role=getattr(user, 'role', None) if user else None,
+    )
     cache['user'] = user
     return user
 
@@ -57,7 +153,7 @@ def _resolve_product_context():
     Priority order:
       1. X-Product-Slug request header
       2. URL path prefix  /api/products/<slug>/...
-      3. Defaults to 'crm' (backward-compat with all existing routes)
+            3. Defaults to 'lms'
     """
     slug = request.headers.get('X-Product-Slug', '').strip().lower()
     if slug:
@@ -66,7 +162,7 @@ def _resolve_product_context():
     parts = request.path.strip('/').split('/')
     if len(parts) >= 3 and parts[0] == 'api' and parts[1] == 'products':
         return parts[2]
-    return 'crm'
+    return 'lms'
 
 
 def _attach_product(user):
@@ -144,7 +240,7 @@ def _attach_product(user):
         product, subscription_id = product_row
         request.current_product = product
         if product.is_active and not subscription_id:
-            fallback_product = _tenant_subscription_fallback() if slug == 'crm' else None
+            fallback_product = _tenant_subscription_fallback() if slug == 'lms' else None
             if fallback_product:
                 request.current_product = fallback_product
                 request.current_product_slug = fallback_product.slug
@@ -154,7 +250,7 @@ def _attach_product(user):
                     'error': f'Your account does not have access to {product.name}',
                     'product': slug,
                 }), 403
-    elif slug == 'crm':
+    elif slug == 'lms':
         fallback_product = _tenant_subscription_fallback()
         if fallback_product:
             request.current_product = fallback_product
@@ -197,6 +293,7 @@ def _prepare_auth_request_context():
         return None, (jsonify({'error': 'Account is inactive'}), 403)
 
     request.current_user = user
+    request.current_login_context = _auth_cache().get('login_context')
     request.current_tenant_id = _resolve_current_tenant_id(user)
     err = _attach_product(user)
     if err:
@@ -243,6 +340,7 @@ def require_platform_owner(func):
         if user.role != 'platform_owner':
             return jsonify({'error': 'Platform owner access required'}), 403
         request.current_user = user
+        request.current_login_context = _auth_cache().get('login_context')
         request.current_tenant_id = None
         request.current_product_slug = _resolve_product_context()
         request.current_product = None

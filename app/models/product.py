@@ -3,7 +3,7 @@ Product, TenantProduct, FeatureFlag, UsageLog models.
 
 These form the core of the SocioMonkey multi-product SaaS platform layer.
 
-    Product         — a SaaS module (CRM, WMS, Procurement, HRMS, …)
+    Product         — a SaaS module (LMS, WMS, Procurement, HRMS, …)
     TenantProduct   — which products a tenant has subscribed to
     FeatureFlag     — per-product or per-tenant feature toggles
     UsageLog        — lightweight audit trail of product usage events
@@ -19,7 +19,7 @@ class Product(db.Model):
 
     id              = db.Column(db.Integer, primary_key=True)
     name            = db.Column(db.String(200), nullable=False)
-    slug            = db.Column(db.String(100), unique=True, nullable=False)   # e.g. "crm", "wms"
+    slug            = db.Column(db.String(100), unique=True, nullable=False)   # e.g. "lms", "wms"
     description     = db.Column(db.Text)
     icon            = db.Column(db.String(10), default='📦')                   # emoji icon
     color           = db.Column(db.String(20), default='#3b82f6')

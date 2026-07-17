@@ -108,6 +108,13 @@ class LeadSource(db.Model):
     fixed_user      = db.relationship('User', foreign_keys=[assign_fixed_user_id])
     assign_manager  = db.relationship('User', foreign_keys=[assign_manager_id])
     creator         = db.relationship('User', foreign_keys=[created_by])
+    connected_google_accounts = db.relationship(
+        'ConnectedGoogleAdsAccount',
+        foreign_keys='ConnectedGoogleAdsAccount.source_id',
+        lazy='selectin',
+        cascade='all, delete-orphan',
+        back_populates='source',
+    )
 
     # ── Indexes ────────────────────────────────────────────────────────────────
     __table_args__ = (
@@ -151,8 +158,51 @@ class LeadSource(db.Model):
             'total_leads_ingested': self.total_leads_ingested,
             'total_errors':         self.total_errors,
             'last_lead_at':         self.last_lead_at.isoformat() if self.last_lead_at else None,
+            'connected_google_accounts': [
+                a.to_dict() for a in (self.connected_google_accounts or []) if a.is_active
+            ],
             'created_at':           self.created_at.isoformat(),
             'updated_at':           self.updated_at.isoformat(),
+        }
+
+
+class ConnectedGoogleAdsAccount(db.Model):
+    """
+    Child table for selected Google Ads accounts per tenant/source.
+    Supports multi-account ingestion foundation.
+    """
+    __tablename__ = 'connected_google_ads_accounts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey('tenants.id'), nullable=False, index=True)
+    source_id = db.Column(db.Integer, db.ForeignKey('lead_sources.id'), nullable=False, index=True)
+    customer_id = db.Column(db.String(32), nullable=False)
+    customer_name = db.Column(db.String(255))
+    resource_name = db.Column(db.String(128))
+    metadata_json = db.Column(db.JSON, default=dict)
+    is_active = db.Column(db.Boolean, default=True, nullable=False, server_default='1', index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    source = db.relationship('LeadSource', foreign_keys=[source_id], back_populates='connected_google_accounts')
+
+    __table_args__ = (
+        db.UniqueConstraint('tenant_id', 'source_id', 'customer_id', name='uq_google_ads_account_per_source'),
+        db.Index('ix_google_ads_accounts_tenant_source_active', 'tenant_id', 'source_id', 'is_active'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'tenant_id': self.tenant_id,
+            'source_id': self.source_id,
+            'customer_id': self.customer_id,
+            'customer_name': self.customer_name,
+            'resource_name': self.resource_name,
+            'metadata': self.metadata_json or {},
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
@@ -184,10 +234,18 @@ class IngestedLeadLog(db.Model):
     form_id             = db.Column(db.String(200))
     form_name           = db.Column(db.String(500))
     page_id             = db.Column(db.String(200))
+    gclid               = db.Column(db.String(255), index=True)
+    utm_source          = db.Column(db.String(255), index=True)
+    utm_medium          = db.Column(db.String(255), index=True)
+    utm_campaign        = db.Column(db.String(255), index=True)
+    utm_content         = db.Column(db.String(255), index=True)
+    utm_term            = db.Column(db.String(255), index=True)
+    landing_page_url    = db.Column(db.Text)
 
     # Processing outcome
     # status: queued | processed | duplicate | error
     status          = db.Column(db.String(30), default='queued', nullable=False, index=True)
+    is_test         = db.Column(db.Boolean, default=False, nullable=False, server_default='0', index=True)
     error_message   = db.Column(db.Text)
     # ID of the LMS lead created (or existing lead updated)
     lead_id         = db.Column(db.Integer, db.ForeignKey('leads.id'), nullable=True)
@@ -206,19 +264,41 @@ class IngestedLeadLog(db.Model):
     )
 
     def to_dict(self):
+        source_status = 'Archived Source'
+        if self.source and self.source.is_active:
+            source_status = 'Active Source'
         return {
             'id':               self.id,
             'tenant_id':        self.tenant_id,
             'source_id':        self.source_id,
             'source_type':      self.source_type,
+            'source_name':      self.source.name if self.source else None,
+            'source_status':    source_status,
             'platform_lead_id': self.platform_lead_id,
+            'campaign_id':      self.campaign_id,
             'campaign_name':    self.campaign_name,
+            'ad_set_id':        self.ad_set_id,
+            'ad_set_name':      self.ad_set_name,
+            'ad_id':            self.ad_id,
             'ad_name':          self.ad_name,
+            'form_id':          self.form_id,
             'form_name':        self.form_name,
+            'page_id':          self.page_id,
+            'gclid':            self.gclid,
+            'utm_source':       self.utm_source,
+            'utm_medium':       self.utm_medium,
+            'utm_campaign':     self.utm_campaign,
+            'utm_content':      self.utm_content,
+            'utm_term':         self.utm_term,
+            'landing_page_url': self.landing_page_url,
+            'lead_id':          self.lead_id,
+            'lead_name':        self.lead.name if self.lead else None,
+            'project_id':       self.lead.project_id if self.lead else None,
+            'project_name':     self.lead.project.name if self.lead and self.lead.project else None,
             'mapped_fields':    self.mapped_fields or {},
             'status':           self.status,
+            'is_test':          self.is_test,
             'error_message':    self.error_message,
-            'lead_id':          self.lead_id,
             'dup_of_lead_id':   self.dup_of_lead_id,
             'received_at':      self.received_at.isoformat(),
             'processed_at':     self.processed_at.isoformat() if self.processed_at else None,

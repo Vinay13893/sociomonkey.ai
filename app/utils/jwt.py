@@ -15,7 +15,7 @@ def check_password(password: str, pw_hash: str) -> bool:
         return False
 
 
-def create_token(user_id: int, role: str, tenant_id: int = None, expires_minutes: int = None) -> str:
+def create_token(user_id: int, role: str, tenant_id: int = None, expires_minutes: int = None, login_context: str = None) -> str:
     if expires_minutes is None:
         expires_minutes = current_app.config.get('JWT_EXPIRY_MINUTES', 1440)
     payload = {
@@ -25,6 +25,8 @@ def create_token(user_id: int, role: str, tenant_id: int = None, expires_minutes
         'typ': 'access',
         'exp': datetime.utcnow() + timedelta(minutes=expires_minutes),
     }
+    if login_context:
+        payload['ctx'] = login_context
     return jwt.encode(
         payload,
         current_app.config['SECRET_KEY'],
@@ -32,7 +34,7 @@ def create_token(user_id: int, role: str, tenant_id: int = None, expires_minutes
     )
 
 
-def create_refresh_token(user_id: int, role: str, tenant_id: int = None, expires_minutes: int = None) -> str:
+def create_refresh_token(user_id: int, role: str, tenant_id: int = None, expires_minutes: int = None, login_context: str = None) -> str:
     """Long-lived refresh token. Used only by /auth/refresh to mint new access tokens."""
     if expires_minutes is None:
         # 30 days default; configurable via env
@@ -44,6 +46,8 @@ def create_refresh_token(user_id: int, role: str, tenant_id: int = None, expires
         'typ': 'refresh',
         'exp': datetime.utcnow() + timedelta(minutes=expires_minutes),
     }
+    if login_context:
+        payload['ctx'] = login_context
     return jwt.encode(
         payload,
         current_app.config['SECRET_KEY'],

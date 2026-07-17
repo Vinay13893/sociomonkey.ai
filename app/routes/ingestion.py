@@ -19,6 +19,8 @@ import hashlib
 import hmac
 import json
 import logging
+import urllib.parse as urllib_parse
+import urllib.request as urllib_req
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
@@ -45,12 +47,76 @@ def _verify_hmac(secret: str, raw_body: bytes, signature_header: str) -> bool:
         return False
 
 
+def _verify_hmac_any(secrets: list[str], raw_body: bytes, signature_header: str) -> bool:
+    """Return True when any candidate secret validates the Meta signature."""
+    for secret in secrets:
+        if not secret:
+            continue
+        if _verify_hmac(secret, raw_body, signature_header):
+            return True
+    return False
+
+
 def _load_source(source_type: str, token: str) -> LeadSource | None:
     return LeadSource.query.filter_by(
         source_type=source_type,
         webhook_token=token,
         is_active=True,
     ).first()
+
+
+def _meta_source_has_form(source: LeadSource, form_id: str) -> bool:
+    if not source or not form_id:
+        return False
+    forms = source.available_forms or []
+    target = str(form_id)
+    for f in forms:
+        if isinstance(f, dict):
+            if str(f.get('id') or '') == target:
+                return True
+        elif str(f) == target:
+            return True
+    return False
+
+
+def _resolve_meta_target_source(seed_source: LeadSource, page_id: str, form_id: str) -> LeadSource:
+    """
+    Resolve the active Meta source for an incoming event by page/form.
+    This prevents drop-offs when Meta still calls an older token URL after reconnects.
+    """
+    if not seed_source:
+        return seed_source
+
+    active_sources = LeadSource.query.filter_by(
+        tenant_id=seed_source.tenant_id,
+        source_type='meta',
+        is_active=True,
+    ).order_by(LeadSource.updated_at.desc()).all()
+
+    if not active_sources:
+        return seed_source
+
+    page_id = str(page_id or '')
+    form_id = str(form_id or '')
+
+    if page_id:
+        by_page = [
+            s for s in active_sources
+            if str((s.credentials or {}).get('page_id') or '') == page_id
+        ]
+        if by_page:
+            if form_id:
+                for s in by_page:
+                    if _meta_source_has_form(s, form_id):
+                        return s
+            return by_page[0]
+
+    if form_id:
+        for s in active_sources:
+            if _meta_source_has_form(s, form_id):
+                return s
+
+    return active_sources[0]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -89,13 +155,50 @@ def _normalise_meta(entry: dict) -> dict:
     city_candidates = ['city', 'location', 'area']
     city = next((field_data.get(k, '').strip() for k in city_candidates if field_data.get(k)), '')
 
+    def _pick_float(*keys):
+        for key in keys:
+            val = entry.get(key)
+            if val in (None, ''):
+                continue
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def _pick_int(*keys):
+        for key in keys:
+            val = entry.get(key)
+            if val in (None, ''):
+                continue
+            try:
+                return int(float(val))
+            except (TypeError, ValueError):
+                continue
+        return None
+
     return {
         'platform_lead_id': str(entry.get('leadgen_id', '')),
+        'platform_created_at': str(entry.get('created_time') or entry.get('created_at') or ''),
         'page_id':          str(entry.get('page_id', '')),
+        'page_name':        str(entry.get('page_name', '') or entry.get('page', '') or ''),
         'form_id':          str(entry.get('form_id', '')),
+        'form_name':        str(entry.get('form_name', '') or ''),
         'ad_id':            str(entry.get('ad_id', '')),
-        'ad_set_id':        str(entry.get('adset_id', '')),
+        'ad_name':          str(entry.get('ad_name', '') or ''),
+        'ad_set_id':        str(entry.get('adset_id', '') or entry.get('ad_set_id', '') or ''),
+        'ad_set_name':      str(entry.get('adset_name', '') or entry.get('ad_set_name', '') or ''),
         'campaign_id':      str(entry.get('campaign_id', '')),
+        'campaign_name':    str(entry.get('campaign_name', '') or ''),
+        'spend':            _pick_float('spend', 'amount_spent'),
+        'cost_per_result':  _pick_float('cost_per_result', 'cpl'),
+        'ctr':              _pick_float('ctr'),
+        'cpc':              _pick_float('cpc'),
+        'cpm':              _pick_float('cpm'),
+        'impressions':      _pick_int('impressions'),
+        'reach':            _pick_int('reach'),
+        'audience':         str(entry.get('audience', '') or entry.get('target_audience', '') or ''),
+        'placement':        str(entry.get('placement', '') or entry.get('placements', '') or ''),
         # LMS fields
         'name':             name,
         'phone':            phone,
@@ -104,6 +207,244 @@ def _normalise_meta(entry: dict) -> dict:
         # Pass raw field_data as extra so field_mapping can pick up custom fields
         'raw_fields':       field_data,
     }
+
+
+def _meta_graph_get_json(url: str, timeout: int = 12):
+    with urllib_req.urlopen(urllib_req.Request(url), timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def _meta_fetch_object_name(object_id: str, token: str) -> str:
+    if not object_id or not token:
+        return ''
+    try:
+        url = (
+            f'https://graph.facebook.com/v25.0/{urllib_parse.quote(str(object_id))}'
+            f'?fields=id,name&access_token={urllib_parse.quote(token)}'
+        )
+        data = _meta_graph_get_json(url)
+        if isinstance(data, dict) and data.get('error'):
+            return ''
+        return str((data or {}).get('name') or '').strip()
+    except Exception:
+        return ''
+
+
+def _meta_fetch_object_name_any(object_id: str, tokens: list[str]) -> str:
+    for token in tokens:
+        name = _meta_fetch_object_name(object_id, token)
+        if name:
+            return name
+    return ''
+
+
+def _meta_fetch_ad_account_object_name(object_id: str, token: str, ad_account_id: str, edge_name: str) -> str:
+    if not object_id or not token or not ad_account_id or not edge_name:
+        return ''
+    try:
+        url = (
+            f'https://graph.facebook.com/v25.0/act_{urllib_parse.quote(str(ad_account_id))}/{edge_name}'
+            f'?fields=id,name&limit=5000&access_token={urllib_parse.quote(token)}'
+        )
+        data = _meta_graph_get_json(url)
+        for item in (data or {}).get('data', []) or []:
+            if str(item.get('id') or '') == str(object_id):
+                return str(item.get('name') or '').strip()
+    except Exception:
+        return ''
+    return ''
+
+
+def _meta_fetch_ad_account_object_name_any(object_id: str, tokens: list[str], ad_account_id: str, edge_name: str) -> str:
+    for token in tokens:
+        name = _meta_fetch_ad_account_object_name(object_id, token, ad_account_id, edge_name)
+        if name:
+            return name
+    return ''
+
+
+def _meta_parse_float(value):
+    if value in (None, ''):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _meta_parse_int(value):
+    if value in (None, ''):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _meta_fetch_ad_insights(ad_id: str, token: str) -> dict:
+    """
+    Fetch ad-level lifetime insights from Meta Graph API.
+    Returns a dict with spend/ctr/cpc/cpm/reach/impressions (None when missing).
+    """
+    if not ad_id or not token:
+        return {}
+
+    fields = 'spend,ctr,cpc,cpm,reach,impressions'
+    try:
+        url = (
+            f'https://graph.facebook.com/v25.0/{urllib_parse.quote(str(ad_id))}/insights'
+            f'?fields={urllib_parse.quote(fields)}'
+            f'&date_preset=maximum'
+            f'&limit=1'
+            f'&access_token={urllib_parse.quote(token)}'
+        )
+        payload = _meta_graph_get_json(url)
+        if isinstance(payload, dict) and payload.get('error'):
+            return {}
+
+        rows = (payload or {}).get('data') or []
+        if not rows:
+            return {}
+        row = rows[0] or {}
+        return {
+            'spend': _meta_parse_float(row.get('spend')),
+            'ctr': _meta_parse_float(row.get('ctr')),
+            'cpc': _meta_parse_float(row.get('cpc')),
+            'cpm': _meta_parse_float(row.get('cpm')),
+            'reach': _meta_parse_int(row.get('reach')),
+            'impressions': _meta_parse_int(row.get('impressions')),
+        }
+    except Exception:
+        return {}
+
+
+def _meta_fetch_ad_insights_any(ad_id: str, tokens: list[str]) -> dict:
+    for token in tokens:
+        insights = _meta_fetch_ad_insights(ad_id, token)
+        if insights:
+            return insights
+    return {}
+
+
+def _meta_fetch_campaign_name(campaign_id: str, token: str) -> str:
+    return _meta_fetch_object_name(campaign_id, token)
+
+
+def _meta_fetch_form_name(form_id: str, token: str) -> str:
+    return _meta_fetch_object_name(form_id, token)
+
+
+def _meta_enrich_leadgen_entry(lead_entry: dict, source: LeadSource) -> dict:
+    """
+    Meta webhook sends only IDs by default. Fetch full lead detail payload so
+    field_data, form name, and campaign context are available to ingestion.
+    """
+    creds = source.credentials or {}
+    user_token = (creds.get('user_token') or '').strip()
+    page_token = (creds.get('page_access_token') or creds.get('access_token') or '').strip()
+    tokens = []
+    for tk in (user_token, page_token):
+        if tk and tk not in tokens:
+            tokens.append(tk)
+
+    token = tokens[0] if tokens else ''
+    leadgen_id = str(lead_entry.get('leadgen_id') or '').strip()
+    ad_account_id = str((source.credentials or {}).get('ad_account_id') or '').strip()
+    if not token:
+        return {}
+
+    try:
+        lead_data = {}
+        if leadgen_id:
+            for tk in tokens:
+                lead_url = (
+                    f'https://graph.facebook.com/v25.0/{urllib_parse.quote(leadgen_id)}'
+                    f'?fields=id,created_time,field_data,form_id,campaign_id,campaign_name,ad_id,ad_name,adset_id,adset_name,page_id'
+                    f'&access_token={urllib_parse.quote(tk)}'
+                )
+                try:
+                    lead_data = _meta_graph_get_json(lead_url)
+                except Exception as exc:
+                    logger.warning('meta_webhook: lead detail HTTP error for leadgen_id=%s: %s', leadgen_id, exc)
+                    lead_data = {}
+                    continue
+                if isinstance(lead_data, dict) and lead_data.get('error'):
+                    logger.warning('meta_webhook: lead detail fetch error for leadgen_id=%s: %s', leadgen_id, lead_data.get('error'))
+                    lead_data = {}
+                    continue
+                if lead_data:
+                    break
+
+        form_id = str((lead_data or {}).get('form_id') or lead_entry.get('form_id') or '')
+        campaign_id = str((lead_data or {}).get('campaign_id') or lead_entry.get('campaign_id') or '')
+        ad_id = str((lead_data or {}).get('ad_id') or lead_entry.get('ad_id') or '')
+        ad_set_id = str((lead_data or {}).get('adset_id') or lead_entry.get('adset_id') or '')
+        page_id = str((lead_data or {}).get('page_id') or lead_entry.get('page_id') or '')
+
+        # Prefer names supplied by lead detail, then object lookups.
+        ad_name = str((lead_data or {}).get('ad_name') or lead_entry.get('ad_name') or '').strip()
+        if not ad_name and ad_id:
+            ad_name = _meta_fetch_object_name_any(ad_id, tokens)
+            if not ad_name and ad_account_id:
+                ad_name = _meta_fetch_ad_account_object_name_any(ad_id, tokens, ad_account_id, 'ads')
+
+        ad_set_name = str((lead_data or {}).get('adset_name') or lead_entry.get('adset_name') or '').strip()
+        if not ad_set_name and ad_set_id:
+            ad_set_name = _meta_fetch_object_name_any(ad_set_id, tokens)
+
+        campaign_name = str((lead_data or {}).get('campaign_name') or (lead_entry or {}).get('campaign_name') or '').strip()
+        if not campaign_name and campaign_id:
+            campaign_name = _meta_fetch_object_name_any(campaign_id, tokens)
+            if not campaign_name and ad_account_id:
+                campaign_name = _meta_fetch_ad_account_object_name_any(campaign_id, tokens, ad_account_id, 'campaigns')
+        if not ad_set_name and ad_set_id and ad_account_id:
+            ad_set_name = _meta_fetch_ad_account_object_name_any(ad_set_id, tokens, ad_account_id, 'adsets')
+
+        form_name = str((lead_entry or {}).get('form_name') or '').strip()
+        if not form_name and form_id:
+            form_name = _meta_fetch_object_name_any(form_id, tokens)
+        if not form_name and form_id:
+            for f in (source.available_forms or []):
+                if isinstance(f, dict) and str(f.get('id') or '') == form_id:
+                    form_name = str(f.get('name') or '').strip()
+                    if form_name:
+                        break
+
+        page_name = str((lead_entry or {}).get('page_name') or '').strip()
+        if not page_name and page_id:
+            page_name = _meta_fetch_object_name_any(page_id, tokens)
+        if not page_name:
+            page_name = str((source.connected_account or '')).strip()
+
+        insights = _meta_fetch_ad_insights_any(ad_id, tokens)
+
+        return {
+            'platform_lead_id': str((lead_data or {}).get('id') or leadgen_id or lead_entry.get('leadgen_id') or ''),
+            'platform_created_at': str((lead_data or {}).get('created_time') or lead_entry.get('created_time') or lead_entry.get('created_at') or ''),
+            'form_id': form_id,
+            'form_name': form_name,
+            'campaign_id': campaign_id,
+            'campaign_name': campaign_name,
+            'ad_id': ad_id,
+            'ad_name': ad_name,
+            'ad_set_id': ad_set_id,
+            'ad_set_name': ad_set_name,
+            'page_id': page_id,
+            'page_name': page_name,
+            'spend': insights.get('spend') if insights.get('spend') is not None else lead_entry.get('spend'),
+            'cost_per_result': lead_entry.get('cost_per_result') or lead_entry.get('cpl'),
+            'ctr': insights.get('ctr') if insights.get('ctr') is not None else lead_entry.get('ctr'),
+            'cpc': insights.get('cpc') if insights.get('cpc') is not None else lead_entry.get('cpc'),
+            'cpm': insights.get('cpm') if insights.get('cpm') is not None else lead_entry.get('cpm'),
+            'impressions': insights.get('impressions') if insights.get('impressions') is not None else lead_entry.get('impressions'),
+            'reach': insights.get('reach') if insights.get('reach') is not None else lead_entry.get('reach'),
+            'audience': lead_entry.get('audience') or lead_entry.get('target_audience'),
+            'placement': lead_entry.get('placement') or lead_entry.get('placements'),
+            'field_data': (lead_data or {}).get('field_data') or lead_entry.get('field_data') or [],
+        }
+    except Exception as exc:
+        logger.warning('meta_webhook: lead enrichment failed for leadgen_id=%s: %s', leadgen_id, exc)
+        return {}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -143,12 +484,20 @@ def _normalise_google(payload: dict) -> dict:
 
     return {
         'platform_lead_id': str(payload.get('lead_id', '')),
+        'platform_created_at': str(payload.get('created_time') or payload.get('created_at') or payload.get('submission_time') or ''),
         'form_id':          str(payload.get('form_id', '')),
         'form_name':        str(payload.get('form_name', '')),
         'campaign_id':      str(payload.get('campaign_id', '')),
         'campaign_name':    str(payload.get('campaign_name', '')),
         'ad_set_id':        str(payload.get('ad_group_id', '')),
         'ad_set_name':      str(payload.get('ad_group_name', '')),
+        'gclid':            str(payload.get('gclid') or payload.get('gcl_id') or ''),
+        'utm_source':       str(payload.get('utm_source') or ''),
+        'utm_medium':       str(payload.get('utm_medium') or ''),
+        'utm_campaign':     str(payload.get('utm_campaign') or payload.get('campaign_name') or ''),
+        'utm_content':      str(payload.get('utm_content') or ''),
+        'utm_term':         str(payload.get('utm_term') or ''),
+        'landing_page_url': str(payload.get('landing_page_url') or payload.get('page_url') or payload.get('url') or ''),
         # LMS fields
         'name':             name,
         'phone':            columns.get('PHONE_NUMBER', '').strip(),
@@ -182,10 +531,18 @@ def _normalise_generic(payload: dict) -> dict:
 
     return {
         'platform_lead_id': pick('id', 'lead_id', 'form_id', 'submission_id'),
+        'platform_created_at': pick('created_time', 'created_at', 'submission_time', 'timestamp'),
         'form_id':          pick('form_id', 'form_name'),
         'campaign_id':      pick('campaign_id', 'utm_campaign'),
         'campaign_name':    pick('campaign_name', 'utm_campaign'),
         'ad_id':            pick('ad_id', 'utm_medium'),
+        'gclid':            pick('gclid', 'gcl_id', 'gcl_src'),
+        'utm_source':       pick('utm_source', 'source'),
+        'utm_medium':       pick('utm_medium'),
+        'utm_campaign':     pick('utm_campaign', 'campaign_name'),
+        'utm_content':      pick('utm_content'),
+        'utm_term':         pick('utm_term'),
+        'landing_page_url': pick('landing_page_url', 'page_url', 'url', 'landing_url'),
         # LMS fields
         'name':             name,
         'phone':            pick('phone', 'mobile', 'phone_number', 'contact'),
@@ -251,18 +608,54 @@ def meta_webhook(token):
     Meta signs payloads with X-Hub-Signature-256 header.
     One HTTP request may carry multiple lead entries.
     """
-    source = _load_source('meta', token)
+    source = LeadSource.query.filter_by(
+        source_type='meta',
+        webhook_token=token,
+    ).first()
     if not source:
         return jsonify({'error': 'Unknown source'}), 404
 
     raw_body = request.get_data()
     sig = request.headers.get('X-Hub-Signature-256', '')
-    app_secret = (source.credentials or {}).get('app_secret', source.webhook_secret)
 
-    # Verify HMAC (skip only when app_secret is not yet configured – dev mode)
-    if app_secret and sig:
-        if not _verify_hmac(app_secret, raw_body, sig):
-            logger.warning('meta_webhook: HMAC mismatch for source %d', source.id)
+    # Build candidate secrets across current + active tenant sources so old token
+    # callbacks continue to validate after reconnects/app rotations.
+    candidate_secrets = []
+    primary_app_secret = (source.credentials or {}).get('app_secret', '')
+    if primary_app_secret:
+        candidate_secrets.append(primary_app_secret)
+    if source.webhook_secret:
+        candidate_secrets.append(source.webhook_secret)
+
+    active_meta_sources = LeadSource.query.filter_by(
+        tenant_id=source.tenant_id,
+        source_type='meta',
+        is_active=True,
+    ).order_by(LeadSource.updated_at.desc()).all()
+
+    for s in active_meta_sources:
+        creds = s.credentials or {}
+        app_secret = (creds.get('app_secret') or '').strip()
+        if app_secret:
+            candidate_secrets.append(app_secret)
+        if s.webhook_secret:
+            candidate_secrets.append(s.webhook_secret)
+
+    # Preserve order, drop empties/dupes.
+    seen = set()
+    candidate_secrets = [
+        sec for sec in candidate_secrets
+        if sec and not (sec in seen or seen.add(sec))
+    ]
+
+    # Verify HMAC only when Meta sent signature and we have at least one secret.
+    if sig and candidate_secrets:
+        if not _verify_hmac_any(candidate_secrets, raw_body, sig):
+            logger.warning(
+                'meta_webhook: HMAC mismatch for source %d (checked %d secret(s))',
+                source.id,
+                len(candidate_secrets),
+            )
             return jsonify({'error': 'Invalid signature'}), 403
 
     payload = request.get_json(force=True, silent=True) or {}
@@ -273,9 +666,43 @@ def meta_webhook(token):
             if change.get('field') != 'leadgen':
                 continue
             lead_entry = change.get('value', {})
+            event_page_id = str(lead_entry.get('page_id') or entry.get('id') or '')
+            event_form_id = str(lead_entry.get('form_id') or '')
+            target_source = _resolve_meta_target_source(source, event_page_id, event_form_id)
+
+            if target_source and source and target_source.id != source.id:
+                logger.info(
+                    'meta_webhook: rerouted token_source=%s -> target_source=%s page_id=%s form_id=%s',
+                    source.id,
+                    target_source.id,
+                    event_page_id,
+                    event_form_id,
+                )
+
+            enriched = _meta_enrich_leadgen_entry(lead_entry, target_source)
+            if enriched:
+                # Merge enriched fields into lead entry before normalisation.
+                # Field data is required for name/phone/email extraction.
+                merged_entry = dict(lead_entry)
+                for k, v in enriched.items():
+                    if v not in (None, '', []):
+                        merged_entry[k] = v
+                lead_entry = merged_entry
+
             normalised = _normalise_meta(lead_entry)
-            normalised['page_id'] = str(entry.get('id', ''))
-            result = ingest_lead(source, lead_entry, normalised)
+            if not normalised.get('page_id'):
+                normalised['page_id'] = str(entry.get('id', ''))
+            if enriched:
+                # Prefer enriched labels/IDs when available.
+                for k in (
+                    'campaign_id', 'campaign_name', 'form_id', 'form_name',
+                    'ad_id', 'ad_name', 'ad_set_id', 'ad_set_name',
+                    'spend', 'cost_per_result', 'ctr', 'cpc', 'cpm', 'impressions', 'reach',
+                    'page_id', 'page_name',
+                ):
+                    if enriched.get(k) not in (None, '', []):
+                        normalised[k] = enriched.get(k)
+            result = ingest_lead(target_source, lead_entry, normalised)
             results.append(result)
 
     return jsonify({'ok': True, 'results': results}), 200

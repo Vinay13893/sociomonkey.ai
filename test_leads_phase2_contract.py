@@ -36,6 +36,9 @@ def test_interactive_leads_endpoint_uses_sql_filters():
     assert "Lead.sales_manager_id == int(sales_manager_id)" in source
     assert "func.lower(func.coalesce(Lead.name" in source
     assert "func.lower(func.coalesce(Project.name" in source
+    assert "_apply_lead_source_cutoff_scope(query, user, user.tenant_id)" in source
+    assert "business_date_bounds_utc_naive(datetime.strptime(date_from" in source
+    assert "business_date_bounds_utc_naive(datetime.strptime(date_to" in source
 
 
 def test_interactive_leads_list_fields_are_reduced():

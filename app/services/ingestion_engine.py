@@ -36,12 +36,14 @@ Usage:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models.base import db
 from app.models import Lead, StatusHistory, LeadNote, ActivityLog, User
 from app.models.ingestion import IngestedLeadLog
+from app.models.lead_source_mapping import LeadSourceFormMapping, MetaCampaignSnapshot
 from app.services.notification_events import enqueue_lead_assigned
+from app.utils.lead_source_cutoff import is_before_lead_source_cutoff
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,7 @@ logger = logging.getLogger(__name__)
 ALLOWED_LEAD_FIELDS = frozenset({
     'name', 'phone', 'alternate_phone', 'email',
     'source', 'project_id',
+    'gclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'landing_page_url',
     'budget_min', 'budget_max',
     'status',
 })
@@ -63,6 +66,21 @@ SOURCE_DISPLAY_NAMES = {
     'indiamart':      'IndiaMART',
     'whatsapp_form':  'WhatsApp Form',
 }
+
+
+def _parse_platform_datetime(value):
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -97,38 +115,129 @@ def map_fields(normalised: dict, source) -> dict:
     return mapped
 
 
+def lead_payload_has_required_identity(mapped: dict) -> bool:
+    name = str(mapped.get('name') or '').strip()
+    has_contact = any(str(mapped.get(field) or '').strip() for field in ('phone', 'alternate_phone', 'email'))
+    return bool(name and has_contact)
+
+
+def apply_form_project_mapping(source, normalised: dict, mapped: dict):
+    """
+    For source types that expose platform forms (Meta/Google), enforce mapping
+    of form_id -> project_id before allowing ingestion.
+    """
+    if source.source_type not in ('meta', 'google'):
+        return mapped, None
+
+    form_id = str(normalised.get('form_id') or '').strip()
+    row = None
+
+    if form_id:
+        row = LeadSourceFormMapping.query.filter_by(
+            tenant_id=source.tenant_id,
+            source_id=source.id,
+            form_id=form_id,
+            is_active=True,
+        ).first()
+    else:
+        # Some webhook payloads arrive without form_id. If exactly one active mapping
+        # exists for this source, safely infer that mapping.
+        candidates = LeadSourceFormMapping.query.filter_by(
+            tenant_id=source.tenant_id,
+            source_id=source.id,
+            is_active=True,
+        ).all()
+        if len(candidates) == 1:
+            row = candidates[0]
+            form_id = str(row.form_id or '').strip()
+            normalised['form_id'] = form_id
+            if not normalised.get('form_name') and row.form_name:
+                normalised['form_name'] = row.form_name
+        else:
+            return mapped, None
+
+    if not row or not row.project_id:
+        return mapped, None
+
+    mapped['project_id'] = row.project_id
+    return mapped, row
+
+
+def persist_meta_snapshot(source, normalised: dict, log: IngestedLeadLog, lead_id=None, is_test: bool = False):
+    """Store non-overwrite attribution snapshot for Meta events."""
+    if source.source_type != 'meta':
+        return
+
+    project_id = None
+    project_name = None
+    if lead_id:
+        lead = Lead.query.get(lead_id)
+        if lead:
+            project_id = getattr(lead, 'project_id', None)
+            project_name = getattr(lead, 'project_name', None)
+
+    snapshot = MetaCampaignSnapshot(
+        tenant_id=source.tenant_id,
+        source_id=source.id,
+        lead_id=lead_id,
+        ingested_log_id=log.id,
+        page_id=normalised.get('page_id'),
+        form_id=normalised.get('form_id'),
+        form_name=normalised.get('form_name'),
+        campaign_id=normalised.get('campaign_id'),
+        campaign_name=normalised.get('campaign_name'),
+        ad_set_id=normalised.get('ad_set_id'),
+        ad_set_name=normalised.get('ad_set_name'),
+        ad_id=normalised.get('ad_id'),
+        ad_name=normalised.get('ad_name'),
+        is_test=is_test,
+        spend=normalised.get('spend'),
+        cost_per_result=normalised.get('cost_per_result'),
+        ctr=normalised.get('ctr'),
+        cpc=normalised.get('cpc'),
+        cpm=normalised.get('cpm'),
+        impressions=normalised.get('impressions'),
+        reach=normalised.get('reach'),
+        audience=normalised.get('audience'),
+        placement=normalised.get('placement'),
+        extra_metrics={
+            'source': normalised.get('source'),
+            'city': normalised.get('city'),
+            'platform_lead_id': normalised.get('platform_lead_id'),
+            'page_name': normalised.get('page_name'),
+            'project_id': project_id,
+            'project_name': project_name,
+        },
+        snapshot_at=datetime.utcnow(),
+    )
+    db.session.add(snapshot)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STAGE 2 – DUPLICATE DETECTOR
 # ══════════════════════════════════════════════════════════════════════════════
 
+def normalize_phone_for_duplicate(value) -> str:
+    digits = ''.join(ch for ch in str(value or '') if ch.isdigit())
+    if len(digits) > 10 and digits.startswith('91'):
+        digits = digits[-10:]
+    return digits
+
+
 def detect_duplicate(mapped: dict, source) -> Lead | None:
     """
     Returns an existing Lead if a duplicate is found, else None.
-    Checks phone first (primary), then email (secondary).
+    Checks mobile/contact number only. Email is not a duplicate signal.
     Only checks within the same tenant.
     """
     tenant_id = source.tenant_id
-    phone = (mapped.get('phone') or '').strip()
-    email = (mapped.get('email') or '').strip().lower()
+    phone = normalize_phone_for_duplicate(mapped.get('phone'))
 
-    # Phone check (primary)
     if source.dup_check_phone and phone:
-        existing = Lead.query.filter_by(
-            tenant_id=tenant_id, is_active=True
-        ).filter(Lead.phone == phone).first()
-        if existing:
-            return existing
-
-    # Email check (secondary)
-    if source.dup_check_email and email:
-        existing = Lead.query.filter(
-            Lead.tenant_id == tenant_id,
-            Lead.is_active == True,
-            Lead.email != None,
-            db.func.lower(Lead.email) == email,
-        ).first()
-        if existing:
-            return existing
+        candidates = Lead.query.filter_by(tenant_id=tenant_id, is_active=True).filter(Lead.phone != None).all()
+        for existing in candidates:
+            if normalize_phone_for_duplicate(existing.phone) == phone:
+                return existing
 
     return None
 
@@ -137,13 +246,58 @@ def detect_duplicate(mapped: dict, source) -> Lead | None:
 # STAGE 3 – ASSIGNMENT ENGINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def resolve_assignee(source, mapped: dict) -> User | None:
+def resolve_assignee(source, mapped: dict, form_mapping: LeadSourceFormMapping | None = None) -> User | None:
     """
     Determines which User to assign the new lead to based on source strategy.
     Returns a User ORM object, or None (lead stays unassigned).
     """
     strategy = source.assign_strategy or 'none'
     tenant_id = source.tenant_id
+
+    # Per-form manager assignment has precedence for Meta/Google mapped forms.
+    if form_mapping:
+        mode = str(getattr(form_mapping, 'manager_assign_mode', '') or 'none').strip().lower()
+
+        if mode == 'fixed_manager':
+            manager_id = getattr(form_mapping, 'manager_id', None)
+            if manager_id:
+                manager = User.query.filter_by(
+                    id=manager_id,
+                    tenant_id=tenant_id,
+                    role='sales_manager',
+                    is_active=True,
+                ).first()
+                if manager:
+                    return manager
+            return None
+
+        if mode == 'round_robin_pool':
+            raw_pool = getattr(form_mapping, 'rr_manager_pool', None) or []
+            pool_ids = []
+            for item in raw_pool:
+                try:
+                    pool_ids.append(int(item))
+                except (TypeError, ValueError):
+                    continue
+            pool_ids = [pid for pid in pool_ids if pid > 0]
+            if not pool_ids:
+                return None
+
+            managers = User.query.filter(
+                User.tenant_id == tenant_id,
+                User.role == 'sales_manager',
+                User.is_active == True,
+                User.id.in_(pool_ids),
+            ).order_by(User.id.asc()).all()
+            if not managers:
+                return None
+
+            ordered = sorted(managers, key=lambda u: pool_ids.index(int(u.id)) if int(u.id) in pool_ids else 999999)
+            next_idx = int(getattr(form_mapping, 'rr_last_index', 0) or 0) % len(ordered)
+            user = ordered[next_idx]
+            form_mapping.rr_last_index = (next_idx + 1) % len(ordered)
+            db.session.add(form_mapping)
+            return user
 
     if strategy == 'none':
         return None
@@ -204,21 +358,46 @@ def resolve_assignee(source, mapped: dict) -> User | None:
 # STAGE 4 – LEAD CREATOR / UPDATER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def create_lead(mapped: dict, source, assignee: User | None, log: IngestedLeadLog) -> Lead:
+def create_lead(
+    mapped: dict,
+    source,
+    assignee: User | None,
+    log: IngestedLeadLog,
+    is_test: bool = False,
+    platform_created_at: datetime | None = None,
+) -> Lead:
     """Create a new LMS Lead from mapped fields."""
+    assigned_to = None
+    sales_manager_id = None
+    if assignee:
+        if getattr(assignee, 'role', None) == 'sales_manager' or getattr(assignee, 'role', None) == 'superadmin':
+            sales_manager_id = assignee.id
+        else:
+            assigned_to = assignee.id
+
     lead = Lead(
         tenant_id=source.tenant_id,
         name=mapped.get('name') or 'Unknown',
         phone=mapped.get('phone') or '',
         alternate_phone=mapped.get('alternate_phone'),
         email=mapped.get('email'),
-        source=mapped.get('source') or SOURCE_DISPLAY_NAMES.get(source.source_type, source.source_type),
+        source=source.name or mapped.get('source') or SOURCE_DISPLAY_NAMES.get(source.source_type, source.source_type),
+        gclid=mapped.get('gclid'),
+        utm_source=mapped.get('utm_source'),
+        utm_medium=mapped.get('utm_medium'),
+        utm_campaign=mapped.get('utm_campaign'),
+        utm_content=mapped.get('utm_content'),
+        utm_term=mapped.get('utm_term'),
+        landing_page_url=mapped.get('landing_page_url'),
         project_id=mapped.get('project_id'),
         budget_min=mapped.get('budget_min'),
         budget_max=mapped.get('budget_max'),
         status=mapped.get('status', 'new'),
-        assigned_to=assignee.id if assignee else None,
+        assigned_to=assigned_to,
+        sales_manager_id=sales_manager_id,
         created_by=None,   # system-created
+        is_test=is_test,
+        created_at=platform_created_at or datetime.utcnow(),
     )
     db.session.add(lead)
     db.session.flush()   # get lead.id
@@ -288,7 +467,7 @@ def dispatch_notification(lead: Lead, assignee: User):
 # MAIN PIPELINE ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def ingest_lead(source, raw_payload: dict, normalised: dict) -> dict:
+def ingest_lead(source, raw_payload: dict, normalised: dict, is_test: bool = False) -> dict:
     """
     Run the full ingestion pipeline for a single lead.
 
@@ -305,30 +484,97 @@ def ingest_lead(source, raw_payload: dict, normalised: dict) -> dict:
           'message':  str,
         }
     """
-    log = IngestedLeadLog(
+    platform_received_at = _parse_platform_datetime(
+        normalised.get('platform_created_at')
+        or normalised.get('created_time')
+        or (raw_payload or {}).get('created_time')
+        or (raw_payload or {}).get('created_at')
+        or (raw_payload or {}).get('submission_time')
+    )
+    ingest_now = datetime.utcnow()
+    platform_lead_id = str(normalised.get('platform_lead_id') or '').strip()
+
+    if is_before_lead_source_cutoff(platform_received_at, source):
+        return {
+            'status': 'ignored',
+            'lead_id': None,
+            'log_id': None,
+            'message': 'Lead received before the tenant lead-source cutoff',
+        }
+
+    existing_log = None
+    if platform_lead_id:
+        existing_log = IngestedLeadLog.query.filter_by(
+            tenant_id=source.tenant_id,
+            source_type=source.source_type,
+            platform_lead_id=platform_lead_id,
+        ).order_by(IngestedLeadLog.id.desc()).first()
+
+    if existing_log and existing_log.status != 'error':
+        return {
+            'status': 'duplicate',
+            'lead_id': existing_log.lead_id or existing_log.dup_of_lead_id,
+            'log_id': existing_log.id,
+            'message': 'Meta lead already ingested',
+        }
+
+    log = existing_log or IngestedLeadLog(
         tenant_id=source.tenant_id,
         source_id=source.id,
         source_type=source.source_type,
-        raw_payload=raw_payload,
-        platform_lead_id=normalised.get('platform_lead_id'),
-        campaign_id=normalised.get('campaign_id'),
-        campaign_name=normalised.get('campaign_name'),
-        ad_set_id=normalised.get('ad_set_id'),
-        ad_set_name=normalised.get('ad_set_name'),
-        ad_id=normalised.get('ad_id'),
-        ad_name=normalised.get('ad_name'),
-        form_id=normalised.get('form_id'),
-        form_name=normalised.get('form_name'),
-        page_id=normalised.get('page_id'),
-        status='queued',
+        is_test=is_test,
     )
+    log.source_id = source.id
+    log.received_at = platform_received_at or ingest_now
+    log.raw_payload = raw_payload
+    log.platform_lead_id = platform_lead_id or None
+    log.campaign_id = normalised.get('campaign_id')
+    log.campaign_name = normalised.get('campaign_name')
+    log.ad_set_id = normalised.get('ad_set_id')
+    log.ad_set_name = normalised.get('ad_set_name')
+    log.ad_id = normalised.get('ad_id')
+    log.ad_name = normalised.get('ad_name')
+    log.form_id = normalised.get('form_id')
+    log.form_name = normalised.get('form_name')
+    log.page_id = normalised.get('page_id')
+    log.gclid = normalised.get('gclid')
+    log.utm_source = normalised.get('utm_source')
+    log.utm_medium = normalised.get('utm_medium')
+    log.utm_campaign = normalised.get('utm_campaign')
+    log.utm_content = normalised.get('utm_content')
+    log.utm_term = normalised.get('utm_term')
+    log.landing_page_url = normalised.get('landing_page_url')
+    log.status = 'queued'
+    log.error_message = None
+    log.processed_at = None
     db.session.add(log)
     db.session.flush()   # get log.id early for error reporting
 
     try:
         # ── STAGE 1: Field mapping ─────────────────────────────────────────
         mapped = map_fields(normalised, source)
+        mapped, form_mapping = apply_form_project_mapping(source, normalised, mapped)
+        if not log.form_id and normalised.get('form_id'):
+            log.form_id = normalised.get('form_id')
+        if not log.form_name and normalised.get('form_name'):
+            log.form_name = normalised.get('form_name')
         log.mapped_fields = mapped
+
+        if not lead_payload_has_required_identity(mapped):
+            log.status = 'error'
+            log.error_message = 'Lead payload missing name or contact method'
+            log.processed_at = datetime.utcnow()
+            source.total_errors += 1
+            source.last_tested_at = datetime.utcnow()
+            source.last_test_result = 'fail'
+            source.last_test_message = 'Lead payload missing name or contact method.'
+            db.session.commit()
+            return {
+                'status': 'error',
+                'lead_id': None,
+                'log_id': log.id,
+                'message': 'Lead payload missing name or contact method',
+            }
 
         # ── STAGE 2: Duplicate detection ──────────────────────────────────
         existing = detect_duplicate(mapped, source)
@@ -340,7 +586,11 @@ def ingest_lead(source, raw_payload: dict, normalised: dict) -> dict:
                 log.dup_of_lead_id = existing.id
                 log.processed_at = datetime.utcnow()
                 source.total_leads_ingested += 1
-                source.last_lead_at = datetime.utcnow()
+                source.last_lead_at = platform_received_at or datetime.utcnow()
+                source.last_tested_at = datetime.utcnow()
+                source.last_test_result = 'pass'
+                source.last_test_message = 'Realtime webhook event processed (duplicate skipped).'
+                persist_meta_snapshot(source, normalised, log, existing.id, is_test=is_test)
                 db.session.commit()
                 return {
                     'status': 'duplicate',
@@ -360,7 +610,11 @@ def ingest_lead(source, raw_payload: dict, normalised: dict) -> dict:
                 log.dup_of_lead_id = existing.id
                 log.processed_at = datetime.utcnow()
                 source.total_leads_ingested += 1
-                source.last_lead_at = datetime.utcnow()
+                source.last_lead_at = platform_received_at or datetime.utcnow()
+                source.last_tested_at = datetime.utcnow()
+                source.last_test_result = 'pass'
+                source.last_test_message = 'Realtime webhook event processed (duplicate updated).'
+                persist_meta_snapshot(source, normalised, log, existing.id, is_test=is_test)
                 db.session.commit()
                 return {
                     'status': 'updated',
@@ -379,11 +633,18 @@ def ingest_lead(source, raw_payload: dict, normalised: dict) -> dict:
             # dup_mode == 'create_duplicate': fall through – create normally
 
         # ── STAGE 3: Assignment ────────────────────────────────────────────
-        assignee = resolve_assignee(source, mapped)
+        assignee = resolve_assignee(source, mapped, form_mapping)
 
         # ── STAGE 4: Lead creation ─────────────────────────────────────────
         flag_dup_of = mapped.pop('_flag_dup_of', None)
-        lead = create_lead(mapped, source, assignee, log)
+        lead = create_lead(
+            mapped,
+            source,
+            assignee,
+            log,
+            is_test=is_test,
+            platform_created_at=platform_received_at,
+        )
 
         if flag_dup_of:
             db.session.add(LeadNote(
@@ -402,8 +663,12 @@ def ingest_lead(source, raw_payload: dict, normalised: dict) -> dict:
 
         # ── Update source stats ────────────────────────────────────────────
         source.total_leads_ingested += 1
-        source.last_lead_at = datetime.utcnow()
+        source.last_lead_at = platform_received_at or datetime.utcnow()
+        source.last_tested_at = datetime.utcnow()
+        source.last_test_result = 'pass'
+        source.last_test_message = 'Realtime webhook event processed.'
         db.session.add(source)
+        persist_meta_snapshot(source, normalised, log, lead.id, is_test=is_test)
 
         db.session.commit()
 

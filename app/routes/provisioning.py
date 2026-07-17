@@ -8,6 +8,7 @@ Endpoints:
   POST /api/platform/tenants/:id/impersonate    — generate JWT for tenant admin
   GET  /api/platform/tenants/:id/usage          — usage statistics
 """
+import os
 import re
 from datetime import datetime, timedelta
 
@@ -21,6 +22,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.utils.activity import log_activity
 from app.utils.jwt import create_token, hash_password
+from app.utils.leads import apply_test_lead_filter
 
 
 provisioning_bp = Blueprint('provisioning', __name__, url_prefix='/api/platform')
@@ -37,11 +39,16 @@ def _route_tenant_slug(slug: str) -> str:
 
 
 def _tenant_app_path(tenant_slug: str, product_slug: str) -> str:
-    return f'/apps/{product_slug}/{_route_tenant_slug(tenant_slug)}'
+    return f'/{_route_tenant_slug(tenant_slug)}'
 
 
 def _tenant_login_path(tenant_slug: str, product_slug: str) -> str:
     return f'{_tenant_app_path(tenant_slug, product_slug)}/login'
+
+
+def _tenant_login_url(tenant_slug: str, product_slug: str) -> str:
+    frontend_lms = (os.environ.get('FRONTEND_LMS_URL') or 'https://lms.sociomonkey.com').strip().rstrip('/')
+    return f'{frontend_lms}{_tenant_login_path(tenant_slug, product_slug)}'
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -54,7 +61,7 @@ RESERVED_SLUGS = frozenset([
 
 # Default feature flags seeded per product on provisioning
 PRODUCT_DEFAULT_FLAGS = {
-    'crm': [
+    'lms': [
         ('pipeline',        True),
         ('reports',         True),
         ('bulk_import',     True),
@@ -84,7 +91,7 @@ def provision_tenant():
       plan, industry, max_users, notes
       brand_name, logo_url, favicon_url
       primary_color, secondary_color, accent_color, sidebar_bg_color, login_bg_color
-      products: ['crm', ...]
+    products: ['lms', ...]
       feature_flags: { pipeline: true, reports: false, ... }
     """
     owner = request.current_user
@@ -118,7 +125,7 @@ def provision_tenant():
         return jsonify({'error': f'Email {admin_email} is already registered'}), 400
 
     # ── Validate products ──────────────────────────────────────────────────
-    products_requested = data.get('products') or ['crm']
+    products_requested = data.get('products') or ['lms']
     valid_products = []
     for p_slug in products_requested:
         p = Product.query.filter_by(slug=p_slug, is_active=True).first()
@@ -202,7 +209,7 @@ def provision_tenant():
         'tenant':               tenant.to_dict(include_stats=True),
         'admin_user':           {'id': admin_user.id, 'email': admin_user.email, 'name': admin_user.name},
         'products_provisioned': provisioned_slugs,
-        'login_url':            _tenant_login_path(slug, provisioned_slugs[0]),
+        'login_url':            _tenant_login_url(slug, provisioned_slugs[0]),
     }), 201
 
 
@@ -247,7 +254,7 @@ def get_product_clients(product_code):
             User.is_active == True,
             User.last_login >= cutoff,
         ).count()
-        lead_count = Lead.query.filter_by(tenant_id=tenant.id, is_active=True).count()
+        lead_count = apply_test_lead_filter(Lead.query.filter_by(tenant_id=tenant.id, is_active=True)).count()
         admin_user = (
             User.query.filter_by(tenant_id=tenant.id, role='superadmin', is_active=True)
             .order_by(User.id)
@@ -420,7 +427,7 @@ def get_tenant_usage(tenant_id):
     tenant = Tenant.query.get_or_404(tenant_id)
 
     user_count = User.query.filter_by(tenant_id=tenant_id, is_active=True).count()
-    lead_count = Lead.query.filter_by(tenant_id=tenant_id, is_active=True).count()
+    lead_count = apply_test_lead_filter(Lead.query.filter_by(tenant_id=tenant_id, is_active=True)).count()
 
     # Active users in the last 30 days
     cutoff = datetime.utcnow() - timedelta(days=30)

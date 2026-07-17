@@ -168,13 +168,11 @@ def _process_reminders_unlocked(batch_size: int = _REMINDER_BATCH_SIZE):
         cb.reminder_10_sent = True
 
     # Due notification — fire 1 minute early so push arrives by scheduled time
-    grace_window_due = now - timedelta(minutes=4)   # 5-min window relative to 1-min-early firing
     remaining = max(1, batch_size - len(due_10))
     due_now = CallbackReminder.query.options(joinedload(CallbackReminder.lead)).filter(
         CallbackReminder.status == 'pending',
         CallbackReminder.reminder_due_sent == False,  # noqa: E712
         CallbackReminder.callback_datetime <= one_min_from_now,
-        CallbackReminder.callback_datetime >= grace_window_due,
     ).order_by(
         CallbackReminder.callback_datetime.asc(),
         CallbackReminder.id.asc(),

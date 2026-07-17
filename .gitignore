@@ -32,3 +32,6 @@ instance/
 # Railway local link
 .railway/
 .env*
+
+# Local Vercel env pulls
+.vercel*.env

@@ -10,11 +10,11 @@ team_bp = Blueprint('team', __name__, url_prefix='/api/users')
 
 
 @team_bp.route('', methods=['GET'])
-@require_role('superadmin', 'sales_manager')
+@require_role('superadmin', 'sales_manager', 'platform_owner')
 def get_users():
     user = request.current_user
     tid  = request.current_tenant_id
-    if user.role == 'superadmin':
+    if user.role in ('superadmin', 'platform_owner'):
         users = User.query.filter(
             User.is_active == True,
             User.tenant_id == tid,

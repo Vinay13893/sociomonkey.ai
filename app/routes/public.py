@@ -47,9 +47,9 @@ def get_tenant_config(slug):
     )
     product_slugs = [p.slug for p in enabled_products]
 
-    # If no explicit product subscriptions yet, fall back to CRM (existing tenants)
+    # If no explicit product subscriptions yet, fall back to LMS
     if not product_slugs:
-        product_slugs = ['crm']
+        product_slugs = ['lms']
 
     # Tenant-scoped feature flags  (flag_key → is_enabled)
     flags = FeatureFlag.query.filter_by(tenant_id=tenant.id).all()

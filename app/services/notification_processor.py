@@ -24,11 +24,13 @@ Back-off schedule (attempts):
 """
 import logging
 from datetime import datetime, timedelta
+from time import monotonic
 
 logger = logging.getLogger(__name__)
 
-# Rows per cron run. Keep small to stay within Vercel's 10s function limit.
-_BATCH_SIZE = 50
+# Rows per cron run. Keep small to stay within Vercel/serverless limits.
+_BATCH_SIZE = 5
+_MAX_RUN_SECONDS = 45
 
 _BACKOFF_MINUTES = {1: 5, 2: 30}   # after N-th failure, wait this many minutes
 
@@ -48,9 +50,25 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
 
     max_attempts = current_app.config.get('PUSH_MAX_ATTEMPTS', 3)
     vapid_pub = current_app.config.get('VAPID_PUBLIC_KEY', '')
-    summary = {'sent': 0, 'failed': 0, 'skipped': 0, 'deactivated_subs': 0, 'errors': []}
+    summary = {'sent': 0, 'failed': 0, 'skipped': 0, 'deactivated_subs': 0, 'recovered': 0, 'errors': []}
 
     now = datetime.utcnow()
+    deadline = monotonic() + _MAX_RUN_SECONDS
+    batch_size = max(1, min(int(batch_size or _BATCH_SIZE), 10))
+
+    # A previous serverless timeout can leave rows in "sending". Requeue stale
+    # rows so a later cron run can finish delivery instead of losing the event.
+    stale_cutoff = now - timedelta(minutes=5)
+    recovered = NotificationEvent.query.filter(
+        NotificationEvent.status == 'sending',
+        NotificationEvent.scheduled_for <= stale_cutoff,
+    ).update({
+        'status': 'queued',
+        'last_error': 'Recovered from stale sending state',
+    }, synchronize_session=False)
+    if recovered:
+        db.session.commit()
+        summary['recovered'] = int(recovered)
 
     # Fetch queued rows whose scheduled_for is due
     rows = (
@@ -76,6 +94,16 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
     db.session.commit()
 
     for event in rows:
+        if monotonic() >= deadline:
+            event = db.session.get(NotificationEvent, event.id)
+            if event and event.status == 'sending':
+                event.status = 'queued'
+                event.last_error = 'Deferred before worker timeout'
+                event.scheduled_for = datetime.utcnow() + timedelta(minutes=1)
+                db.session.commit()
+            summary['errors'].append('worker deadline reached; remaining events deferred')
+            break
+
         # Re-fetch fresh row in case of concurrent update
         event = db.session.get(NotificationEvent, event.id)
         if not event or event.status not in ('sending', 'queued'):
@@ -114,6 +142,10 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
         last_action = 'fail'
 
         for sub in subs:
+            if monotonic() >= deadline:
+                last_error = 'worker deadline reached before all subscriptions'
+                last_action = 'retry'
+                break
             result = send_web_push(sub, title, body, url, tag)
             if result.ok:
                 any_ok = True

@@ -9,16 +9,8 @@
   },
   "crons": [
     {
-      "path": "/api/internal/reminders/process",
-      "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron/drain-notifications",
-      "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/internal/jobs/process",
-      "schedule": "0 4 * * *"
+      "path": "/api/cron/meta-report-sync",
+      "schedule": "29 18 * * *"
     }
   ],
   "routes": [

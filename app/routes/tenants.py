@@ -14,6 +14,7 @@ from app.models.lead import Lead
 from app.models.activity import ActivityLog
 from app.utils.jwt import hash_password
 from app.utils.activity import log_activity
+from app.utils.leads import apply_test_lead_filter, apply_valid_lead_capture_scope
 
 tenants_bp = Blueprint('tenants', __name__, url_prefix='/api/platform')
 INTERNAL_TENANT_SLUGS = frozenset(['demo'])
@@ -32,16 +33,16 @@ def platform_analytics():
         .filter(User.role != 'platform_owner', ~Tenant.slug.in_(INTERNAL_TENANT_SLUGS))
         .count()
     )
-    total_leads = (
-        Lead.query
-        .join(Tenant, Lead.tenant_id == Tenant.id)
-        .filter(Lead.is_active == True, ~Tenant.slug.in_(INTERNAL_TENANT_SLUGS))
-        .count()
-    )
+    total_leads = 0
     active_t    = sum(1 for t in tenants if t.status == 'active')
 
     tenant_stats = []
     for t in tenants:
+        lead_count = apply_valid_lead_capture_scope(
+            apply_test_lead_filter(Lead.query.filter_by(tenant_id=t.id, is_active=True)),
+            t.id,
+        ).count()
+        total_leads += lead_count
         tenant_stats.append({
             'id':         t.id,
             'name':       t.name,
@@ -49,7 +50,7 @@ def platform_analytics():
             'status':     t.status,
             'plan':       t.plan,
             'user_count': User.query.filter_by(tenant_id=t.id, is_active=True).count(),
-            'lead_count': Lead.query.filter_by(tenant_id=t.id, is_active=True).count(),
+            'lead_count': lead_count,
             'created_at': t.created_at.isoformat(),
         })
 

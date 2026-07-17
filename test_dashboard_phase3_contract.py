@@ -28,6 +28,7 @@ def test_dashboard_preserves_role_and_tenant_scope():
     assert "Lead.assigned_to == user.id" in source
     assert "Lead.sales_manager_id == user.id" in source
     assert "apply_test_lead_filter(q)" in source
+    assert "_apply_lead_source_cutoff_scope(q, user, tid_scope)" in source
 
 
 def test_dashboard_filters_are_sql_side():
@@ -38,3 +39,4 @@ def test_dashboard_filters_are_sql_side():
     assert "Lead.source == source" in source
     assert "Lead.status == status" in source
     assert "Lead.assigned_to == int(assigned_to)" in source
+    assert "business_date_bounds_utc_naive" in source

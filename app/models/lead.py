@@ -13,6 +13,13 @@ class Lead(db.Model):
     alternate_phone = db.Column(db.String(50))
     email = db.Column(db.String(200))
     source = db.Column(db.String(100))
+    gclid = db.Column(db.String(255), index=True)
+    utm_source = db.Column(db.String(255), index=True)
+    utm_medium = db.Column(db.String(255), index=True)
+    utm_campaign = db.Column(db.String(255), index=True)
+    utm_content = db.Column(db.String(255), index=True)
+    utm_term = db.Column(db.String(255), index=True)
+    landing_page_url = db.Column(db.Text)
     budget_min = db.Column(db.Float)
     budget_max = db.Column(db.Float)
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True)
@@ -26,6 +33,7 @@ class Lead(db.Model):
         db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
     is_active = db.Column(db.Boolean, default=True, nullable=False, server_default='1')
+    is_test = db.Column(db.Boolean, default=False, nullable=False, server_default='0', index=True)
 
     project = db.relationship('Project', backref='leads', lazy='joined')
     assigned_user = db.relationship('User', foreign_keys=[assigned_to], lazy='joined')
@@ -48,6 +56,10 @@ class Lead(db.Model):
                 pending.sort(key=lambda c: c.callback_datetime)
                 next_callback = to_ist_str(pending[0].callback_datetime)
 
+        now = datetime.utcnow()
+        created_age_days = (now - self.created_at).days if self.created_at else None
+        untouched_days = (now - self.updated_at).days if self.updated_at else None
+
         return {
             'id': self.id,
             'name': self.name,
@@ -55,6 +67,13 @@ class Lead(db.Model):
             'alternate_phone': self.alternate_phone,
             'email': self.email,
             'source': self.source,
+            'gclid': self.gclid,
+            'utm_source': self.utm_source,
+            'utm_medium': self.utm_medium,
+            'utm_campaign': self.utm_campaign,
+            'utm_content': self.utm_content,
+            'utm_term': self.utm_term,
+            'landing_page_url': self.landing_page_url,
             'budget_min': self.budget_min,
             'budget_max': self.budget_max,
             'project_id': self.project_id,
@@ -73,6 +92,9 @@ class Lead(db.Model):
             'created_by': self.created_by,
             'created_at': to_ist_str(self.created_at),
             'updated_at': to_ist_str(self.updated_at),
+            'age_days': created_age_days,
+            'untouched_days': untouched_days,
+            'is_test': self.is_test,
             'latest_note': latest_note,
             'next_callback': next_callback,
         }

@@ -99,7 +99,7 @@ def test_send():
     data = request.get_json(silent=True) or {}
     title = (data.get('title') or 'Sociomonkey Test').strip()[:80]
     body  = (data.get('body')  or 'Push notifications are working!').strip()[:200]
-    url   = (data.get('url')   or '/apps/lms').strip()
+    url   = (data.get('url')   or '/').strip()
 
     if not _vapid_configured():
         return jsonify({'error': 'VAPID keys not configured on server'}), 503

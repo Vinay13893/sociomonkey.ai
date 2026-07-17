@@ -6,7 +6,7 @@ retry) is intentionally out of scope; that ships in a later phase wired to a
 Vercel Cron worker that drains queued rows and posts to Web Push / FCM.
 
 The deep_link strings follow the canonical tenant URL structure already used
-by the SPA router (/apps/:product/:slug/:tab/lead/:id).
+by the SPA router (/:slug/:tab/lead/:id).
 """
 from datetime import datetime
 from datetime import timezone as _tz
@@ -24,8 +24,8 @@ def _build_lead_deep_link(tenant_slug: str, tab: str, lead_id) -> str:
     if not tenant_slug:
         return '/'
     if lead_id:
-        return f'/apps/lms/{tenant_slug}/{tab}/lead/{lead_id}'
-    return f'/apps/lms/{tenant_slug}/{tab}'
+        return f'/{tenant_slug}/{tab}/lead/{lead_id}'
+    return f'/{tenant_slug}/{tab}'
 
 
 def enqueue_lead_assigned(user, lead) -> NotificationEvent:

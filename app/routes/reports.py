@@ -6,14 +6,16 @@ from io import BytesIO
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+from sqlalchemy import case, func
 
 from app import db
 from app.middleware import require_auth, require_role
 from app.models.activity import ActivityLog
-from app.models.lead import Lead, StatusHistory
+from app.models.lead import Lead, StatusHistory, CallbackReminder
+from app.models.project import Project
 from app.models.user import User
 from app.services.reports import ReportService
-from app.utils.leads import get_user_visible_leads
+from app.utils.leads import get_user_visible_leads, apply_test_lead_filter, apply_valid_lead_capture_scope
 from app.utils.time_utils import IST
 
 reports_bp = Blueprint('reports', __name__, url_prefix='/api/reports')
@@ -66,9 +68,77 @@ def _apply_created_date_filters(query, range_key: str, date_from: str, date_to: 
     return query
 
 
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compact_activity_row(row):
+    return {
+        'id': row.id,
+        'user_id': row.user_id,
+        'user_name': row.user_name,
+        'action': row.action,
+        'module': row.module,
+        'resource_id': row.resource_id,
+        'resource_type': row.resource_type,
+        'description': row.description,
+        'ip_address': row.ip_address,
+        'created_at': row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _activity_query_for_user(user, user_id_param=None):
+    query = ActivityLog.query
+    if user.tenant_id is not None:
+        query = query.filter(ActivityLog.tenant_id == user.tenant_id)
+
+    requested_user_id = _safe_int(user_id_param)
+    if user.role == 'team_member':
+        return query.filter(ActivityLog.user_id == user.id)
+
+    if user.role == 'sales_manager':
+        team_ids = [
+            r[0] for r in User.query
+            .filter_by(manager_id=user.id, is_active=True, tenant_id=user.tenant_id)
+            .with_entities(User.id)
+            .all()
+        ]
+        team_ids.append(user.id)
+        query = query.filter(ActivityLog.user_id.in_(team_ids))
+        if requested_user_id in team_ids:
+            query = query.filter(ActivityLog.user_id == requested_user_id)
+        return query
+
+    if requested_user_id:
+        query = query.filter(ActivityLog.user_id == requested_user_id)
+    return query
+
+
+def _apply_activity_filters(query, action=None, module=None, date_from=None, date_to=None):
+    if action:
+        query = query.filter(ActivityLog.action == action)
+    if module:
+        query = query.filter(ActivityLog.module == module)
+    if date_from:
+        try:
+            query = query.filter(ActivityLog.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            query = query.filter(ActivityLog.created_at < datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1))
+        except ValueError:
+            pass
+    return query
+
+
 def _period_metrics(user, start_dt: datetime, end_dt: datetime):
-    visible_ids = [r[0] for r in get_user_visible_leads(user).with_entities(Lead.id).all()]
-    if not visible_ids:
+    visible_ids = get_user_visible_leads(user).with_entities(Lead.id).subquery()
+    visible_count = db.session.query(func.count(visible_ids.c.id)).scalar() or 0
+    if not visible_count:
         return {
             'leads_added': 0,
             'calls_done': 0,
@@ -184,6 +254,7 @@ def lead_report():
 
     date_from = request.args.get('date_from')
     date_to   = request.args.get('date_to')
+    project_id = request.args.get('project_id', type=int)
     if date_from:
         try:
             query = query.filter(Lead.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
@@ -196,48 +267,106 @@ def lead_report():
         except ValueError:
             pass
 
-    leads = query.all()
-    total = len(leads)
+    if project_id:
+        query = query.filter(Lead.project_id == project_id)
 
-    status_counts: dict = {}
-    source_counts: dict = {}
-    project_counts: dict = {}
+    report_sq = query.with_entities(
+        Lead.id.label('id'),
+        Lead.status.label('status'),
+        Lead.source.label('source'),
+        Lead.project_id.label('project_id'),
+        Lead.created_at.label('created_at'),
+    ).subquery()
+
+    total = db.session.query(func.count(report_sq.c.id)).scalar() or 0
+
     converted_statuses = {'booking_done', 'negotiation'}
-    converted: list = []
+    converted = (
+        db.session.query(func.count(report_sq.c.id))
+        .filter(report_sq.c.status.in_(converted_statuses))
+        .scalar()
+        or 0
+    )
+    conversion_rate = round(converted / total * 100, 2) if total else 0
 
-    for lead in leads:
-        s = lead.status or 'unknown'
-        status_counts[s] = status_counts.get(s, 0) + 1
+    status_counts = {
+        key or 'unknown': int(count or 0)
+        for key, count in db.session.query(
+            func.coalesce(report_sq.c.status, 'unknown'),
+            func.count(report_sq.c.id),
+        ).group_by(func.coalesce(report_sq.c.status, 'unknown')).all()
+    }
 
-        src = lead.source or 'unknown'
-        source_counts[src] = source_counts.get(src, 0) + 1
+    source_counts = {
+        key or 'unknown': int(count or 0)
+        for key, count in db.session.query(
+            func.coalesce(report_sq.c.source, 'unknown'),
+            func.count(report_sq.c.id),
+        ).group_by(func.coalesce(report_sq.c.source, 'unknown')).all()
+    }
 
-        if lead.project:
-            project_counts[lead.project.name] = (
-                project_counts.get(lead.project.name, 0) + 1
-            )
+    project_counts = {
+        key or 'Unassigned': int(count or 0)
+        for key, count in db.session.query(
+            func.coalesce(Project.name, 'Unassigned'),
+            func.count(report_sq.c.id),
+        )
+        .outerjoin(Project, Project.id == report_sq.c.project_id)
+        .group_by(func.coalesce(Project.name, 'Unassigned'))
+        .all()
+    }
 
-        if lead.status in converted_statuses:
-            converted.append(lead)
-
-    conversion_rate = round(len(converted) / total * 100, 2) if total else 0
+    terminal_statuses = ['booking_done', 'lost', 'junk', 'not_interested']
+    stale_cutoff = datetime.utcnow() - timedelta(days=5)
+    today_start = datetime(datetime.utcnow().year, datetime.utcnow().month, datetime.utcnow().day)
+    unassigned_count = query.filter(Lead.assigned_to.is_(None)).count()
+    pending_callbacks = db.session.query(func.count(func.distinct(CallbackReminder.lead_id))).filter(
+        CallbackReminder.tenant_id == user.tenant_id,
+        CallbackReminder.status == 'pending',
+        CallbackReminder.lead_id.in_(query.with_entities(Lead.id)),
+    ).scalar() or 0
+    overdue_callbacks = db.session.query(func.count(func.distinct(CallbackReminder.lead_id))).filter(
+        CallbackReminder.tenant_id == user.tenant_id,
+        CallbackReminder.status == 'pending',
+        CallbackReminder.callback_datetime < datetime.utcnow(),
+        CallbackReminder.lead_id.in_(query.with_entities(Lead.id)),
+    ).scalar() or 0
+    untouched = (
+        db.session.query(func.count(report_sq.c.id))
+        .filter(report_sq.c.status == 'new')
+        .scalar()
+        or 0
+    )
+    stale = query.filter(Lead.status.notin_(terminal_statuses), Lead.updated_at <= stale_cutoff).count()
+    carry_forward = query.filter(Lead.created_at < today_start, Lead.status.notin_(terminal_statuses)).count()
 
     # Leads per day — use filtered leads if date filter applied, else last 30 days
-    if date_from or date_to:
-        trend_leads = leads
-    else:
-        cutoff = datetime.utcnow() - timedelta(days=30)
-        trend_leads = [l for l in leads if l.created_at and l.created_at >= cutoff]
-    by_date: dict = {}
-    for lead in trend_leads:
-        d = lead.created_at.strftime('%Y-%m-%d')
-        by_date[d] = by_date.get(d, 0) + 1
+    trend_query = db.session.query(
+        func.date(report_sq.c.created_at),
+        func.count(report_sq.c.id),
+    )
+    if not (date_from or date_to):
+        trend_query = trend_query.filter(report_sq.c.created_at >= datetime.utcnow() - timedelta(days=30))
+    by_date = {
+        str(day): int(count or 0)
+        for day, count in trend_query.group_by(func.date(report_sq.c.created_at)).all()
+        if day
+    }
 
     return jsonify({
         'total_leads': total,
         'leads_by_status': status_counts,
         'leads_by_source': source_counts,
         'leads_by_project': project_counts,
+        'operational_health': {
+            'allocation_unassigned': int(unassigned_count or 0),
+            'workload_assigned': int(total - (unassigned_count or 0)),
+            'pending_callbacks': int(pending_callbacks or 0),
+            'overdue_callbacks': int(overdue_callbacks or 0),
+            'untouched': int(untouched or 0),
+            'stale': int(stale or 0),
+            'carry_forward': int(carry_forward or 0),
+        },
         'conversion_rate': conversion_rate,
         'leads_by_date': by_date,
     }), 200
@@ -252,18 +381,49 @@ def team_report():
     date_to   = request.args.get('date_to')
     range_key = request.args.get('range')
 
-    def apply_date_filters(q):
-        return _apply_created_date_filters(q, range_key, date_from, date_to)
+    scoped_leads = Lead.query.filter_by(is_active=True, tenant_id=current_user.tenant_id)
+    scoped_leads = apply_valid_lead_capture_scope(apply_test_lead_filter(scoped_leads), current_user.tenant_id)
+    scoped_leads = _apply_created_date_filters(scoped_leads, range_key, date_from, date_to)
+    if current_user.role == 'sales_manager':
+        team_user_ids = [
+            r[0] for r in User.query
+            .filter_by(manager_id=current_user.id, is_active=True, tenant_id=current_user.tenant_id)
+            .with_entities(User.id)
+            .all()
+        ]
+        scoped_leads = scoped_leads.filter(Lead.assigned_to.in_(team_user_ids + [current_user.id]))
 
-    def build_stats_for_user(u, q):
-        q = apply_date_filters(q)
-        leads = q.all()
-        total            = len(leads)
-        interested       = sum(1 for l in leads if l.status == 'interested')
-        site_visit_plan  = sum(1 for l in leads if l.status == 'site_visit_planned')
-        site_visit_done  = sum(1 for l in leads if l.status == 'site_visit_done')
-        negotiation      = sum(1 for l in leads if l.status == 'negotiation')
-        booking_done     = sum(1 for l in leads if l.status == 'booking_done')
+    lead_stats = {}
+    for row in (
+        scoped_leads.with_entities(
+            Lead.assigned_to.label('assigned_to'),
+            func.count(Lead.id).label('total'),
+            func.sum(case((Lead.status == 'interested', 1), else_=0)).label('interested'),
+            func.sum(case((Lead.status == 'site_visit_planned', 1), else_=0)).label('site_visit_planned'),
+            func.sum(case((Lead.status == 'site_visit_done', 1), else_=0)).label('site_visit_done'),
+            func.sum(case((Lead.status == 'negotiation', 1), else_=0)).label('negotiation'),
+            func.sum(case((Lead.status == 'booking_done', 1), else_=0)).label('booking_done'),
+        )
+        .group_by(Lead.assigned_to)
+        .all()
+    ):
+        lead_stats[row.assigned_to] = {
+            'total': int(row.total or 0),
+            'interested': int(row.interested or 0),
+            'site_visit_planned': int(row.site_visit_planned or 0),
+            'site_visit_done': int(row.site_visit_done or 0),
+            'negotiation': int(row.negotiation or 0),
+            'booking_done': int(row.booking_done or 0),
+        }
+
+    def get_stats(u):
+        stats = lead_stats.get(u.id, {})
+        total = int(stats.get('total') or 0)
+        interested = int(stats.get('interested') or 0)
+        site_visit_plan = int(stats.get('site_visit_planned') or 0)
+        site_visit_done = int(stats.get('site_visit_done') or 0)
+        negotiation = int(stats.get('negotiation') or 0)
+        booking_done = int(stats.get('booking_done') or 0)
         warm_leads       = interested + site_visit_plan
         hot_leads        = site_visit_done + negotiation
         warm_rate        = round((interested + site_visit_plan) / total * 100, 2) if total else 0
@@ -285,20 +445,6 @@ def team_report():
             'hot_rate': hot_rate,
             'last_login': u.last_login.isoformat() if u.last_login else None,
         }
-
-    def get_stats(u):
-        tid = u.tenant_id
-        if u.role == 'sales_manager':
-            # Reports manager row should reflect only leads directly assigned to the manager.
-            q = Lead.query.filter_by(
-                assigned_to=u.id,
-                is_active=True,
-                tenant_id=tid,
-            )
-            return build_stats_for_user(u, q)
-
-        q = Lead.query.filter_by(assigned_to=u.id, is_active=True, tenant_id=tid)
-        return build_stats_for_user(u, q)
 
     if current_user.role == 'sales_manager':
         # Return just this manager's group
@@ -358,28 +504,47 @@ def comparison_report():
 @reports_bp.route('/activity', methods=['GET'])
 @require_role('superadmin')
 def activity_report():
-    user_activity: dict = {}
-    action_activity: dict = {}
-    module_activity: dict = {}
+    user = request.current_user
+    base = ActivityLog.query
+    if user.tenant_id is not None:
+        base = base.filter(ActivityLog.tenant_id == user.tenant_id)
 
-    for log in ActivityLog.query.all():
-        name = log.user.name if log.user else 'Unknown'
-        user_activity[name] = user_activity.get(name, 0) + 1
-        action_activity[log.action] = action_activity.get(log.action, 0) + 1
-        module_activity[log.module] = module_activity.get(log.module, 0) + 1
+    user_activity = {
+        name or 'Unknown': int(count or 0)
+        for name, count in base.with_entities(User.name, func.count(ActivityLog.id))
+        .outerjoin(User, User.id == ActivityLog.user_id)
+        .group_by(User.name)
+        .all()
+    }
+    action_activity = {
+        action or 'unknown': int(count or 0)
+        for action, count in base.with_entities(ActivityLog.action, func.count(ActivityLog.id))
+        .group_by(ActivityLog.action)
+        .all()
+    }
+    module_activity = {
+        module or 'unknown': int(count or 0)
+        for module, count in base.with_entities(ActivityLog.module, func.count(ActivityLog.id))
+        .group_by(ActivityLog.module)
+        .all()
+    }
 
     cutoff = datetime.utcnow() - timedelta(days=7)
-    by_date: dict = {}
-    for log in ActivityLog.query.filter(ActivityLog.created_at >= cutoff).all():
-        d = log.created_at.strftime('%Y-%m-%d')
-        by_date[d] = by_date.get(d, 0) + 1
+    by_date = {
+        str(day): int(count or 0)
+        for day, count in base.with_entities(func.date(ActivityLog.created_at), func.count(ActivityLog.id))
+        .filter(ActivityLog.created_at >= cutoff)
+        .group_by(func.date(ActivityLog.created_at))
+        .all()
+        if day
+    }
 
     return jsonify({
         'activity_by_user': user_activity,
         'activity_by_action': action_activity,
         'activity_by_module': module_activity,
         'activity_last_7_days': by_date,
-        'total_activities': ActivityLog.query.count(),
+        'total_activities': base.count(),
     }), 200
 
 
@@ -391,9 +556,13 @@ def get_activity_logs():
     action = request.args.get('action')
     module = request.args.get('module')
     limit = request.args.get('limit', 100, type=int)
+    page = max(1, request.args.get('page', 1, type=int))
+    per_page = min(100, max(10, request.args.get('per_page', limit or 25, type=int)))
     sort = (request.args.get('sort') or 'newest').strip().lower()
+    date_from = request.args.get('date_from')
+    date_to = request.args.get('date_to')
 
-    query = ActivityLog.query
+    query = _activity_query_for_user(user, user_id_param)
 
     if user.role == 'team_member':
         # Team members see only their own activity
@@ -403,21 +572,58 @@ def get_activity_logs():
         team_ids = [m.id for m in User.query.filter_by(manager_id=user.id).all()]
         team_ids.append(user.id)
         query = query.filter(ActivityLog.user_id.in_(team_ids))
-        if user_id_param and int(user_id_param) in team_ids:
-            query = query.filter_by(user_id=int(user_id_param))
+        requested_user_id = _safe_int(user_id_param)
+        if requested_user_id in team_ids:
+            query = query.filter_by(user_id=requested_user_id)
     else:
         # superadmin / platform_owner — see all
-        if user_id_param:
-            query = query.filter_by(user_id=int(user_id_param))
+        requested_user_id = _safe_int(user_id_param)
+        if requested_user_id:
+            query = query.filter_by(user_id=requested_user_id)
 
     if action:
         query = query.filter_by(action=action)
     if module:
         query = query.filter_by(module=module)
+    if date_from:
+        try:
+            query = query.filter(ActivityLog.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            query = query.filter(ActivityLog.created_at < datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1))
+        except ValueError:
+            pass
 
     order_by = ActivityLog.created_at.asc() if sort == 'oldest' else ActivityLog.created_at.desc()
-    logs = query.order_by(order_by).limit(limit).all()
-    return jsonify({'activity_logs': [l.to_dict() for l in logs]}), 200
+    total = query.count()
+    logs = (
+        query
+        .with_entities(
+            ActivityLog.id,
+            ActivityLog.user_id,
+            User.name.label('user_name'),
+            ActivityLog.action,
+            ActivityLog.module,
+            ActivityLog.resource_id,
+            ActivityLog.resource_type,
+            ActivityLog.description,
+            ActivityLog.ip_address,
+            ActivityLog.created_at,
+        )
+        .outerjoin(User, User.id == ActivityLog.user_id)
+        .order_by(order_by)
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+    return jsonify({
+        'activity_logs': [_compact_activity_row(l) for l in logs],
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+    }), 200
 
 
 @reports_bp.route('/activity-logs/download', methods=['GET'])
@@ -427,6 +633,8 @@ def download_activity_logs():
     user_id_param = request.args.get('user_id')
     action  = request.args.get('action')
     module  = request.args.get('module')
+    date_from = request.args.get('date_from')
+    date_to = request.args.get('date_to')
 
     query = ActivityLog.query
 
@@ -446,6 +654,16 @@ def download_activity_logs():
         query = query.filter_by(action=action)
     if module:
         query = query.filter_by(module=module)
+    if date_from:
+        try:
+            query = query.filter(ActivityLog.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            query = query.filter(ActivityLog.created_at < datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1))
+        except ValueError:
+            pass
 
     logs = query.order_by(ActivityLog.created_at.desc()).all()
 

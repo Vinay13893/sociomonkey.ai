@@ -124,7 +124,7 @@ def send_web_push(subscription, title: str, body: str,
             vapid_claims={'sub': vapid_email},
             content_encoding='aes128gcm',
             ttl=86400,        # 24 h — push service may hold if device offline
-            timeout=10,
+            timeout=4,
         )
         status = response.status_code if hasattr(response, 'status_code') else 201
         if status in (200, 201):

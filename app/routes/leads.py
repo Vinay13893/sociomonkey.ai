@@ -1839,7 +1839,12 @@ def _apply_workload_filters(query, args):
     query = _apply_age_filter(query, age)
     query = _apply_last_updated_filter(query, last_updated)
     if untouched_only:
-        query = query.filter(Lead.status == 'new')
+        pending_callback_exists = db.session.query(CallbackReminder.id).filter(
+            CallbackReminder.tenant_id == Lead.tenant_id,
+            CallbackReminder.lead_id == Lead.id,
+            CallbackReminder.status == 'pending',
+        ).exists()
+        query = query.filter(Lead.status == 'new', ~pending_callback_exists)
     if stale_only:
         query = query.filter(Lead.updated_at <= datetime.utcnow() - timedelta(days=WORKLOAD_STALE_DAYS))
     return query
@@ -1905,10 +1910,6 @@ def _eligible_counts_for_query(query, to_user_id=None):
     matching = query.count()
     eligible_q = query
     reasons = {}
-    terminal = query.filter(Lead.status.in_(TERMINAL_LEAD_STATUSES)).count()
-    if terminal:
-        reasons['terminal_status'] = terminal
-        eligible_q = eligible_q.filter(Lead.status.notin_(TERMINAL_LEAD_STATUSES))
     if to_user_id:
         same = eligible_q.filter(Lead.assigned_to == int(to_user_id)).count()
         if same:
@@ -2075,7 +2076,15 @@ def ar_workload():
         active = member_base.filter(
             Lead.status.notin_(TERMINAL_LEAD_STATUSES),
         ).count()
-        untouched = member_base.filter(Lead.status == 'new').count()
+        pending_callback_exists = db.session.query(CallbackReminder.id).filter(
+            CallbackReminder.tenant_id == user.tenant_id,
+            CallbackReminder.lead_id == Lead.id,
+            CallbackReminder.status == 'pending',
+        ).exists()
+        untouched = member_base.filter(
+            Lead.status == 'new',
+            ~pending_callback_exists,
+        ).count()
         follow_ups = member_base.filter(Lead.status == 'follow_up').count()
         stale = member_base.filter(
             Lead.status.notin_(TERMINAL_LEAD_STATUSES),
@@ -2120,7 +2129,7 @@ def ar_workload():
         'members': result,
         'definitions': {
             'assigned': 'Active visible leads currently assigned to the member.',
-            'untouched': 'Active assigned leads still in New status under the existing untouched rule.',
+            'untouched': 'Active assigned leads still in New status with no pending callback.',
             'callbacks': 'Distinct active current-assignee leads with pending callbacks.',
             'overdue_callbacks': 'Distinct active current-assignee leads with pending callbacks before now.',
             'stale': f'Active non-terminal assigned leads not updated in {WORKLOAD_STALE_DAYS}+ days.',
@@ -2315,7 +2324,7 @@ def ar_workload_move():
     skipped = max(0, eligible - len(leads)) if mode in ('all', 'random_n', 'first_n') else 0
     moved_ids = []
     for lead in leads:
-        if not lead.is_active or lead.assigned_to != from_user.id or lead.status in TERMINAL_LEAD_STATUSES:
+        if not lead.is_active or lead.assigned_to != from_user.id:
             continue
         lead.assigned_to = to_user.id
         db.session.add(LeadAssignmentHistory(

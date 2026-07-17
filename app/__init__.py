@@ -21,6 +21,15 @@ DEMO_ADMIN_EMAIL = 'demo.admin@sociomonkey.com'
 DEMO_ADMIN_NAME = 'Sociomonkey Admin'
 DEMO_ADMIN_PASSWORD = 'SocioMonkey#2024'
 
+DEFAULT_APP_CORS_ORIGINS = (
+    'https://lms.sociomonkey.com',
+    'https://sociomonkey-ai.vercel.app',
+    'http://127.0.0.1:8000',
+    'http://localhost:8000',
+    'http://127.0.0.1:5173',
+    'http://localhost:5173',
+)
+
 
 def _perf_now_ms() -> int:
     return int(time.time() * 1000)
@@ -45,6 +54,24 @@ def _perf_match_route(req) -> str:
         return 'dashboard_stats'
     if method == 'GET' and path == '/api/leads':
         return 'leads'
+    if method == 'GET' and path.startswith('/api/leads/') and path.endswith('/detail-bundle'):
+        return 'lead_detail_bundle'
+    if method == 'GET' and path == '/api/leads/action-board':
+        return 'action_board'
+    if method == 'GET' and path == '/api/leads/notifications':
+        return 'notifications'
+    if path == '/api/leads/notifications/mark-read':
+        return 'notifications_mark_read'
+    if method == 'GET' and path.startswith('/api/reports/'):
+        return 'reports'
+    if method == 'GET' and path == '/api/lead-sources/reports/performance':
+        return 'lead_sources_performance'
+    if path == '/api/lead-sources/reports/sync-meta':
+        return 'lead_sources_sync_meta'
+    if method == 'GET' and path == '/api/lead-sources/logs':
+        return 'lead_sources_logs'
+    if path.startswith('/api/cron/') or path.startswith('/api/internal/'):
+        return 'background_job'
     return ''
 
 
@@ -56,6 +83,68 @@ def _perf_sql_snippet(statement: str) -> str:
 def _perf_emit(app: Flask, message: str):
     app.logger.info(message)
     print(message, flush=True)
+
+
+def _perf_response_bytes(response) -> int:
+    try:
+        length = response.calculate_content_length()
+        if length is not None:
+            return int(length)
+    except Exception:
+        pass
+    try:
+        direct = response.content_length
+        if direct is not None:
+            return int(direct)
+    except Exception:
+        pass
+    return -1
+
+
+def _perf_tenant_scope() -> str:
+    try:
+        current_user = getattr(request, 'current_user', None)
+        tenant_id = getattr(current_user, 'tenant_id', None)
+        if tenant_id is None:
+            return 'none'
+        return f'tenant:{tenant_id}'
+    except Exception:
+        return 'unknown'
+
+
+def _resolve_cors_origins(configured):
+    if configured == '*':
+        # Credentialed requests cannot use wildcard origins.
+        return list(DEFAULT_APP_CORS_ORIGINS)
+    if isinstance(configured, str):
+        origins = [configured] if configured.strip() else []
+    else:
+        origins = [origin for origin in (configured or []) if origin]
+    for origin in DEFAULT_APP_CORS_ORIGINS:
+        if origin not in origins:
+            origins.append(origin)
+    return origins or '*'
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _should_run_startup_db_maintenance(config_name: str) -> bool:
+    # Serverless production cold starts must stay lean. Run migrations/seeding
+    # explicitly, or opt in temporarily with RUN_STARTUP_DB_MAINTENANCE=1.
+    if _env_flag('RUN_STARTUP_DB_MAINTENANCE', False):
+        return True
+    return (config_name or '').lower() != 'production'
+
+
+def _should_enable_api_perf(config_name: str) -> bool:
+    if _env_flag('ENABLE_API_PERF', False):
+        return True
+    return (config_name or '').lower() != 'production'
 
 
 def _register_api_perf(app: Flask):
@@ -95,6 +184,7 @@ def _register_api_perf(app: Flask):
         response_sent_at_ms = _perf_now_ms()
         db_ms = round(float(getattr(g, '_api_perf_db_total_ms', 0.0)), 2)
         query_count = int(getattr(g, '_api_perf_db_query_count', 0) or 0)
+        response_bytes = _perf_response_bytes(response)
         response.headers['X-Perf-Route-Key'] = route_key
         response.headers['X-Perf-Request-Id'] = g._api_perf_request_id
         response.headers['X-Perf-Request-Received-At-Ms'] = str(g._api_perf_request_received_at_ms)
@@ -102,15 +192,20 @@ def _register_api_perf(app: Flask):
         response.headers['X-Perf-Backend-Duration-Ms'] = f'{backend_ms:.2f}'
         response.headers['X-Perf-Db-Duration-Ms'] = f'{db_ms:.2f}'
         response.headers['X-Perf-Db-Query-Count'] = str(query_count)
+        response.headers['X-Perf-Response-Bytes'] = str(response_bytes)
         _perf_emit(
             app,
-            '[API-PERF] req={req} route={route} stage=response_sent status={status} backend_ms={backend:.2f} db_ms={db_ms:.2f} queries={queries} received_at_ms={received} response_sent_at_ms={sent}'.format(
+            '[API-PERF] req={req} route={route} stage=response_sent method={method} status={status} backend_ms={backend:.2f} db_ms={db_ms:.2f} queries={queries} response_bytes={bytes} tenant_scope={tenant_scope} env={env} received_at_ms={received} response_sent_at_ms={sent}'.format(
                 req=g._api_perf_request_id,
                 route=route_key,
+                method=request.method,
                 status=response.status_code,
                 backend=backend_ms,
                 db_ms=db_ms,
                 queries=query_count,
+                bytes=response_bytes,
+                tenant_scope=_perf_tenant_scope(),
+                env=app.config.get('ENV', os.getenv('VERCEL_ENV', 'unknown')),
                 received=g._api_perf_request_received_at_ms,
                 sent=response_sent_at_ms,
             ),
@@ -173,6 +268,8 @@ def _register_db_perf(app: Flask):
 def create_app(config_name: str = None) -> Flask:
     app = Flask(__name__)
 
+    _last_notification_worker_run = {'at': None}
+
     # ------------------------------------------------------------------ Config
     if not config_name:
         config_name = get_config_name('development')
@@ -181,8 +278,14 @@ def create_app(config_name: str = None) -> Flask:
 
     # ------------------------------------------------------------------ Extensions
     db.init_app(app)
-    CORS(app, resources={r'/api/*': {'origins': app.config.get('CORS_ORIGINS', '*')}})
-    _register_api_perf(app)
+    CORS(
+        app,
+        resources={r'/api/*': {'origins': _resolve_cors_origins(app.config.get('CORS_ORIGINS', '*'))}},
+        supports_credentials=True,
+    )
+    enable_api_perf = _should_enable_api_perf(config_name)
+    if enable_api_perf:
+        _register_api_perf(app)
 
     # ------------------------------------------------------------------ Blueprints
     from app.routes.auth import auth_bp
@@ -223,6 +326,7 @@ def create_app(config_name: str = None) -> Flask:
             'status': 'ok',
             'service': 'sociomonkey-backend',
             'env': app.config.get('ENV', config_name),
+            'lead_count_contract': 'valid-capture-v1',
         }), 200
 
     @app.errorhandler(404)
@@ -235,60 +339,80 @@ def create_app(config_name: str = None) -> Flask:
 
     # ------------------------------------------------------------------ DB init + seed
     with app.app_context():
-        _register_db_perf(app)
+        if enable_api_perf:
+            _register_db_perf(app)
         # Import all models so SQLAlchemy registers the tables
         from app.models import (  # noqa: F401
             User, Role, Project, Lead,
             StatusHistory, LeadNote, LeadAssignmentHistory, ActivityLog,
             DemoRequest, Product, TenantProduct, FeatureFlag, UsageLog, CallbackReminder,
+            OAuthSession,
+            MetaTierTestRun,
             ProjectAsset,
         )
         from app.models.otp import OtpToken  # noqa: F401
         from app.models.tenant import Tenant  # noqa: F401
         from app.models.whatsapp_template import WhatsAppTemplate  # noqa: F401
         from app.models.whatsapp_activity import WhatsAppActivity  # noqa: F401
-        from app.models.ingestion import LeadSource, IngestedLeadLog  # noqa: F401
-        try:
-            db.create_all()
-        except Exception as e:
-            app.logger.warning('db.create_all() failed (non-fatal): %s', e)
-        try:
-            _run_tenant_migration(app)
-        except Exception as e:
-            app.logger.warning('Tenant migration skipped: %s', e)
-        try:
-            _run_product_migration(app)
-        except Exception as e:
-            app.logger.warning('Product migration skipped: %s', e)
-        try:
-            _run_leads_schema_hotfix(app)
-        except Exception as e:
-            app.logger.warning('Leads schema hotfix skipped: %s', e)
-        try:
-            _ensure_demo_lms_tenant(app)
-        except Exception as e:
-            app.logger.warning('Demo tenant bootstrap skipped: %s', e)
-        try:
-            _migrate_primary_admin_identity(app)
-        except Exception as e:
-            app.logger.warning('Primary admin identity migration skipped: %s', e)
-        # Only seed on a completely fresh database (no users = first-ever boot)
-        from app.models.user import User as _User
-        if _User.query.count() == 0:
-            _seed(app)
+        from app.models.ingestion import LeadSource, IngestedLeadLog, ConnectedGoogleAdsAccount  # noqa: F401
+        from app.models.lead_source_mapping import LeadSourceFormMapping, MetaCampaignSnapshot  # noqa: F401
+        if _should_run_startup_db_maintenance(config_name):
+            try:
+                db.create_all()
+            except Exception as e:
+                app.logger.warning('db.create_all() failed (non-fatal): %s', e)
+            try:
+                _run_tenant_migration(app)
+            except Exception as e:
+                app.logger.warning('Tenant migration skipped: %s', e)
+            try:
+                _run_product_migration(app)
+            except Exception as e:
+                app.logger.warning('Product migration skipped: %s', e)
+            try:
+                _run_leads_schema_hotfix(app)
+            except Exception as e:
+                app.logger.warning('Leads schema hotfix skipped: %s', e)
+            try:
+                _run_test_data_schema_hotfix(app)
+            except Exception as e:
+                app.logger.warning('Test-data schema hotfix skipped: %s', e)
+            try:
+                _run_form_mapping_assignment_schema_hotfix(app)
+            except Exception as e:
+                app.logger.warning('Form-mapping assignment schema hotfix skipped: %s', e)
+            try:
+                _run_google_attribution_schema_hotfix(app)
+            except Exception as e:
+                app.logger.warning('Google attribution schema hotfix skipped: %s', e)
+            try:
+                _ensure_demo_lms_tenant(app)
+            except Exception as e:
+                app.logger.warning('Demo tenant bootstrap skipped: %s', e)
+            try:
+                _migrate_primary_admin_identity(app)
+            except Exception as e:
+                app.logger.warning('Primary admin identity migration skipped: %s', e)
+            # Only seed on a completely fresh database (no users = first-ever boot)
+            from app.models.user import User as _User
+            if _User.query.count() == 0:
+                _seed(app)
+            else:
+                # Ensure platform owner always exists
+                _ensure_platform_owner(app)
         else:
-            # Ensure platform owner always exists
-            _ensure_platform_owner(app)
+            app.logger.info('Startup DB maintenance skipped for %s', config_name)
 
     # ------------------------------------------------------------------ Scheduler
     # Start the callback reminder background thread (once per process)
     from app.services.reminder_scheduler import start_scheduler
-    start_scheduler(app)
+    if config_name != 'production' or _env_flag('ENABLE_BACKGROUND_SCHEDULER', False):
+        start_scheduler(app)
 
     # ------------------------------------------------------------------ Notifications endpoint
     from flask import request as _req
     from app.middleware import require_auth as _require_auth
-    from app.services.reminder_scheduler import drain_notifications, process_pending_reminders
+    from app.services.reminder_scheduler import process_pending_reminders
     from app.routes.uploads import process_queued_import_jobs, process_queued_export_jobs
     from app.routes.leads import process_queued_reshuffle_jobs
 
@@ -299,7 +423,9 @@ def create_app(config_name: str = None) -> Flask:
         # Strip surrounding quotes that Vercel sometimes serialises for empty string env vars
         raw = os.environ.get('CRON_SECRET', '').strip().strip('"').strip("'")
         if not raw:
-            return True
+            env = (os.environ.get('APP_ENV') or os.environ.get('FLASK_ENV') or '').strip().lower()
+            active_config = (config_name or '').strip().lower()
+            return env not in ('prod', 'production') and active_config != 'production'
         provided_header = (req.headers.get('X-Cron-Secret') or '').strip()
         if provided_header == raw:
             return True
@@ -315,6 +441,7 @@ def create_app(config_name: str = None) -> Flask:
         from app.models.notification import Notification
         from datetime import datetime as _dt
         from sqlalchemy import or_
+        from app.utils.time_utils import to_ist_str
         user = _req.current_user
 
         def _int_arg(name, default=0, lo=0, hi=None):
@@ -374,9 +501,9 @@ def create_app(config_name: str = None) -> Flask:
                 'title': row.title,
                 'message': row.message,
                 'is_read': bool(row.is_read),
-                'read_at': row.read_at.isoformat() if row.read_at else None,
+                'read_at': to_ist_str(row.read_at),
                 'source': row.source,
-                'created_at': row.created_at.isoformat() if row.created_at else None,
+                'created_at': to_ist_str(row.created_at),
                 'lead_id': payload.get('lead_id'),
                 'callback_id': payload.get('callback_id'),
                 'action_url': payload.get('url') or payload.get('deep_link'),
@@ -537,6 +664,133 @@ def _run_leads_schema_hotfix(app: 'Flask'):
         app.logger.warning('Applied leads schema hotfix: added missing alternate_phone column')
 
 
+def _run_test_data_schema_hotfix(app: 'Flask'):
+    """Ensure explicit is_test flags exist on production tables used by validation/test data."""
+    with app.app_context():
+        insp = inspect(db.engine)
+        tables = set(insp.get_table_names())
+        table_names = ('leads', 'ingested_lead_logs', 'meta_campaign_snapshots')
+
+        for table_name in table_names:
+            if table_name not in tables:
+                continue
+            column_names = {col.get('name') for col in insp.get_columns(table_name)}
+            with db.engine.begin() as conn:
+                if 'is_test' not in column_names:
+                    conn.execute(text(
+                        f'ALTER TABLE {table_name} ADD COLUMN is_test BOOLEAN DEFAULT FALSE'
+                    ))
+                    app.logger.warning('Applied test-data schema hotfix: added %s.is_test column', table_name)
+
+                conn.execute(text(
+                    f'UPDATE {table_name} SET is_test = FALSE WHERE is_test IS NULL'
+                ))
+
+
+def _run_google_attribution_schema_hotfix(app: 'Flask'):
+    """Add Google attribution columns to leads and ingested_lead_logs tables."""
+    with app.app_context():
+        insp = inspect(db.engine)
+        tables = set(insp.get_table_names())
+
+        # leads table attribution columns
+        if 'leads' in tables:
+            lead_cols = {col.get('name') for col in insp.get_columns('leads')}
+            new_lead_cols = [
+                ('gclid',            'VARCHAR(255)'),
+                ('utm_source',       'VARCHAR(255)'),
+                ('utm_medium',       'VARCHAR(255)'),
+                ('utm_campaign',     'VARCHAR(255)'),
+                ('utm_content',      'VARCHAR(255)'),
+                ('utm_term',         'VARCHAR(255)'),
+                ('landing_page_url', 'TEXT'),
+            ]
+            with db.engine.begin() as conn:
+                for col_name, col_type in new_lead_cols:
+                    if col_name not in lead_cols:
+                        conn.execute(text(
+                            f'ALTER TABLE leads ADD COLUMN {col_name} {col_type}'
+                        ))
+                        app.logger.warning('Attribution hotfix: added leads.%s', col_name)
+
+        # ingested_lead_logs table attribution columns
+        if 'ingested_lead_logs' in tables:
+            log_cols = {col.get('name') for col in insp.get_columns('ingested_lead_logs')}
+            new_log_cols = [
+                ('gclid',            'VARCHAR(255)'),
+                ('utm_source',       'VARCHAR(255)'),
+                ('utm_medium',       'VARCHAR(255)'),
+                ('utm_campaign',     'VARCHAR(255)'),
+                ('utm_content',      'VARCHAR(255)'),
+                ('utm_term',         'VARCHAR(255)'),
+                ('landing_page_url', 'TEXT'),
+            ]
+            with db.engine.begin() as conn:
+                for col_name, col_type in new_log_cols:
+                    if col_name not in log_cols:
+                        conn.execute(text(
+                            f'ALTER TABLE ingested_lead_logs ADD COLUMN {col_name} {col_type}'
+                        ))
+                        app.logger.warning('Attribution hotfix: added ingested_lead_logs.%s', col_name)
+
+
+def _run_form_mapping_assignment_schema_hotfix(app: 'Flask'):
+    """Ensure per-form manager assignment rule columns exist."""
+    with app.app_context():
+        insp = inspect(db.engine)
+        tables = set(insp.get_table_names())
+        table_name = 'lead_source_form_mappings'
+        if table_name not in tables:
+            return
+
+        column_names = {col.get('name') for col in insp.get_columns(table_name)}
+        dialect = (db.engine.dialect.name or '').lower()
+
+        with db.engine.begin() as conn:
+            if 'manager_assign_mode' not in column_names:
+                conn.execute(text(
+                    'ALTER TABLE lead_source_form_mappings '
+                    'ADD COLUMN manager_assign_mode VARCHAR(40) DEFAULT \'none\''
+                ))
+                app.logger.warning('Applied form-mapping schema hotfix: added manager_assign_mode')
+
+            if 'manager_id' not in column_names:
+                conn.execute(text(
+                    'ALTER TABLE lead_source_form_mappings '
+                    'ADD COLUMN manager_id INTEGER REFERENCES users(id)'
+                ))
+                app.logger.warning('Applied form-mapping schema hotfix: added manager_id')
+
+            if 'rr_manager_pool' not in column_names:
+                if dialect == 'postgresql':
+                    conn.execute(text(
+                        'ALTER TABLE lead_source_form_mappings '
+                        'ADD COLUMN rr_manager_pool JSON DEFAULT \'[]\''
+                    ))
+                else:
+                    conn.execute(text(
+                        'ALTER TABLE lead_source_form_mappings '
+                        'ADD COLUMN rr_manager_pool JSON'
+                    ))
+                app.logger.warning('Applied form-mapping schema hotfix: added rr_manager_pool')
+
+            if 'rr_last_index' not in column_names:
+                conn.execute(text(
+                    'ALTER TABLE lead_source_form_mappings '
+                    'ADD COLUMN rr_last_index INTEGER DEFAULT 0'
+                ))
+                app.logger.warning('Applied form-mapping schema hotfix: added rr_last_index')
+
+            conn.execute(text(
+                "UPDATE lead_source_form_mappings "
+                "SET manager_assign_mode='none' "
+                "WHERE manager_assign_mode IS NULL OR manager_assign_mode='';"
+            ))
+            conn.execute(text(
+                'UPDATE lead_source_form_mappings SET rr_last_index=0 WHERE rr_last_index IS NULL'
+            ))
+
+
 def _ensure_platform_owner(app: 'Flask'):
     """Make sure the SocioMonkey platform owner account exists."""
     with app.app_context():
@@ -580,24 +834,13 @@ def _migrate_primary_admin_identity(app: 'Flask'):
 
 PLATFORM_PRODUCTS = [
     dict(
-        name='CRM / Lead Management',
-        slug='crm',
-        description='Full-featured CRM with lead tracking, pipeline management, '
-                    'team collaboration, and Excel import/export.',
-        icon='📊',
-        color='#1e3a5f',
-        category='Sales & Marketing',
-        version='2.0.0',
-    ),
-    dict(
         name='Lead Management System (LMS)',
         slug='lms',
-        description='Ganga Realty branded Lead Management System — track leads, '
-                    'projects, pipeline and performance in one place.',
+        description='Lead tracking, pipeline management, team collaboration, and Excel import/export.',
         icon='📋',
         color='#1e3a5f',
         category='Sales & Marketing',
-        version='1.0.0',
+        version='2.0.0',
     ),
     dict(
         name='Procurement & Vendor Management',
@@ -657,7 +900,7 @@ PLATFORM_PRODUCTS = [
 
 
 def _run_product_migration(app: 'Flask'):
-    """Seed platform products and subscribe existing tenants to CRM (idempotent)."""
+    """Seed platform products and subscribe existing tenants to LMS (idempotent)."""
     from app.models.product import Product, TenantProduct
     from app.models.tenant import Tenant
 
@@ -672,36 +915,22 @@ def _run_product_migration(app: 'Flask'):
                     setattr(existing, key, value)
         db.session.commit()
 
-        # 2. Subscribe every existing active tenant to CRM (if not already subscribed)
-        crm = Product.query.filter_by(slug='crm').first()
-        if crm:
+        # 2. Subscribe every existing active tenant to LMS (if not already subscribed)
+        lms = Product.query.filter_by(slug='lms').first()
+        if lms:
             for tenant in Tenant.query.filter_by(status='active').all():
                 exists = TenantProduct.query.filter_by(
-                    tenant_id=tenant.id, product_id=crm.id
+                    tenant_id=tenant.id, product_id=lms.id
                 ).first()
                 if not exists:
                     db.session.add(TenantProduct(
                         tenant_id=tenant.id,
-                        product_id=crm.id,
+                        product_id=lms.id,
                         status='active',
                     ))
             db.session.commit()
 
-        # 3. Subscribe Ganga Realty to LMS product
-        lms = Product.query.filter_by(slug='lms').first()
-        if lms:
-            ganga = Tenant.query.filter_by(slug='ganga').first()
-            if ganga:
-                exists = TenantProduct.query.filter_by(
-                    tenant_id=ganga.id, product_id=lms.id
-                ).first()
-                if not exists:
-                    db.session.add(TenantProduct(
-                        tenant_id=ganga.id,
-                        product_id=lms.id,
-                        status='active',
-                    ))
-                db.session.commit()
+        # 3. Keep demo/ganga LMS subscriptions idempotent via standard tenant seeding.
 
 
 def _ensure_demo_lms_tenant(app: 'Flask'):
