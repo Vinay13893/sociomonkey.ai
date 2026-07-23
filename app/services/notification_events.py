@@ -84,6 +84,39 @@ def enqueue_lead_reassigned(user, lead, correlation_id=None, idempotency_key=Non
     return ev
 
 
+def enqueue_visit_assignment(user, visit, correlation_id=None,
+                             idempotency_key=None) -> NotificationEvent:
+    """Queue a push event for a Gallery Operations Visit handoff."""
+    existing = _existing_event(idempotency_key)
+    if existing:
+        return existing
+    slug = _tenant_slug_for_user(user)
+    location_name = getattr(getattr(visit, 'location', None), 'name', None) or ''
+    purpose = getattr(visit, 'purpose', None) or 'Visit'
+    body = f'{purpose} at {location_name}' if location_name else purpose
+    ev = NotificationEvent(
+        tenant_id=getattr(user, 'tenant_id', None),
+        correlation_id=correlation_id,
+        idempotency_key=idempotency_key,
+        user_id=user.id,
+        event_type='visit_assigned',
+        lead_id=getattr(visit, 'lead_id', None),
+        title='Visit Assigned',
+        body=body,
+        deep_link=f'/{slug}/reception' if slug else '/',
+        payload={
+            'visit_id': visit.id,
+            'location_id': visit.location_id,
+            'location_name': location_name,
+            'purpose': purpose,
+        },
+        status='queued',
+        scheduled_for=datetime.utcnow(),
+    )
+    db.session.add(ev)
+    return ev
+
+
 def enqueue_callback_event(user, callback, kind: str, scheduled_for: datetime = None,
                            correlation_id=None, idempotency_key=None) -> NotificationEvent:
     """

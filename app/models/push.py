@@ -59,6 +59,7 @@ class NotificationEvent(db.Model):
       - callback_due_soon   (10 minutes before)
       - callback_due_now
       - callback_overdue
+      - visit_assigned
     """
     __tablename__ = 'notification_events'
 

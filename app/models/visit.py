@@ -99,6 +99,9 @@ class Visit(db.Model):
     project = db.relationship('Project')
     lead = db.relationship('Lead')
     assigned_user = db.relationship('User', foreign_keys=[assigned_user_id])
+    reception_assigned_user = db.relationship(
+        'User', foreign_keys=[reception_assigned_user_id]
+    )
     creator = db.relationship('User', foreign_keys=[created_by])
     updater = db.relationship('User', foreign_keys=[updated_by])
 
@@ -132,6 +135,11 @@ class Visit(db.Model):
             'lead_name': self.lead.name if self.lead else None,
             'assigned_user_id': self.assigned_user_id,
             'assigned_user_name': self.assigned_user.name if self.assigned_user else None,
+            'reception_assigned_user_id': self.reception_assigned_user_id,
+            'reception_assigned_user_name': (
+                self.reception_assigned_user.name
+                if self.reception_assigned_user else None
+            ),
             'purpose': self.purpose, 'expected_arrival': self._iso(self.expected_arrival),
             'actual_check_in': self._iso(self.actual_check_in),
             'actual_check_out': self._iso(self.actual_check_out),
