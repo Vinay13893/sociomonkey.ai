@@ -17,6 +17,7 @@ from .lead_source_mapping import LeadSourceFormMapping, MetaCampaignSnapshot
 from .business_configuration import (
     LeadStatusConfiguration, LeadSourceConfiguration, BusinessRuleConfiguration,
 )
+from .location import TenantBrand, Location, ProjectLocation, MeetingRoom
 from .ingestion import ConnectedGoogleAdsAccount
 from .organisation import (
     OrganisationUnit, OrganisationUnitMembership, BusinessRole, UserBusinessRole,
@@ -42,6 +43,7 @@ __all__ = [
     'OtpCode', 'OtpToken',
     'LeadSourceFormMapping', 'MetaCampaignSnapshot',
     'LeadStatusConfiguration', 'LeadSourceConfiguration', 'BusinessRuleConfiguration',
+    'TenantBrand', 'Location', 'ProjectLocation', 'MeetingRoom',
     'ConnectedGoogleAdsAccount',
     'OrganisationUnit', 'OrganisationUnitMembership', 'BusinessRole',
     'UserBusinessRole', 'ReportingRelationship', 'PermissionDefinition',
