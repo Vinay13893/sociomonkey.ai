@@ -23,11 +23,11 @@ import urllib.parse as urllib_parse
 import urllib.request as urllib_req
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 
 from app.models.base import db
 from app.models.ingestion import LeadSource
-from app.services.ingestion_engine import ingest_lead
+from app.services.ingestion_engine import capture_ingestion_event, ingest_lead
 
 logger = logging.getLogger(__name__)
 
@@ -349,7 +349,6 @@ def _meta_enrich_leadgen_entry(lead_entry: dict, source: LeadSource) -> dict:
 
     token = tokens[0] if tokens else ''
     leadgen_id = str(lead_entry.get('leadgen_id') or '').strip()
-    ad_account_id = str((source.credentials or {}).get('ad_account_id') or '').strip()
     if not token:
         return {}
 
@@ -381,28 +380,15 @@ def _meta_enrich_leadgen_entry(lead_entry: dict, source: LeadSource) -> dict:
         ad_set_id = str((lead_data or {}).get('adset_id') or lead_entry.get('adset_id') or '')
         page_id = str((lead_data or {}).get('page_id') or lead_entry.get('page_id') or '')
 
-        # Prefer names supplied by lead detail, then object lookups.
+        # Keep the realtime path to one Graph request. Reporting enrichment and
+        # spend belong to the daily reconciliation path, not webhook intake.
         ad_name = str((lead_data or {}).get('ad_name') or lead_entry.get('ad_name') or '').strip()
-        if not ad_name and ad_id:
-            ad_name = _meta_fetch_object_name_any(ad_id, tokens)
-            if not ad_name and ad_account_id:
-                ad_name = _meta_fetch_ad_account_object_name_any(ad_id, tokens, ad_account_id, 'ads')
 
         ad_set_name = str((lead_data or {}).get('adset_name') or lead_entry.get('adset_name') or '').strip()
-        if not ad_set_name and ad_set_id:
-            ad_set_name = _meta_fetch_object_name_any(ad_set_id, tokens)
 
         campaign_name = str((lead_data or {}).get('campaign_name') or (lead_entry or {}).get('campaign_name') or '').strip()
-        if not campaign_name and campaign_id:
-            campaign_name = _meta_fetch_object_name_any(campaign_id, tokens)
-            if not campaign_name and ad_account_id:
-                campaign_name = _meta_fetch_ad_account_object_name_any(campaign_id, tokens, ad_account_id, 'campaigns')
-        if not ad_set_name and ad_set_id and ad_account_id:
-            ad_set_name = _meta_fetch_ad_account_object_name_any(ad_set_id, tokens, ad_account_id, 'adsets')
 
         form_name = str((lead_entry or {}).get('form_name') or '').strip()
-        if not form_name and form_id:
-            form_name = _meta_fetch_object_name_any(form_id, tokens)
         if not form_name and form_id:
             for f in (source.available_forms or []):
                 if isinstance(f, dict) and str(f.get('id') or '') == form_id:
@@ -411,12 +397,8 @@ def _meta_enrich_leadgen_entry(lead_entry: dict, source: LeadSource) -> dict:
                         break
 
         page_name = str((lead_entry or {}).get('page_name') or '').strip()
-        if not page_name and page_id:
-            page_name = _meta_fetch_object_name_any(page_id, tokens)
         if not page_name:
             page_name = str((source.connected_account or '')).strip()
-
-        insights = _meta_fetch_ad_insights_any(ad_id, tokens)
 
         return {
             'platform_lead_id': str((lead_data or {}).get('id') or leadgen_id or lead_entry.get('leadgen_id') or ''),
@@ -431,13 +413,13 @@ def _meta_enrich_leadgen_entry(lead_entry: dict, source: LeadSource) -> dict:
             'ad_set_name': ad_set_name,
             'page_id': page_id,
             'page_name': page_name,
-            'spend': insights.get('spend') if insights.get('spend') is not None else lead_entry.get('spend'),
+            'spend': lead_entry.get('spend'),
             'cost_per_result': lead_entry.get('cost_per_result') or lead_entry.get('cpl'),
-            'ctr': insights.get('ctr') if insights.get('ctr') is not None else lead_entry.get('ctr'),
-            'cpc': insights.get('cpc') if insights.get('cpc') is not None else lead_entry.get('cpc'),
-            'cpm': insights.get('cpm') if insights.get('cpm') is not None else lead_entry.get('cpm'),
-            'impressions': insights.get('impressions') if insights.get('impressions') is not None else lead_entry.get('impressions'),
-            'reach': insights.get('reach') if insights.get('reach') is not None else lead_entry.get('reach'),
+            'ctr': lead_entry.get('ctr'),
+            'cpc': lead_entry.get('cpc'),
+            'cpm': lead_entry.get('cpm'),
+            'impressions': lead_entry.get('impressions'),
+            'reach': lead_entry.get('reach'),
             'audience': lead_entry.get('audience') or lead_entry.get('target_audience'),
             'placement': lead_entry.get('placement') or lead_entry.get('placements'),
             'field_data': (lead_data or {}).get('field_data') or lead_entry.get('field_data') or [],
@@ -620,7 +602,9 @@ def meta_webhook(token):
 
     # Build candidate secrets across current + active tenant sources so old token
     # callbacks continue to validate after reconnects/app rotations.
-    candidate_secrets = []
+    candidate_secrets = [
+        str(current_app.config.get('META_APP_SECRET') or '').strip(),
+    ]
     primary_app_secret = (source.credentials or {}).get('app_secret', '')
     if primary_app_secret:
         candidate_secrets.append(primary_app_secret)
@@ -648,7 +632,15 @@ def meta_webhook(token):
         if sec and not (sec in seen or seen.add(sec))
     ]
 
-    # Verify HMAC only when Meta sent signature and we have at least one secret.
+    require_signature = bool(current_app.config.get('META_WEBHOOK_REQUIRE_SIGNATURE'))
+    if require_signature and not sig:
+        logger.warning('meta_webhook: missing signature for source %d', source.id)
+        return jsonify({'error': 'Missing signature'}), 403
+    if require_signature and not candidate_secrets:
+        logger.error('meta_webhook: no signature secret configured for source %d', source.id)
+        return jsonify({'error': 'Webhook signature is not configured'}), 503
+
+    # Verify HMAC whenever Meta supplies a signature.
     if sig and candidate_secrets:
         if not _verify_hmac_any(candidate_secrets, raw_body, sig):
             logger.warning(
@@ -669,6 +661,22 @@ def meta_webhook(token):
             event_page_id = str(lead_entry.get('page_id') or entry.get('id') or '')
             event_form_id = str(lead_entry.get('form_id') or '')
             target_source = _resolve_meta_target_source(source, event_page_id, event_form_id)
+
+            captured_log, captured_new = capture_ingestion_event(
+                target_source,
+                lead_entry,
+                platform_lead_id=str(lead_entry.get('leadgen_id') or ''),
+                page_id=event_page_id,
+                form_id=event_form_id,
+            )
+            if not captured_new and captured_log.status in ('processed', 'duplicate', 'ignored'):
+                results.append({
+                    'status': 'duplicate',
+                    'lead_id': captured_log.lead_id or captured_log.dup_of_lead_id,
+                    'log_id': captured_log.id,
+                    'message': 'Provider event already processed',
+                })
+                continue
 
             if target_source and source and target_source.id != source.id:
                 logger.info(
@@ -702,7 +710,12 @@ def meta_webhook(token):
                 ):
                     if enriched.get(k) not in (None, '', []):
                         normalised[k] = enriched.get(k)
-            result = ingest_lead(target_source, lead_entry, normalised)
+            result = ingest_lead(
+                target_source,
+                lead_entry,
+                normalised,
+                ingestion_log=captured_log,
+            )
             results.append(result)
 
     return jsonify({'ok': True, 'results': results}), 200

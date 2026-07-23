@@ -36,7 +36,10 @@ Usage:
 """
 
 import logging
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy.exc import IntegrityError
 
 from app.models.base import db
 from app.models import Lead, StatusHistory, LeadNote, ActivityLog, User
@@ -46,6 +49,47 @@ from app.services.notification_events import enqueue_lead_assigned
 from app.utils.lead_source_cutoff import is_before_lead_source_cutoff
 
 logger = logging.getLogger(__name__)
+
+
+def ingestion_idempotency_key(source, platform_lead_id: str) -> str | None:
+    platform_lead_id = str(platform_lead_id or '').strip()
+    if not platform_lead_id:
+        return None
+    return f'{source.tenant_id}:{source.source_type}:{platform_lead_id}'
+
+
+def capture_ingestion_event(source, raw_payload: dict, platform_lead_id: str = '', **metadata):
+    """Persist the provider event before any remote enrichment or processing."""
+    key = ingestion_idempotency_key(source, platform_lead_id)
+    if key:
+        existing = IngestedLeadLog.query.filter_by(idempotency_key=key).first()
+        if existing:
+            return existing, False
+
+    log = IngestedLeadLog(
+        tenant_id=source.tenant_id,
+        source_id=source.id,
+        source_type=source.source_type,
+        correlation_id=str(uuid.uuid4()),
+        idempotency_key=key,
+        platform_lead_id=str(platform_lead_id or '').strip() or None,
+        raw_payload=raw_payload or {},
+        page_id=str(metadata.get('page_id') or '').strip() or None,
+        form_id=str(metadata.get('form_id') or '').strip() or None,
+        status='queued',
+        received_at=datetime.utcnow(),
+    )
+    db.session.add(log)
+    try:
+        db.session.commit()
+        return log, True
+    except IntegrityError:
+        db.session.rollback()
+        if key:
+            existing = IngestedLeadLog.query.filter_by(idempotency_key=key).first()
+            if existing:
+                return existing, False
+        raise
 
 # ── LMS fields that ingestion is allowed to set ────────────────────────────────
 ALLOWED_LEAD_FIELDS = frozenset({
@@ -455,19 +499,40 @@ def write_timeline(lead: Lead, source, log: IngestedLeadLog):
 # STAGE 6 – NOTIFICATION DISPATCHER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def dispatch_notification(lead: Lead, assignee: User):
-    """Enqueue a push notification to the assigned user."""
-    try:
-        enqueue_lead_assigned(assignee, lead)
-    except Exception as exc:
-        logger.warning('ingestion_engine: notification enqueue failed: %s', exc)
+def dispatch_notification(lead: Lead, assignee: User, log: IngestedLeadLog):
+    """Persist in-app and push delivery records in the lead transaction."""
+    from app.services.reminder_scheduler import push_notification
+
+    push_notification(assignee.id, {
+        'type': 'lead_assigned',
+        'kind': 'info',
+        'title': 'New Lead Assigned',
+        'message': f'New lead "{lead.name}" has been assigned to you.',
+        'lead_id': lead.id,
+        'lead_name': lead.name,
+        'source': 'lead_ingestion',
+        'tenant_id': lead.tenant_id,
+        'correlation_id': log.correlation_id,
+    })
+    enqueue_lead_assigned(
+        assignee,
+        lead,
+        correlation_id=log.correlation_id,
+        idempotency_key=f'ingestion:{log.id}:lead-assigned:{assignee.id}',
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN PIPELINE ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def ingest_lead(source, raw_payload: dict, normalised: dict, is_test: bool = False) -> dict:
+def ingest_lead(
+    source,
+    raw_payload: dict,
+    normalised: dict,
+    is_test: bool = False,
+    ingestion_log: IngestedLeadLog | None = None,
+) -> dict:
     """
     Run the full ingestion pipeline for a single lead.
 
@@ -494,23 +559,15 @@ def ingest_lead(source, raw_payload: dict, normalised: dict, is_test: bool = Fal
     ingest_now = datetime.utcnow()
     platform_lead_id = str(normalised.get('platform_lead_id') or '').strip()
 
-    if is_before_lead_source_cutoff(platform_received_at, source):
-        return {
-            'status': 'ignored',
-            'lead_id': None,
-            'log_id': None,
-            'message': 'Lead received before the tenant lead-source cutoff',
-        }
-
-    existing_log = None
-    if platform_lead_id:
+    existing_log = ingestion_log
+    if existing_log is None and platform_lead_id:
         existing_log = IngestedLeadLog.query.filter_by(
             tenant_id=source.tenant_id,
             source_type=source.source_type,
             platform_lead_id=platform_lead_id,
         ).order_by(IngestedLeadLog.id.desc()).first()
 
-    if existing_log and existing_log.status != 'error':
+    if existing_log and existing_log.status in ('processed', 'duplicate', 'ignored'):
         return {
             'status': 'duplicate',
             'lead_id': existing_log.lead_id or existing_log.dup_of_lead_id,
@@ -522,6 +579,8 @@ def ingest_lead(source, raw_payload: dict, normalised: dict, is_test: bool = Fal
         tenant_id=source.tenant_id,
         source_id=source.id,
         source_type=source.source_type,
+        correlation_id=str(uuid.uuid4()),
+        idempotency_key=ingestion_idempotency_key(source, platform_lead_id),
         is_test=is_test,
     )
     log.source_id = source.id
@@ -547,8 +606,22 @@ def ingest_lead(source, raw_payload: dict, normalised: dict, is_test: bool = Fal
     log.status = 'queued'
     log.error_message = None
     log.processed_at = None
+    log.next_retry_at = None
+    log.attempt_count = int(log.attempt_count or 0) + 1
+    log.last_attempt_at = ingest_now
     db.session.add(log)
     db.session.flush()   # get log.id early for error reporting
+
+    if is_before_lead_source_cutoff(platform_received_at, source):
+        log.status = 'ignored'
+        log.processed_at = datetime.utcnow()
+        db.session.commit()
+        return {
+            'status': 'ignored',
+            'lead_id': None,
+            'log_id': log.id,
+            'message': 'Lead received before the tenant lead-source cutoff',
+        }
 
     try:
         # ── STAGE 1: Field mapping ─────────────────────────────────────────
@@ -564,7 +637,8 @@ def ingest_lead(source, raw_payload: dict, normalised: dict, is_test: bool = Fal
             log.status = 'error'
             log.error_message = 'Lead payload missing name or contact method'
             log.processed_at = datetime.utcnow()
-            source.total_errors += 1
+            log.next_retry_at = datetime.utcnow() + timedelta(minutes=5)
+            source.total_errors = int(source.total_errors or 0) + 1
             source.last_tested_at = datetime.utcnow()
             source.last_test_result = 'fail'
             source.last_test_message = 'Lead payload missing name or contact method.'
@@ -670,15 +744,9 @@ def ingest_lead(source, raw_payload: dict, normalised: dict, is_test: bool = Fal
         db.session.add(source)
         persist_meta_snapshot(source, normalised, log, lead.id, is_test=is_test)
 
-        db.session.commit()
-
-        # ── STAGE 6: Push notification (post-commit, non-fatal) ───────────
         if assignee:
-            dispatch_notification(lead, assignee)
-            try:
-                db.session.commit()
-            except Exception:
-                db.session.rollback()
+            dispatch_notification(lead, assignee, log)
+        db.session.commit()
 
         return {
             'status': 'created',
@@ -690,10 +758,16 @@ def ingest_lead(source, raw_payload: dict, normalised: dict, is_test: bool = Fal
     except Exception as exc:
         logger.exception('ingestion_engine: pipeline error: %s', exc)
         try:
+            failed_log_id = getattr(log, 'id', None)
+            source_id = getattr(source, 'id', None)
+            db.session.rollback()
+            log = db.session.get(IngestedLeadLog, failed_log_id) if failed_log_id else log
+            source = db.session.get(type(source), source_id) if source_id else source
             log.status = 'error'
             log.error_message = str(exc)[:1000]
             log.processed_at = datetime.utcnow()
-            source.total_errors += 1
+            log.next_retry_at = datetime.utcnow() + timedelta(minutes=5)
+            source.total_errors = int(source.total_errors or 0) + 1
             db.session.commit()
         except Exception:
             db.session.rollback()

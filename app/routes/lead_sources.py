@@ -3302,6 +3302,81 @@ def ingestion_logs_bulk_status_update():
     return jsonify({'ok': True, 'updated': len(rows), 'status': status}), 200
 
 
+@lead_sources_bp.route('/logs/diagnostics', methods=['GET'])
+@require_role('superadmin', 'platform_owner')
+def ingestion_log_diagnostics():
+    """Tenant aggregate ingestion health without exposing payloads or lead PII."""
+    user = request.current_user
+    rows = (
+        db.session.query(
+            IngestedLeadLog.source_type,
+            IngestedLeadLog.status,
+            db.func.count(IngestedLeadLog.id),
+            db.func.min(IngestedLeadLog.received_at),
+            db.func.max(IngestedLeadLog.received_at),
+        )
+        .filter(IngestedLeadLog.tenant_id == user.tenant_id)
+        .group_by(IngestedLeadLog.source_type, IngestedLeadLog.status)
+        .order_by(IngestedLeadLog.source_type, IngestedLeadLog.status)
+        .all()
+    )
+    return jsonify({'groups': [
+        {
+            'source_type': source_type,
+            'status': status,
+            'count': int(count),
+            'oldest_at': oldest.isoformat() if oldest else None,
+            'latest_at': latest.isoformat() if latest else None,
+        }
+        for source_type, status, count, oldest, latest in rows
+    ]}), 200
+
+
+@lead_sources_bp.route('/logs/<int:log_id>/reprocess', methods=['POST'])
+@require_role('superadmin', 'platform_owner')
+def reprocess_ingestion_log(log_id):
+    """Reprocess one captured failed/queued event through the canonical pipeline."""
+    user = request.current_user
+    log = IngestedLeadLog.query.filter_by(id=log_id, tenant_id=user.tenant_id).first()
+    if not log:
+        return jsonify({'error': 'Ingestion event not found'}), 404
+    if log.status not in ('queued', 'error'):
+        return jsonify({'error': 'Only queued or failed events can be reprocessed'}), 409
+
+    source = LeadSource.query.filter_by(
+        id=log.source_id,
+        tenant_id=user.tenant_id,
+        is_active=True,
+    ).first()
+    if not source:
+        return jsonify({'error': 'Active lead source not found'}), 409
+
+    from app.routes.ingestion import (
+        _meta_enrich_leadgen_entry,
+        _normalise_generic,
+        _normalise_google,
+        _normalise_meta,
+    )
+    from app.services.ingestion_engine import ingest_lead
+
+    payload = dict(log.raw_payload or {})
+    if source.source_type == 'meta':
+        payload.setdefault('leadgen_id', str(log.platform_lead_id or ''))
+        enriched = _meta_enrich_leadgen_entry(payload, source)
+        for key, value in (enriched or {}).items():
+            if value not in (None, '', []):
+                payload[key] = value
+        normalised = _normalise_meta(payload)
+    elif source.source_type == 'google':
+        normalised = _normalise_google(payload)
+    else:
+        normalised = _normalise_generic(payload)
+
+    result = ingest_lead(source, payload, normalised, ingestion_log=log)
+    status_code = 200 if result.get('status') != 'error' else 422
+    return jsonify({'ok': status_code == 200, 'result': result}), status_code
+
+
 def _xlsx_response(filename, headers, rows):
     """Generate XLSX response using openpyxl if available, fallback to CSV"""
     try:

@@ -549,14 +549,19 @@ def create_app(config_name: str = None) -> Flask:
     def process_reminders_once():
         if not _cron_authorized(_req):
             return jsonify({'error': 'Forbidden'}), 403
-        process_pending_reminders()
-        # Drain the web push notification queue immediately after enqueuing reminders
+        batch_raw = (_req.args.get('batch') or '100').strip()
         try:
-            from app.services.notification_processor import process_notification_queue
-            process_notification_queue(batch_size=100)
-        except Exception:
-            pass
-        return jsonify({'status': 'ok'}), 200
+            batch = max(1, min(500, int(batch_raw)))
+        except ValueError:
+            batch = 100
+        reminder_summary = process_pending_reminders(batch_size=batch)
+        from app.services.notification_processor import process_notification_queue
+        delivery_summary = process_notification_queue(batch_size=min(batch, 10))
+        return jsonify({
+            'status': 'ok',
+            'reminders': reminder_summary,
+            'delivery': delivery_summary,
+        }), 200
 
     @app.route('/api/internal/jobs/process', methods=['GET', 'POST'])
     def process_jobs_once():

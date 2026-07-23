@@ -45,7 +45,7 @@ def push_notification(user_id: int, notification: dict):
         source=notification.get('source') or 'callback_scheduler',
     )
     db.session.add(note)
-    db.session.commit()
+    return note
 
 
 def drain_notifications(user_id: int) -> list:
@@ -105,9 +105,8 @@ def _deliver(callback: 'CallbackReminder', kind: str):
     for uid in recipients:
         push_notification(uid, dict(note))
 
-    # Phase M1: also enqueue NotificationEvent rows so a future push worker
-    # can deliver the same event off-tab via Web Push / FCM. Best-effort —
-    # any failure here must NOT break in-app delivery above.
+    # Persist the in-app notifications and push events together. A failure
+    # must leave the callback flags unset so the scheduler can retry safely.
     try:
         from app.models.user import User
         from app.services.notification_events import enqueue_callback_event
@@ -116,7 +115,13 @@ def _deliver(callback: 'CallbackReminder', kind: str):
         for uid in recipients:
             recipient = User.query.get(uid)
             if recipient:
-                enqueue_callback_event(recipient, callback, event_kind)
+                enqueue_callback_event(
+                    recipient,
+                    callback,
+                    event_kind,
+                    correlation_id=f'callback:{callback.id}:{event_kind}',
+                    idempotency_key=f'callback:{callback.id}:{event_kind}:user:{uid}',
+                )
         _db.session.commit()
     except Exception:
         try:
@@ -124,6 +129,7 @@ def _deliver(callback: 'CallbackReminder', kind: str):
             _db.session.rollback()
         except Exception:
             pass
+        raise
 
     logger.info('[ReminderScheduler] %s notification sent for callback #%d to users %s',
                 kind, callback.id, recipients)

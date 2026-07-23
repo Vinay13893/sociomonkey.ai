@@ -72,8 +72,11 @@ def test_call_started_does_not_auto_complete_callback():
 
 
 def test_frontend_refreshes_action_board_after_callback_mutations():
-    leads_js = (ROOT.parent / 'frontend_static/src/products/lms/leads.js').read_text(encoding='utf-8')
-    action_board_js = (ROOT.parent / 'frontend_static/src/products/lms/action-board.js').read_text(encoding='utf-8')
+    frontend = ROOT.parent / 'frontend_static'
+    if not frontend.exists():
+        frontend = ROOT.parent / 'frontend-final-freeze'
+    leads_js = (frontend / 'src/products/lms/leads.js').read_text(encoding='utf-8')
+    action_board_js = (frontend / 'src/products/lms/action-board.js').read_text(encoding='utf-8')
     assert 'function _abRefreshPreservingState()' in action_board_js
     assert "window._ACTIVE_ROUTE === 'action_board'" in leads_js
     assert '_abRefreshPreservingState' in leads_js

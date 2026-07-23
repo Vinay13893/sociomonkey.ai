@@ -39,11 +39,10 @@ def test_observability_covers_final_high_read_routes():
 
 def test_scheduler_contract_documents_current_cadence():
     cfg = _text(VERCEL)
-    assert '"/api/internal/reminders/process"' in cfg
-    assert '"schedule": "0 2 * * *"' in cfg
-    assert '"/api/cron/drain-notifications"' in cfg
-    assert '"schedule": "0 3 * * *"' in cfg
-    assert '"/api/internal/jobs/process"' in cfg
-    assert '"/api/cron/meta-backfill?full_history=0&per_form_limit=100&page_size=100&max_pages=1"' in cfg
+    # Frequent workers are owned by cron-job.org on the current Vercel plan.
+    assert '"/api/internal/reminders/process"' not in cfg
+    assert '"/api/cron/drain-notifications"' not in cfg
+    assert '"/api/internal/jobs/process"' not in cfg
+    assert '"/api/cron/meta-backfill' not in cfg
     assert '"/api/cron/meta-report-sync"' in cfg
     assert '"schedule": "29 18 * * *"' in cfg

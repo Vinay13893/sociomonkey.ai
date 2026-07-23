@@ -61,9 +61,16 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
     stale_cutoff = now - timedelta(minutes=5)
     recovered = NotificationEvent.query.filter(
         NotificationEvent.status == 'sending',
-        NotificationEvent.scheduled_for <= stale_cutoff,
+        db.or_(
+            NotificationEvent.claimed_at <= stale_cutoff,
+            db.and_(
+                NotificationEvent.claimed_at.is_(None),
+                NotificationEvent.scheduled_for <= stale_cutoff,
+            ),
+        ),
     ).update({
         'status': 'queued',
+        'claimed_at': None,
         'last_error': 'Recovered from stale sending state',
     }, synchronize_session=False)
     if recovered:
@@ -85,19 +92,25 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
     if not rows:
         return summary
 
-    # Mark as sending atomically before dispatch (prevents double-send)
-    row_ids = [r.id for r in rows]
-    NotificationEvent.query.filter(
-        NotificationEvent.id.in_(row_ids),
-        NotificationEvent.status == 'queued',
-    ).update({'status': 'sending'}, synchronize_session='fetch')
-    db.session.commit()
+    claimed_ids = []
+    for candidate in rows:
+        claimed = NotificationEvent.query.filter(
+            NotificationEvent.id == candidate.id,
+            NotificationEvent.status == 'queued',
+        ).update({
+            'status': 'sending',
+            'claimed_at': now,
+        }, synchronize_session=False)
+        db.session.commit()
+        if claimed == 1:
+            claimed_ids.append(candidate.id)
 
-    for event in rows:
+    for event_id in claimed_ids:
         if monotonic() >= deadline:
-            event = db.session.get(NotificationEvent, event.id)
+            event = db.session.get(NotificationEvent, event_id)
             if event and event.status == 'sending':
                 event.status = 'queued'
+                event.claimed_at = None
                 event.last_error = 'Deferred before worker timeout'
                 event.scheduled_for = datetime.utcnow() + timedelta(minutes=1)
                 db.session.commit()
@@ -105,18 +118,24 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
             break
 
         # Re-fetch fresh row in case of concurrent update
-        event = db.session.get(NotificationEvent, event.id)
-        if not event or event.status not in ('sending', 'queued'):
+        event = db.session.get(NotificationEvent, event_id)
+        if not event or event.status != 'sending':
             continue
 
         event.attempts += 1
 
         # If VAPID not configured, skip — don't waste attempts
         if not vapid_pub:
-            event.status = 'skipped'
             event.last_error = 'VAPID_PUBLIC_KEY not set'
+            event.claimed_at = None
+            if event.attempts < max_attempts:
+                event.status = 'queued'
+                event.scheduled_for = now + timedelta(minutes=_BACKOFF_MINUTES.get(event.attempts, 60))
+            else:
+                event.status = 'failed'
+                event.dead_lettered_at = datetime.utcnow()
+                summary['failed'] += 1
             db.session.commit()
-            summary['skipped'] += 1
             continue
 
         # Find active subscriptions for this user
@@ -127,6 +146,7 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
 
         if not subs:
             event.status = 'skipped'
+            event.claimed_at = None
             event.last_error = 'No active subscriptions for user'
             db.session.commit()
             summary['skipped'] += 1
@@ -162,6 +182,7 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
 
         if any_ok:
             event.status = 'sent'
+            event.claimed_at = None
             event.sent_at = datetime.utcnow()
             event.last_error = ''
             db.session.commit()
@@ -172,6 +193,7 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
             # Schedule a back-off retry: put back in queue with future scheduled_for
             backoff = _BACKOFF_MINUTES.get(event.attempts, 60)
             event.status = 'queued'
+            event.claimed_at = None
             event.scheduled_for = now + timedelta(minutes=backoff)
             event.last_error = last_error[:400] if last_error else ''
             db.session.commit()
@@ -180,6 +202,8 @@ def process_notification_queue(batch_size: int = _BATCH_SIZE) -> dict:
 
         else:
             event.status = 'failed'
+            event.claimed_at = None
+            event.dead_lettered_at = datetime.utcnow()
             event.last_error = last_error[:400] if last_error else 'Max attempts reached'
             db.session.commit()
             summary['failed'] += 1

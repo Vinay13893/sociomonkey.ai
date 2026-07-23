@@ -64,6 +64,8 @@ class NotificationEvent(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     tenant_id = db.Column(db.Integer, db.ForeignKey('tenants.id'), nullable=True, index=True)
+    correlation_id = db.Column(db.String(36), nullable=True, index=True)
+    idempotency_key = db.Column(db.String(300), nullable=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
     event_type = db.Column(db.String(40), nullable=False, index=True)
     lead_id = db.Column(db.Integer, db.ForeignKey('leads.id'), nullable=True, index=True)
@@ -77,12 +79,19 @@ class NotificationEvent(db.Model):
     last_error = db.Column(db.String(400), nullable=True)
     scheduled_for = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     sent_at = db.Column(db.DateTime, nullable=True)
+    claimed_at = db.Column(db.DateTime, nullable=True, index=True)
+    dead_lettered_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.Index('uq_notification_event_idempotency_key', 'idempotency_key', unique=True),
+    )
 
     def to_dict(self):
         return {
             'id': self.id,
             'tenant_id': self.tenant_id,
+            'correlation_id': self.correlation_id,
             'user_id': self.user_id,
             'event_type': self.event_type,
             'lead_id': self.lead_id,

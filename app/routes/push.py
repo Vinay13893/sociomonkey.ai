@@ -8,9 +8,9 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
-from app.middleware import require_auth
+from app.middleware import require_auth, require_role
 from app.models.base import db
-from app.models.push import PushSubscription
+from app.models.push import NotificationEvent, PushSubscription
 
 push_bp = Blueprint('push', __name__, url_prefix='/api/push')
 
@@ -126,3 +126,61 @@ def test_send():
 
     any_ok = any(r['ok'] for r in results)
     return jsonify({'ok': any_ok, 'results': results}), 200
+
+
+@push_bp.route('/diagnostics', methods=['GET'])
+@require_role('superadmin', 'platform_owner')
+def delivery_diagnostics():
+    """Tenant-scoped aggregate delivery health without message payloads or PII."""
+    user = request.current_user
+    event_rows = (
+        db.session.query(NotificationEvent.status, db.func.count(NotificationEvent.id))
+        .filter(NotificationEvent.tenant_id == user.tenant_id)
+        .group_by(NotificationEvent.status)
+        .all()
+    )
+    subscription_rows = (
+        db.session.query(PushSubscription.is_active, db.func.count(PushSubscription.id))
+        .filter(PushSubscription.tenant_id == user.tenant_id)
+        .group_by(PushSubscription.is_active)
+        .all()
+    )
+    oldest_queued = (
+        db.session.query(db.func.min(NotificationEvent.created_at))
+        .filter(
+            NotificationEvent.tenant_id == user.tenant_id,
+            NotificationEvent.status == 'queued',
+        )
+        .scalar()
+    )
+    return jsonify({
+        'events': {str(status): int(count) for status, count in event_rows},
+        'subscriptions': {
+            'active' if active else 'inactive': int(count)
+            for active, count in subscription_rows
+        },
+        'oldest_queued_at': oldest_queued.isoformat() if oldest_queued else None,
+    }), 200
+
+
+@push_bp.route('/events/<int:event_id>/retry', methods=['POST'])
+@require_role('superadmin', 'platform_owner')
+def retry_delivery_event(event_id):
+    """Requeue one failed/skipped tenant delivery without recreating it."""
+    event = NotificationEvent.query.filter_by(
+        id=event_id,
+        tenant_id=request.current_user.tenant_id,
+    ).first()
+    if not event:
+        return jsonify({'error': 'Delivery event not found'}), 404
+    if event.status not in ('failed', 'skipped'):
+        return jsonify({'error': 'Only failed or skipped events can be retried'}), 409
+
+    event.status = 'queued'
+    event.attempts = 0
+    event.last_error = None
+    event.scheduled_for = datetime.utcnow()
+    event.claimed_at = None
+    event.dead_lettered_at = None
+    db.session.commit()
+    return jsonify({'ok': True, 'event_id': event.id, 'status': event.status}), 200

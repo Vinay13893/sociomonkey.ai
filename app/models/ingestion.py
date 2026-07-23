@@ -217,6 +217,8 @@ class IngestedLeadLog(db.Model):
     tenant_id       = db.Column(db.Integer, db.ForeignKey('tenants.id'), nullable=False, index=True)
     source_id       = db.Column(db.Integer, db.ForeignKey('lead_sources.id'), nullable=False, index=True)
     source_type     = db.Column(db.String(50), nullable=False)
+    correlation_id  = db.Column(db.String(36), nullable=True, index=True)
+    idempotency_key = db.Column(db.String(300), nullable=True)
 
     # Raw payload exactly as received
     raw_payload     = db.Column(db.JSON)
@@ -247,6 +249,9 @@ class IngestedLeadLog(db.Model):
     status          = db.Column(db.String(30), default='queued', nullable=False, index=True)
     is_test         = db.Column(db.Boolean, default=False, nullable=False, server_default='0', index=True)
     error_message   = db.Column(db.Text)
+    attempt_count   = db.Column(db.Integer, default=0, nullable=False)
+    last_attempt_at = db.Column(db.DateTime)
+    next_retry_at   = db.Column(db.DateTime)
     # ID of the LMS lead created (or existing lead updated)
     lead_id         = db.Column(db.Integer, db.ForeignKey('leads.id'), nullable=True)
     dup_of_lead_id  = db.Column(db.Integer, db.ForeignKey('leads.id'), nullable=True)
@@ -261,6 +266,7 @@ class IngestedLeadLog(db.Model):
     __table_args__ = (
         db.Index('ix_ingested_log_source_status', 'source_id', 'status'),
         db.Index('ix_ingested_log_tenant_received', 'tenant_id', 'received_at'),
+        db.Index('uq_ingested_log_idempotency_key', 'idempotency_key', unique=True),
     )
 
     def to_dict(self):
@@ -272,6 +278,7 @@ class IngestedLeadLog(db.Model):
             'tenant_id':        self.tenant_id,
             'source_id':        self.source_id,
             'source_type':      self.source_type,
+            'correlation_id':   self.correlation_id,
             'source_name':      self.source.name if self.source else None,
             'source_status':    source_status,
             'platform_lead_id': self.platform_lead_id,
@@ -299,6 +306,7 @@ class IngestedLeadLog(db.Model):
             'status':           self.status,
             'is_test':          self.is_test,
             'error_message':    self.error_message,
+            'attempt_count':    self.attempt_count,
             'dup_of_lead_id':   self.dup_of_lead_id,
             'received_at':      self.received_at.isoformat(),
             'processed_at':     self.processed_at.isoformat() if self.processed_at else None,

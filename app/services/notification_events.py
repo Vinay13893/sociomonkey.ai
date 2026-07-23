@@ -28,7 +28,16 @@ def _build_lead_deep_link(tenant_slug: str, tab: str, lead_id) -> str:
     return f'/{tenant_slug}/{tab}'
 
 
-def enqueue_lead_assigned(user, lead) -> NotificationEvent:
+def _existing_event(idempotency_key):
+    if not idempotency_key:
+        return None
+    return NotificationEvent.query.filter_by(idempotency_key=idempotency_key).first()
+
+
+def enqueue_lead_assigned(user, lead, correlation_id=None, idempotency_key=None) -> NotificationEvent:
+    existing = _existing_event(idempotency_key)
+    if existing:
+        return existing
     slug = _tenant_slug_for_user(user)
     project_name = getattr(getattr(lead, 'project', None), 'name', None) or ''
     body = lead.name or f'Lead #{lead.id}'
@@ -36,6 +45,8 @@ def enqueue_lead_assigned(user, lead) -> NotificationEvent:
         body = f'{body} \u00b7 {project_name}'
     ev = NotificationEvent(
         tenant_id=getattr(user, 'tenant_id', None),
+        correlation_id=correlation_id,
+        idempotency_key=idempotency_key,
         user_id=user.id,
         event_type='lead_assigned',
         lead_id=lead.id,
@@ -50,10 +61,15 @@ def enqueue_lead_assigned(user, lead) -> NotificationEvent:
     return ev
 
 
-def enqueue_lead_reassigned(user, lead) -> NotificationEvent:
+def enqueue_lead_reassigned(user, lead, correlation_id=None, idempotency_key=None) -> NotificationEvent:
+    existing = _existing_event(idempotency_key)
+    if existing:
+        return existing
     slug = _tenant_slug_for_user(user)
     ev = NotificationEvent(
         tenant_id=getattr(user, 'tenant_id', None),
+        correlation_id=correlation_id,
+        idempotency_key=idempotency_key,
         user_id=user.id,
         event_type='lead_reassigned',
         lead_id=lead.id,
@@ -68,7 +84,8 @@ def enqueue_lead_reassigned(user, lead) -> NotificationEvent:
     return ev
 
 
-def enqueue_callback_event(user, callback, kind: str, scheduled_for: datetime = None) -> NotificationEvent:
+def enqueue_callback_event(user, callback, kind: str, scheduled_for: datetime = None,
+                           correlation_id=None, idempotency_key=None) -> NotificationEvent:
     """
     kind: 'due_soon' (10-min warning) | 'due_now' | 'overdue'
     """
@@ -78,6 +95,9 @@ def enqueue_callback_event(user, callback, kind: str, scheduled_for: datetime = 
         'overdue':  ('callback_overdue',  'Overdue Callback'),
     }
     event_type, title = type_map.get(kind, ('callback_due_now', 'Callback Due Now'))
+    existing = _existing_event(idempotency_key)
+    if existing:
+        return existing
     slug = _tenant_slug_for_user(user)
     lead = getattr(callback, 'lead', None)
     lead_name = (lead.name if lead else None) or f'Lead #{getattr(callback, "lead_id", "")}'
@@ -90,6 +110,8 @@ def enqueue_callback_event(user, callback, kind: str, scheduled_for: datetime = 
         body = lead_name
     ev = NotificationEvent(
         tenant_id=getattr(callback, 'tenant_id', None) or getattr(user, 'tenant_id', None),
+        correlation_id=correlation_id,
+        idempotency_key=idempotency_key,
         user_id=user.id,
         event_type=event_type,
         lead_id=getattr(callback, 'lead_id', None),

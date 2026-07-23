@@ -40,6 +40,16 @@ class BaseConfig:
     # Cron secret — set CRON_SECRET env var on Vercel, add same value to cron job auth.
     CRON_SECRET = os.getenv('CRON_SECRET', '')
 
+    # Meta application secret used to verify X-Hub-Signature-256.
+    META_APP_SECRET = os.getenv('META_APP_SECRET', '')
+
+    # Meta signs every production webhook delivery. Development fixtures may
+    # opt out explicitly, but production must fail closed.
+    META_WEBHOOK_REQUIRE_SIGNATURE = _to_bool(
+        os.getenv('META_WEBHOOK_REQUIRE_SIGNATURE'),
+        default=ENV in ('production', 'prod'),
+    )
+
     # Max push attempts before marking a subscription dead and deactivating it.
     PUSH_MAX_ATTEMPTS = int(os.getenv('PUSH_MAX_ATTEMPTS', 3))
 
