@@ -294,6 +294,7 @@ def create_app(config_name: str = None) -> Flask:
     from app.routes.organisation import organisation_bp
     from app.routes.configuration import configuration_bp
     from app.routes.locations import locations_bp
+    from app.routes.visits import visits_bp
     from app.routes.projects import projects_bp
     from app.routes.pipeline import pipeline_bp
     from app.routes.reports import reports_bp
@@ -313,6 +314,7 @@ def create_app(config_name: str = None) -> Flask:
     app.register_blueprint(organisation_bp)
     app.register_blueprint(configuration_bp)
     app.register_blueprint(locations_bp)
+    app.register_blueprint(visits_bp)
     app.register_blueprint(projects_bp)
     app.register_blueprint(pipeline_bp)
     app.register_blueprint(reports_bp)

@@ -18,6 +18,10 @@ from .business_configuration import (
     LeadStatusConfiguration, LeadSourceConfiguration, BusinessRuleConfiguration,
 )
 from .location import TenantBrand, Location, ProjectLocation, MeetingRoom
+from .visit import (
+    VisitTypeConfiguration, VisitStatusConfiguration, Visit, VisitParticipant,
+    VisitTag, VisitAttachment,
+)
 from .ingestion import ConnectedGoogleAdsAccount
 from .organisation import (
     OrganisationUnit, OrganisationUnitMembership, BusinessRole, UserBusinessRole,
@@ -44,6 +48,8 @@ __all__ = [
     'LeadSourceFormMapping', 'MetaCampaignSnapshot',
     'LeadStatusConfiguration', 'LeadSourceConfiguration', 'BusinessRuleConfiguration',
     'TenantBrand', 'Location', 'ProjectLocation', 'MeetingRoom',
+    'VisitTypeConfiguration', 'VisitStatusConfiguration', 'Visit',
+    'VisitParticipant', 'VisitTag', 'VisitAttachment',
     'ConnectedGoogleAdsAccount',
     'OrganisationUnit', 'OrganisationUnitMembership', 'BusinessRole',
     'UserBusinessRole', 'ReportingRelationship', 'PermissionDefinition',
