@@ -17,6 +17,7 @@ class ActivityLog(db.Model):
     new_value = db.Column(db.JSON)
     description = db.Column(db.Text)
     ip_address = db.Column(db.String(50))
+    correlation_id = db.Column(db.String(36), index=True)
     device_info = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -35,6 +36,7 @@ class ActivityLog(db.Model):
             'new_value': self.new_value,
             'description': self.description,
             'ip_address': self.ip_address,
+            'correlation_id': self.correlation_id,
             'device_info': self.device_info,
             'created_at': to_ist_str(self.created_at),
         }

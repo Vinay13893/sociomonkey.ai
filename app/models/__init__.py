@@ -14,6 +14,9 @@ from .push import PushSubscription, NotificationEvent
 from .job import ImportJob, ImportJobRow, ExportJob, LeadReshuffleJob
 from .otp import OtpCode, OtpToken
 from .lead_source_mapping import LeadSourceFormMapping, MetaCampaignSnapshot
+from .business_configuration import (
+    LeadStatusConfiguration, LeadSourceConfiguration, BusinessRuleConfiguration,
+)
 from .ingestion import ConnectedGoogleAdsAccount
 from .organisation import (
     OrganisationUnit, OrganisationUnitMembership, BusinessRole, UserBusinessRole,
@@ -38,6 +41,7 @@ __all__ = [
     'ImportJob', 'ImportJobRow', 'ExportJob', 'LeadReshuffleJob',
     'OtpCode', 'OtpToken',
     'LeadSourceFormMapping', 'MetaCampaignSnapshot',
+    'LeadStatusConfiguration', 'LeadSourceConfiguration', 'BusinessRuleConfiguration',
     'ConnectedGoogleAdsAccount',
     'OrganisationUnit', 'OrganisationUnitMembership', 'BusinessRole',
     'UserBusinessRole', 'ReportingRelationship', 'PermissionDefinition',
