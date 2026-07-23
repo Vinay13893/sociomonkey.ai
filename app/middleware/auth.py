@@ -328,6 +328,27 @@ def require_role(*roles):
     return decorator
 
 
+def require_capability(capability, scope='OWN'):
+    """Require an authoritative capability while preserving legacy role grants."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            user, err = _prepare_auth_request_context()
+            if err:
+                return err
+            from app.services.permissions import capability_decision
+            decision = capability_decision(user, capability, scope)
+            request.permission_decision = decision
+            if not decision['allowed']:
+                return jsonify({
+                    'error': 'Permission denied',
+                    'required_capability': capability,
+                }), 403
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
 def require_platform_owner(func):
     """Decorator: restrict to platform_owner role only."""
     @wraps(func)

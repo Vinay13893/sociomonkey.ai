@@ -15,6 +15,11 @@ from .job import ImportJob, ImportJobRow, ExportJob, LeadReshuffleJob
 from .otp import OtpCode, OtpToken
 from .lead_source_mapping import LeadSourceFormMapping, MetaCampaignSnapshot
 from .ingestion import ConnectedGoogleAdsAccount
+from .organisation import (
+    OrganisationUnit, OrganisationUnitMembership, BusinessRole, UserBusinessRole,
+    ReportingRelationship, PermissionDefinition, RolePermission,
+    UserPermissionOverride,
+)
 
 __all__ = [
     'db',
@@ -34,4 +39,7 @@ __all__ = [
     'OtpCode', 'OtpToken',
     'LeadSourceFormMapping', 'MetaCampaignSnapshot',
     'ConnectedGoogleAdsAccount',
+    'OrganisationUnit', 'OrganisationUnitMembership', 'BusinessRole',
+    'UserBusinessRole', 'ReportingRelationship', 'PermissionDefinition',
+    'RolePermission', 'UserPermissionOverride',
 ]
