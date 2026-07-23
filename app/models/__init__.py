@@ -26,6 +26,10 @@ from .channel_partner import (
     ChannelPartner, ChannelPartnerContact, ChannelPartnerProject,
     ChannelPartnerAssignment, ChannelPartnerNote,
 )
+from .action_item import (
+    ActionTypeConfiguration, ActionStatusConfiguration,
+    ActionPriorityConfiguration, ActionItem,
+)
 from .ingestion import ConnectedGoogleAdsAccount
 from .organisation import (
     OrganisationUnit, OrganisationUnitMembership, BusinessRole, UserBusinessRole,
@@ -56,6 +60,8 @@ __all__ = [
     'VisitParticipant', 'VisitTag', 'VisitAttachment',
     'ChannelPartner', 'ChannelPartnerContact', 'ChannelPartnerProject',
     'ChannelPartnerAssignment', 'ChannelPartnerNote',
+    'ActionTypeConfiguration', 'ActionStatusConfiguration',
+    'ActionPriorityConfiguration', 'ActionItem',
     'ConnectedGoogleAdsAccount',
     'OrganisationUnit', 'OrganisationUnitMembership', 'BusinessRole',
     'UserBusinessRole', 'ReportingRelationship', 'PermissionDefinition',
