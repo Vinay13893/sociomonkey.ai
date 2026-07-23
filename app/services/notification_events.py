@@ -117,6 +117,54 @@ def enqueue_visit_assignment(user, visit, correlation_id=None,
     return ev
 
 
+def enqueue_channel_partner_event(user, partner, kind, correlation_id=None,
+                                  idempotency_key=None, visit=None):
+    """Queue a Channel Partner relationship or Visit notification."""
+    existing = _existing_event(idempotency_key)
+    if existing:
+        return existing
+    event_map = {
+        'assigned': ('channel_partner_assigned', 'Channel Partner Assigned'),
+        'visit_arrival': (
+            'channel_partner_visit_arrival', 'Channel Partner Arrived',
+        ),
+        'visit_completed': (
+            'channel_partner_visit_completed', 'Channel Partner Visit Completed',
+        ),
+        'profile_changed': (
+            'channel_partner_profile_changed', 'Channel Partner Profile Updated',
+        ),
+    }
+    event_type, title = event_map[kind]
+    slug = _tenant_slug_for_user(user)
+    payload = {
+        'channel_partner_id': partner.id,
+        'channel_partner_name': partner.name,
+    }
+    if visit is not None:
+        payload.update({
+            'visit_id': visit.id,
+            'location_id': visit.location_id,
+        })
+    event = NotificationEvent(
+        tenant_id=getattr(user, 'tenant_id', None),
+        correlation_id=correlation_id,
+        idempotency_key=idempotency_key,
+        user_id=user.id,
+        event_type=event_type,
+        channel_partner_id=partner.id,
+        lead_id=getattr(visit, 'lead_id', None) if visit else None,
+        title=title,
+        body=partner.name,
+        deep_link=f'/{slug}/channel-partners' if slug else '/',
+        payload=payload,
+        status='queued',
+        scheduled_for=datetime.utcnow(),
+    )
+    db.session.add(event)
+    return event
+
+
 def enqueue_callback_event(user, callback, kind: str, scheduled_for: datetime = None,
                            correlation_id=None, idempotency_key=None) -> NotificationEvent:
     """

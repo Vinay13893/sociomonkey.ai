@@ -60,6 +60,10 @@ class NotificationEvent(db.Model):
       - callback_due_now
       - callback_overdue
       - visit_assigned
+      - channel_partner_assigned
+      - channel_partner_visit_arrival
+      - channel_partner_visit_completed
+      - channel_partner_profile_changed
     """
     __tablename__ = 'notification_events'
 
@@ -70,6 +74,9 @@ class NotificationEvent(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
     event_type = db.Column(db.String(40), nullable=False, index=True)
     lead_id = db.Column(db.Integer, db.ForeignKey('leads.id'), nullable=True, index=True)
+    channel_partner_id = db.Column(
+        db.Integer, db.ForeignKey('channel_partners.id'), nullable=True, index=True
+    )
     callback_id = db.Column(db.Integer, db.ForeignKey('callback_reminders.id'), nullable=True)
     title = db.Column(db.String(200), nullable=True)
     body = db.Column(db.String(400), nullable=True)
@@ -96,6 +103,7 @@ class NotificationEvent(db.Model):
             'user_id': self.user_id,
             'event_type': self.event_type,
             'lead_id': self.lead_id,
+            'channel_partner_id': self.channel_partner_id,
             'callback_id': self.callback_id,
             'title': self.title,
             'body': self.body,

@@ -10,6 +10,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.middleware import require_capability
 from app.models.activity import ActivityLog
 from app.models.base import db
+from app.models.channel_partner import ChannelPartner
 from app.models.lead import Lead
 from app.models.location import Location, MeetingRoom
 from app.models.project import Project
@@ -20,6 +21,7 @@ from app.models.visit import (
 )
 from app.services.notification_events import enqueue_visit_assignment
 from app.services.reminder_scheduler import push_notification
+from app.services.channel_partner_events import notify_channel_partner_visit
 from app.utils.time_utils import business_date_bounds_utc_naive, now_ist
 
 
@@ -196,6 +198,9 @@ def references():
     projects = Project.query.filter_by(
         tenant_id=_tenant_id()
     ).order_by(Project.name).limit(500).all()
+    channel_partners = ChannelPartner.query.filter_by(
+        tenant_id=_tenant_id(), is_active=True
+    ).order_by(ChannelPartner.name).limit(500).all()
     return jsonify({
         'locations': [{'id': row.id, 'name': row.name} for row in locations],
         'meeting_rooms': [
@@ -204,6 +209,9 @@ def references():
         ],
         'users': [{'id': row.id, 'name': row.name} for row in users],
         'projects': [{'id': row.id, 'name': row.name} for row in projects],
+        'channel_partners': [
+            {'id': row.id, 'name': row.name} for row in channel_partners
+        ],
     })
 
 
@@ -331,6 +339,16 @@ def create_walk_in():
         if category and category not in WALK_IN_PARTICIPANT_TYPES:
             raise ValueError('Invalid walk-in participant type')
         display_name = str(participant.get('display_name') or '').strip() or None
+        participant_reference_id = participant.get('reference_id')
+        participant_partner = None
+        if category == 'CHANNEL_PARTNER':
+            participant_partner = _reference(
+                ChannelPartner, participant_reference_id,
+                'Channel Partner', active_only=True,
+            )
+            if not participant_partner:
+                raise ValueError('Channel Partner is required')
+            display_name = participant_partner.name
         if not lead and not display_name:
             raise ValueError('A lead or visitor name is required')
         priority = str(data.get('priority') or 'NORMAL').upper()
@@ -366,6 +384,9 @@ def create_walk_in():
             }.get(category, category or 'OTHER')
             row.participants.append(VisitParticipant(
                 tenant_id=_tenant_id(), participant_type=stored_type,
+                reference_id=(
+                    participant_partner.id if participant_partner else None
+                ),
                 display_name=display_name, is_primary=True,
                 participant_metadata={'reception_category': category or 'OTHER'},
             ))
@@ -375,6 +396,10 @@ def create_walk_in():
         _audit('gallery_walk_in_created', row, None, correlation_id)
         if assigned:
             _notify_assignment(row, assigned, correlation_id)
+        if participant_partner:
+            notify_channel_partner_visit(
+                row, 'visit_arrival', correlation_id
+            )
         db.session.commit()
         return jsonify({
             'visit': row.to_dict(), 'correlation_id': correlation_id,
@@ -407,6 +432,14 @@ def _transition(visit_id, target, allowed, action, timestamp_field=None):
             row.reception_assigned_user_id = request.current_user.id
         correlation_id = _correlation_id()
         _audit(action, row, old, correlation_id)
+        if target == 'CHECKED_IN':
+            notify_channel_partner_visit(
+                row, 'visit_arrival', correlation_id
+            )
+        elif target == 'COMPLETED':
+            notify_channel_partner_visit(
+                row, 'visit_completed', correlation_id
+            )
         db.session.commit()
         return jsonify({'visit': row.to_dict(), 'correlation_id': correlation_id})
     except ValueError as exc:

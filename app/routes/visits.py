@@ -10,6 +10,7 @@ from sqlalchemy import or_
 from app.middleware import require_capability
 from app.models.activity import ActivityLog
 from app.models.base import db
+from app.models.channel_partner import ChannelPartner
 from app.models.lead import Lead
 from app.models.location import Location, MeetingRoom
 from app.models.project import Project
@@ -19,6 +20,7 @@ from app.models.visit import (
     VisitTag, VisitTypeConfiguration,
 )
 from app.utils.time_utils import parse_business_datetime_to_utc_naive
+from app.services.channel_partner_events import notify_channel_partner_visit
 
 
 visits_bp = Blueprint('visits', __name__, url_prefix='/api/visits')
@@ -180,6 +182,12 @@ def _sync_participants(row, values):
         display_name = str(value.get('display_name') or '').strip() or None
         if participant_type == 'LEAD' and reference_id:
             ref = _validate_reference(Lead, reference_id, 'Participant lead')
+            display_name = display_name or ref.name
+        elif participant_type == 'CHANNEL_PARTNER' and reference_id:
+            ref = _validate_reference(
+                ChannelPartner, reference_id, 'Participant Channel Partner',
+                active_only=True,
+            )
             display_name = display_name or ref.name
         elif participant_type == 'USER' and reference_id:
             ref = _validate_user(reference_id, 'Participant user')
@@ -393,6 +401,14 @@ def create_visit():
         db.session.flush()
         correlation_id = _correlation_id()
         _audit('visit_created', row.id, None, row.to_dict(), correlation_id)
+        if row.status_key == 'CHECKED_IN':
+            notify_channel_partner_visit(
+                row, 'visit_arrival', correlation_id
+            )
+        elif row.status_key == 'COMPLETED':
+            notify_channel_partner_visit(
+                row, 'visit_completed', correlation_id
+            )
         db.session.commit()
         return jsonify({'visit': row.to_dict(), 'correlation_id': correlation_id}), 201
     except (TypeError, ValueError) as exc:
@@ -426,6 +442,14 @@ def update_visit(visit_id):
         correlation_id = _correlation_id()
         action = 'visit_lifecycle_changed' if row.status_key != old_status else 'visit_updated'
         _audit(action, row.id, old, row.to_dict(), correlation_id)
+        if row.status_key != old_status and row.status_key == 'CHECKED_IN':
+            notify_channel_partner_visit(
+                row, 'visit_arrival', correlation_id
+            )
+        elif row.status_key != old_status and row.status_key == 'COMPLETED':
+            notify_channel_partner_visit(
+                row, 'visit_completed', correlation_id
+            )
         db.session.commit()
         return jsonify({'visit': row.to_dict(), 'correlation_id': correlation_id})
     except (TypeError, ValueError) as exc:

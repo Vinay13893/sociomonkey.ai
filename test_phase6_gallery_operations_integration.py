@@ -88,7 +88,8 @@ def test_gallery_operations_workflow():
         db.session.commit()
 
         token = create_token(
-            receptionist.id, 'team_member', tenant.id, login_context='tenant'
+            str(receptionist.id), 'team_member', tenant.id,
+            login_context='tenant'
         )
         headers = {
             'Authorization': f'Bearer {token}',
@@ -97,7 +98,7 @@ def test_gallery_operations_workflow():
         }
         client = app.test_client()
         refs = client.get('/api/gallery-operations/references', headers=headers)
-        assert refs.status_code == 200
+        assert refs.status_code == 200, refs.get_data(as_text=True)
         assert len(refs.get_json()['locations']) == 1
 
         created = client.post(

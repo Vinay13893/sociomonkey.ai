@@ -22,6 +22,10 @@ from .visit import (
     VisitTypeConfiguration, VisitStatusConfiguration, Visit, VisitParticipant,
     VisitTag, VisitAttachment,
 )
+from .channel_partner import (
+    ChannelPartner, ChannelPartnerContact, ChannelPartnerProject,
+    ChannelPartnerAssignment, ChannelPartnerNote,
+)
 from .ingestion import ConnectedGoogleAdsAccount
 from .organisation import (
     OrganisationUnit, OrganisationUnitMembership, BusinessRole, UserBusinessRole,
@@ -50,6 +54,8 @@ __all__ = [
     'TenantBrand', 'Location', 'ProjectLocation', 'MeetingRoom',
     'VisitTypeConfiguration', 'VisitStatusConfiguration', 'Visit',
     'VisitParticipant', 'VisitTag', 'VisitAttachment',
+    'ChannelPartner', 'ChannelPartnerContact', 'ChannelPartnerProject',
+    'ChannelPartnerAssignment', 'ChannelPartnerNote',
     'ConnectedGoogleAdsAccount',
     'OrganisationUnit', 'OrganisationUnitMembership', 'BusinessRole',
     'UserBusinessRole', 'ReportingRelationship', 'PermissionDefinition',
