@@ -9,12 +9,19 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import case, func
 
 from app import db
-from app.middleware import require_auth, require_role
+from app.middleware import require_auth, require_capability, require_role
 from app.models.activity import ActivityLog
 from app.models.lead import Lead, StatusHistory, CallbackReminder
 from app.models.project import Project
 from app.models.user import User
 from app.services.reports import ReportService
+from app.services.analytics import (
+    AnalyticsFilters,
+    AnalyticsService,
+    AnalyticsValidationError,
+    REPORT_KEYS,
+    analytics_workbook,
+)
 from app.utils.leads import get_user_visible_leads, apply_test_lead_filter, apply_valid_lead_capture_scope
 from app.utils.time_utils import IST
 
@@ -955,4 +962,55 @@ def download_activity_report():
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         as_attachment=True,
         download_name=filename,
+    )
+
+
+# ---------------------------------------------------------------------------
+# V2 bounded analytics
+# ---------------------------------------------------------------------------
+
+@reports_bp.get('/v2/filters')
+@require_capability('reports.view', 'OWN')
+def v2_report_filters():
+    try:
+        filters = AnalyticsFilters.from_args(request.args)
+        service = AnalyticsService(request.current_user, filters)
+        return jsonify(service.filter_options()), 200
+    except AnalyticsValidationError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+
+@reports_bp.get('/v2/<string:report_key>')
+@require_capability('reports.view', 'OWN')
+def v2_report(report_key):
+    try:
+        filters = AnalyticsFilters.from_args(request.args)
+        service = AnalyticsService(request.current_user, filters)
+        return jsonify(service.build(report_key)), 200
+    except AnalyticsValidationError as exc:
+        status = 404 if report_key not in REPORT_KEYS else 400
+        return jsonify({'error': str(exc)}), status
+
+
+@reports_bp.get('/v2/<string:report_key>/export')
+@require_capability('reports.export', 'OWN')
+def export_v2_report(report_key):
+    try:
+        filters = AnalyticsFilters.from_args(request.args, export=True)
+        service = AnalyticsService(request.current_user, filters)
+        payload = service.build(report_key)
+        buffer = analytics_workbook(payload)
+    except AnalyticsValidationError as exc:
+        status = 404 if report_key not in REPORT_KEYS else 400
+        return jsonify({'error': str(exc)}), status
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=(
+            f'lms_{report_key}_analytics_'
+            f'{datetime.utcnow().strftime("%Y%m%d")}.xlsx'
+        ),
+        mimetype=(
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        ),
     )
