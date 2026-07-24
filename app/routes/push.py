@@ -1,16 +1,17 @@
-"""Push notification subscription endpoints (Phase M1).
+"""Push subscription and notification-operations endpoints.
 
-Foundation only — no outbound delivery. The frontend posts a Web Push
-subscription (or future FCM token) here; we persist it scoped to the
-authenticated user + tenant for later delivery by a worker.
+The frontend registers Web Push subscriptions here; we persist them for
+delivery and expose tenant-scoped
+operational health and controls.
 """
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
-from app.middleware import require_auth, require_role
+from app.middleware import require_auth, require_capability, require_role
 from app.models.base import db
 from app.models.push import NotificationEvent, PushSubscription
+from app.utils.correlation import request_correlation_id
 
 push_bp = Blueprint('push', __name__, url_prefix='/api/push')
 
@@ -38,6 +39,9 @@ def register_subscription():
         existing.user_agent = user_agent
         existing.tenant_id = user.tenant_id
         existing.is_active = True
+        existing.failure_count = 0
+        existing.deactivated_at = None
+        existing.deactivation_reason = None
         existing.updated_at = datetime.utcnow()
         db.session.commit()
         return jsonify({'subscription': existing.to_dict(), 'created': False}), 200
@@ -68,6 +72,8 @@ def unregister_subscription():
     sub = PushSubscription.query.filter_by(user_id=user.id, endpoint=endpoint).first()
     if sub:
         sub.is_active = False
+        sub.deactivated_at = datetime.utcnow()
+        sub.deactivation_reason = 'user_unregistered'
         sub.updated_at = datetime.utcnow()
         db.session.commit()
     return jsonify({'ok': True}), 200
@@ -132,55 +138,115 @@ def test_send():
 @require_role('superadmin', 'platform_owner')
 def delivery_diagnostics():
     """Tenant-scoped aggregate delivery health without message payloads or PII."""
+    from app.services.notification_operations import queue_health
+
     user = request.current_user
-    event_rows = (
-        db.session.query(NotificationEvent.status, db.func.count(NotificationEvent.id))
-        .filter(NotificationEvent.tenant_id == user.tenant_id)
-        .group_by(NotificationEvent.status)
-        .all()
-    )
-    subscription_rows = (
-        db.session.query(PushSubscription.is_active, db.func.count(PushSubscription.id))
-        .filter(PushSubscription.tenant_id == user.tenant_id)
-        .group_by(PushSubscription.is_active)
-        .all()
-    )
-    oldest_queued = (
-        db.session.query(db.func.min(NotificationEvent.created_at))
-        .filter(
-            NotificationEvent.tenant_id == user.tenant_id,
-            NotificationEvent.status == 'queued',
-        )
-        .scalar()
-    )
+    health = queue_health(user.tenant_id)
     return jsonify({
-        'events': {str(status): int(count) for status, count in event_rows},
-        'subscriptions': {
-            'active' if active else 'inactive': int(count)
-            for active, count in subscription_rows
-        },
-        'oldest_queued_at': oldest_queued.isoformat() if oldest_queued else None,
+        'events': health['queue']['counts'],
+        'subscriptions': health['subscriptions'],
+        'oldest_queued_at': health['queue']['oldest_pending_at'],
+        'health': health,
     }), 200
 
 
 @push_bp.route('/events/<int:event_id>/retry', methods=['POST'])
-@require_role('superadmin', 'platform_owner')
+@require_capability('notifications.retry', 'TENANT')
 def retry_delivery_event(event_id):
     """Requeue one failed/skipped tenant delivery without recreating it."""
+    from app.services.notification_operations import replay_event
+
+    user = request.current_user
+    event = NotificationEvent.query.filter(
+        NotificationEvent.id == event_id,
+        NotificationEvent.tenant_id == user.tenant_id,
+    ).first()
+    if not event:
+        return jsonify({'error': 'Delivery event not found'}), 404
+    if event.status not in ('failed', 'skipped'):
+        return jsonify({'error': 'Only failed or skipped events can be retried'}), 409
+    result = replay_event(
+        event,
+        request.current_user,
+        request_correlation_id(request),
+    )
+    return jsonify({
+        'ok': True,
+        'event_id': event.id,
+        'status': event.status,
+        'event': result,
+    }), 200
+
+
+@push_bp.route('/operations/summary', methods=['GET'])
+@require_capability('notifications.view', 'TENANT')
+def notification_operations_summary():
+    from app.services.notification_operations import queue_health
+
+    return jsonify({
+        'health': queue_health(request.current_user.tenant_id),
+    }), 200
+
+
+@push_bp.route('/operations/events', methods=['GET'])
+@require_capability('notifications.view', 'TENANT')
+def notification_operations_events():
+    from app.services.notification_operations import list_events
+
+    try:
+        result = list_events(request.current_user.tenant_id, request.args)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid event filter or pagination value'}), 400
+    return jsonify(result), 200
+
+
+@push_bp.route('/operations/events/<int:event_id>', methods=['GET'])
+@require_capability('notifications.view', 'TENANT')
+def notification_operations_event_detail(event_id):
+    from app.services.notification_operations import event_detail
+
+    result = event_detail(request.current_user.tenant_id, event_id)
+    if not result:
+        return jsonify({'error': 'Delivery event not found'}), 404
+    return jsonify({'event': result}), 200
+
+
+@push_bp.route('/operations/events/<int:event_id>/replay', methods=['POST'])
+@require_capability('notifications.retry', 'TENANT')
+def notification_operations_event_replay(event_id):
+    from app.services.notification_operations import replay_event
+
     event = NotificationEvent.query.filter_by(
         id=event_id,
         tenant_id=request.current_user.tenant_id,
     ).first()
     if not event:
         return jsonify({'error': 'Delivery event not found'}), 404
-    if event.status not in ('failed', 'skipped'):
-        return jsonify({'error': 'Only failed or skipped events can be retried'}), 409
+    try:
+        result = replay_event(
+            event,
+            request.current_user,
+            request_correlation_id(request),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 409
+    return jsonify({'ok': True, 'event': result}), 200
 
-    event.status = 'queued'
-    event.attempts = 0
-    event.last_error = None
-    event.scheduled_for = datetime.utcnow()
-    event.claimed_at = None
-    event.dead_lettered_at = None
-    db.session.commit()
-    return jsonify({'ok': True, 'event_id': event.id, 'status': event.status}), 200
+
+@push_bp.route('/operations/events/archive-completed', methods=['POST'])
+@require_capability('notifications.manage', 'TENANT')
+def notification_operations_archive_completed():
+    from app.services.notification_operations import archive_completed
+
+    data = request.get_json(silent=True) or {}
+    try:
+        result = archive_completed(
+            request.current_user.tenant_id,
+            request.current_user,
+            older_than_days=data.get('older_than_days', 30),
+            limit=data.get('limit', 500),
+            requested_correlation_id=request_correlation_id(request),
+        )
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid archive boundary'}), 400
+    return jsonify({'ok': True, **result}), 200

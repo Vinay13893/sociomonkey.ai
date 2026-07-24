@@ -221,6 +221,7 @@ class CallbackReminder(db.Model):
     # status: pending | completed | missed | cancelled
     status              = db.Column(db.String(30), default='pending', nullable=False)
     notes               = db.Column(db.Text, nullable=True)
+    correlation_id      = db.Column(db.String(36), nullable=True, index=True)
     created_by          = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     created_at          = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at          = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -244,6 +245,7 @@ class CallbackReminder(db.Model):
             'reminder_due_sent':  self.reminder_due_sent,
             'status':             self.status,
             'notes':              self.notes,
+            'correlation_id':     self.correlation_id,
             'created_by':         self.created_by,
             'created_at':         to_ist_str(self.created_at),
             'updated_at':         to_ist_str(self.updated_at),

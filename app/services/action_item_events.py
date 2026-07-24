@@ -5,6 +5,7 @@ from datetime import datetime
 from app.models.base import db
 from app.models.notification import Notification
 from app.models.push import NotificationEvent
+from app.utils.correlation import correlation_id as ensure_correlation_id
 
 
 EVENTS = {
@@ -24,6 +25,7 @@ def notify_action_item(
     if kind not in EVENTS:
         raise ValueError('Unsupported Action Item notification kind')
     event_type, title = EVENTS[kind]
+    correlation_id = ensure_correlation_id(correlation_id)
     if idempotency_key:
         existing = NotificationEvent.query.filter_by(
             idempotency_key=idempotency_key
@@ -56,6 +58,7 @@ def notify_action_item(
         message=action_item.title,
         payload=payload,
         source='action_items',
+        correlation_id=correlation_id,
     ))
     event = NotificationEvent(
         tenant_id=action_item.tenant_id,
@@ -64,6 +67,8 @@ def notify_action_item(
         user_id=user.id,
         event_type=event_type,
         action_item_id=action_item.id,
+        origin_type='ACTION_ITEM',
+        origin_id=action_item.id,
         lead_id=(
             action_item.source_id
             if action_item.source_type == 'LEAD' else None

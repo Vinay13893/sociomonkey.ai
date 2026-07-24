@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from app.models.base import db
 from app.models.lead import CallbackReminder
 from app.models.notification import Notification
+from app.utils.correlation import correlation_id as ensure_correlation_id
 
 logger = logging.getLogger(__name__)
 _REMINDER_LOCK = threading.Lock()
@@ -34,6 +35,8 @@ _REMINDER_BATCH_SIZE = 100
 
 
 def push_notification(user_id: int, notification: dict):
+    cid = ensure_correlation_id(notification.get('correlation_id'))
+    notification['correlation_id'] = cid
     note = Notification(
         tenant_id=notification.get('tenant_id'),
         user_id=user_id,
@@ -43,6 +46,7 @@ def push_notification(user_id: int, notification: dict):
         message=notification.get('message') or '',
         payload=notification,
         source=notification.get('source') or 'callback_scheduler',
+        correlation_id=cid,
     )
     db.session.add(note)
     return note
@@ -91,9 +95,11 @@ def _deliver(callback: 'CallbackReminder', kind: str):
         title = 'Callback Due Now'
         msg = f'⏰ Callback due NOW: {lead_name} ({cb_time})'
 
+    callback.correlation_id = ensure_correlation_id(callback.correlation_id)
     note = {'type': 'callback', 'kind': kind, 'title': title, 'lead_id': callback.lead_id,
             'lead_name': lead_name, 'callback_id': callback.id,
-            'message': msg, 'ts': datetime.utcnow().isoformat()}
+            'message': msg, 'ts': datetime.utcnow().isoformat(),
+            'correlation_id': callback.correlation_id}
     note['tenant_id'] = callback.tenant_id
 
     recipients = set()
@@ -119,7 +125,7 @@ def _deliver(callback: 'CallbackReminder', kind: str):
                     recipient,
                     callback,
                     event_kind,
-                    correlation_id=f'callback:{callback.id}:{event_kind}',
+                    correlation_id=callback.correlation_id,
                     idempotency_key=f'callback:{callback.id}:{event_kind}:user:{uid}',
                 )
         _db.session.commit()

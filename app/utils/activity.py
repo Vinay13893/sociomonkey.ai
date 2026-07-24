@@ -12,6 +12,8 @@ def log_activity(
     old_value=None,
     new_value=None,
     description: str = None,
+    tenant_id=None,
+    correlation_id=None,
 ):
     """Persist an activity log entry. Safe to call from any request context."""
     try:
@@ -20,6 +22,7 @@ def log_activity(
         ip = None
 
     entry = ActivityLog(
+        tenant_id=tenant_id,
         user_id=user_id,
         action=action,
         module=module,
@@ -28,6 +31,7 @@ def log_activity(
         old_value=old_value,
         new_value=new_value,
         description=description,
+        correlation_id=correlation_id,
         ip_address=ip,
     )
     db.session.add(entry)

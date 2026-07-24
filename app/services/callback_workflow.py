@@ -5,6 +5,7 @@ from app.models.base import db
 from app.models.lead import CallbackReminder, Lead
 from app.models.user import User
 from app.utils.activity import log_activity
+from app.utils.correlation import correlation_id as ensure_correlation_id
 from app.utils.time_utils import parse_business_datetime_to_utc_naive
 
 
@@ -39,7 +40,9 @@ def find_pending_callback(lead_id):
     )
 
 
-def create_callback_for_lead(lead: Lead, actor: User, raw_datetime, notes=None):
+def create_callback_for_lead(
+    lead, actor, raw_datetime, notes=None, correlation_id=None
+):
     cb_dt = parse_business_datetime_to_utc_naive(raw_datetime)
     if cb_dt <= datetime.utcnow():
         raise ValueError('Callback time must be in the future')
@@ -50,6 +53,7 @@ def create_callback_for_lead(lead: Lead, actor: User, raw_datetime, notes=None):
 
     assigned_user_id = resolve_callback_owner(lead, actor)
     manager_id = resolve_callback_manager(lead, assigned_user_id)
+    correlation_id = ensure_correlation_id(correlation_id)
     cb = CallbackReminder(
         lead_id=lead.id,
         tenant_id=lead.tenant_id,
@@ -57,6 +61,7 @@ def create_callback_for_lead(lead: Lead, actor: User, raw_datetime, notes=None):
         manager_id=manager_id,
         callback_datetime=cb_dt,
         notes=(notes or '').strip() or None,
+        correlation_id=correlation_id,
         created_by=actor.id if actor else None,
     )
     db.session.add(cb)
@@ -69,6 +74,7 @@ def create_callback_for_lead(lead: Lead, actor: User, raw_datetime, notes=None):
             source='CALLBACK_SCHEDULED',
             reason='Callback scheduled',
             context={'follow_up_completed': True},
+            correlation_id=correlation_id,
             notify=False,
         )
 

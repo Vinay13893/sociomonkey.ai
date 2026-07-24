@@ -239,6 +239,7 @@ def _notify_transition(lead, actor, transition, from_label, to_label):
         message=message,
         payload=payload,
         source='pipeline',
+        correlation_id=transition.correlation_id,
     ))
     event = NotificationEvent(
         tenant_id=lead.tenant_id,
@@ -248,6 +249,8 @@ def _notify_transition(lead, actor, transition, from_label, to_label):
         event_type='pipeline_stage_changed',
         lead_id=lead.id,
         pipeline_transition_id=transition.id,
+        origin_type='PIPELINE_TRANSITION',
+        origin_id=transition.id,
         title=title,
         body=message,
         deep_link=f'/{slug}/leads?lead={lead.id}' if slug else '/',

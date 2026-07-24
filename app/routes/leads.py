@@ -15,6 +15,7 @@ from app.models.project import Project
 from app.models.user import User
 from app.models.ingestion import LeadSource
 from app.utils.activity import log_activity
+from app.utils.correlation import request_correlation_id
 from app.utils.leads import (
     get_user_visible_leads,
     apply_test_lead_filter,
@@ -802,6 +803,7 @@ def bulk_update_source():
 def bulk_assign():
     user = request.current_user
     data = request.get_json() or {}
+    operation_correlation = request_correlation_id(request)
     lead_ids    = data.get('lead_ids', [])
     assigned_to = data.get('assigned_to')  # None means unassign
     assign_type = data.get('assign_type', 'member')  # 'member' or 'manager'
@@ -837,7 +839,7 @@ def bulk_assign():
                     assigned_to=assigned_to,
                     assigned_by=user.id,
                     source='LEADS_BULK_ASSIGN',
-                    correlation_id=request.headers.get('X-Correlation-ID'),
+                    correlation_id=operation_correlation,
                 )
                 db.session.add(assignment)
                 lead.assigned_by = user.id
@@ -851,6 +853,8 @@ def bulk_assign():
     log_activity(
         user.id, action, 'leads', None, 'Lead',
         description=f'Bulk assigned {updated} leads to {target_name} ({assign_type})',
+        tenant_id=user.tenant_id,
+        correlation_id=operation_correlation,
     )
 
     # Notify the assignee (member bulk-assign only, skip manager-column assignments and self-assign)
@@ -864,6 +868,7 @@ def bulk_assign():
                 'message': f'📋 {updated} lead{"s" if updated != 1 else ""} {"have" if updated != 1 else "has"} been assigned to you by {user.name}.',
                 'source': 'bulk_assignment',
                 'tenant_id': target.tenant_id,
+                'correlation_id': operation_correlation,
             })
             try:
                 from app.services.notification_events import enqueue_lead_assigned
@@ -871,7 +876,14 @@ def bulk_assign():
                 first_lead_id = lead_ids[0] if lead_ids else None
                 first_lead = Lead.query.get(first_lead_id) if first_lead_id else None
                 if first_lead:
-                    ev = enqueue_lead_assigned(target, first_lead)
+                    ev = enqueue_lead_assigned(
+                        target, first_lead,
+                        correlation_id=operation_correlation,
+                        idempotency_key=(
+                            f'bulk-assignment:{operation_correlation}:'
+                            f'user:{target.id}'
+                        ),
+                    )
                     # Override title/body for bulk context
                     ev.title = 'New Leads Assigned'
                     ev.body = f'{updated} new lead{"s" if updated != 1 else ""} assigned to you'
@@ -916,6 +928,7 @@ def bulk_delete():
 @require_role('superadmin', 'sales_manager')
 def assign_lead(lead_id):
     user = request.current_user
+    operation_correlation = request_correlation_id(request)
     lead = Lead.query.get(lead_id)
     if not lead:
         return jsonify({'error': 'Lead not found'}), 404
@@ -940,7 +953,7 @@ def assign_lead(lead_id):
         assigned_by=user.id,
         reason=data.get('reason'),
         source='LEADS_ASSIGN',
-        correlation_id=request.headers.get('X-Correlation-ID'),
+        correlation_id=operation_correlation,
     )
     old_name = User.query.get(lead.assigned_to).name if lead.assigned_to else 'Unassigned'
     lead.assigned_to = assigned_to
@@ -951,6 +964,8 @@ def assign_lead(lead_id):
     log_activity(
         user.id, 'assign_lead', 'leads', lead_id, 'Lead',
         description=f'Assigned lead {lead.name} from {old_name} to {target.name}',
+        tenant_id=lead.tenant_id,
+        correlation_id=operation_correlation,
     )
 
     # Notify the newly assigned team member (skip if assigning to self)
@@ -964,10 +979,18 @@ def assign_lead(lead_id):
             'lead_name': lead.name,
             'source': 'lead_assignment',
             'tenant_id': lead.tenant_id,
+            'correlation_id': operation_correlation,
         })
         try:
             from app.services.notification_events import enqueue_lead_reassigned
-            enqueue_lead_reassigned(target, lead)
+            enqueue_lead_reassigned(
+                target, lead,
+                correlation_id=operation_correlation,
+                idempotency_key=(
+                    f'lead-reassignment:{lead.id}:{operation_correlation}:'
+                    f'user:{target.id}'
+                ),
+            )
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -2209,6 +2232,7 @@ def ar_bulk_assign():
     """Bulk assign or reassign leads to a target user."""
     user = request.current_user
     data = request.get_json() or {}
+    operation_correlation = request_correlation_id(request)
     lead_ids = [int(x) for x in (data.get('lead_ids') or []) if str(x).isdigit()]
     target_id = data.get('target_user_id')
     if not lead_ids:
@@ -2257,10 +2281,14 @@ def ar_bulk_assign():
             assigned_by=user.id,
             reason=data.get('reason', 'Bulk assign/reassign'),
             source='ALLOCATION_BULK_ASSIGN',
-            correlation_id=request.headers.get('X-Correlation-ID'),
+            correlation_id=operation_correlation,
         ))
-        log_activity(user.id, 'assign_lead', 'leads', lead.id, 'Lead',
-            description=f'Bulk assigned lead {lead.name} to {target.name}')
+        log_activity(
+            user.id, 'assign_lead', 'leads', lead.id, 'Lead',
+            description=f'Bulk assigned lead {lead.name} to {target.name}',
+            tenant_id=lead.tenant_id,
+            correlation_id=operation_correlation,
+        )
         assigned += 1
 
     db.session.commit()
@@ -2274,12 +2302,20 @@ def ar_bulk_assign():
             'message': f'📋 {assigned} lead{"s" if assigned != 1 else ""} {"have" if assigned != 1 else "has"} been assigned to you by {user.name}.',
             'source': 'ar_bulk_assignment',
             'tenant_id': target.tenant_id,
+            'correlation_id': operation_correlation,
         })
         try:
             from app.services.notification_events import enqueue_lead_assigned
             first_lead = Lead.query.filter_by(id=lead_ids[0], tenant_id=user.tenant_id).first() if lead_ids else None
             if first_lead:
-                ev = enqueue_lead_assigned(target, first_lead)
+                ev = enqueue_lead_assigned(
+                    target, first_lead,
+                    correlation_id=operation_correlation,
+                    idempotency_key=(
+                        f'allocation-bulk:{operation_correlation}:'
+                        f'user:{target.id}'
+                    ),
+                )
                 ev.title = 'New Leads Assigned'
                 ev.body = f'{assigned} new lead{"s" if assigned != 1 else ""} assigned to you'
                 db.session.commit()
@@ -2293,6 +2329,7 @@ def ar_workload_move():
     """Move filtered active leads from one member to another."""
     user = request.current_user
     data = request.get_json() or {}
+    operation_correlation = request_correlation_id(request)
     from_id = data.get('from_user_id')
     to_id = data.get('to_user_id')
     try:
@@ -2362,10 +2399,17 @@ def ar_workload_move():
             assigned_by=user.id,
             reason='Workload rebalance',
             source='WORKLOAD_REBALANCE',
-            correlation_id=request.headers.get('X-Correlation-ID'),
+            correlation_id=operation_correlation,
         ))
-        log_activity(user.id, 'assign_lead', 'leads', lead.id, 'Lead',
-            description=f'Workload move: {lead.name} from {from_user.name} to {to_user.name}')
+        log_activity(
+            user.id, 'assign_lead', 'leads', lead.id, 'Lead',
+            description=(
+                f'Workload move: {lead.name} from '
+                f'{from_user.name} to {to_user.name}'
+            ),
+            tenant_id=lead.tenant_id,
+            correlation_id=operation_correlation,
+        )
         CallbackReminder.query.filter(
             CallbackReminder.tenant_id == user.tenant_id,
             CallbackReminder.lead_id == lead.id,
@@ -2385,11 +2429,19 @@ def ar_workload_move():
             'message': f'📋 {moved} lead{"s" if moved != 1 else ""} from {from_user.name} {"have" if moved != 1 else "has"} been transferred to you by {user.name}.',
             'source': 'workload_move',
             'tenant_id': to_user.tenant_id,
+            'correlation_id': operation_correlation,
         })
         try:
             from app.services.notification_events import enqueue_lead_assigned
             if leads:
-                ev = enqueue_lead_assigned(to_user, leads[0])
+                ev = enqueue_lead_assigned(
+                    to_user, leads[0],
+                    correlation_id=operation_correlation,
+                    idempotency_key=(
+                        f'workload-move:{operation_correlation}:'
+                        f'user:{to_user.id}'
+                    ),
+                )
                 ev.title = 'Leads Transferred to You'
                 ev.body = f'{moved} lead{"s" if moved != 1 else ""} transferred from {from_user.name}'
                 db.session.commit()
@@ -3033,6 +3085,7 @@ def create_callback(lead_id):
             user,
             raw_dt,
             notes=data.get('notes', ''),
+            correlation_id=request_correlation_id(request),
         )
     except ValueError as exc:
         message = str(exc) or 'Invalid datetime format. Use ISO 8601 (YYYY-MM-DDTHH:MM:SS)'
@@ -3051,6 +3104,8 @@ def create_callback(lead_id):
     log_activity(
         user.id, 'create_callback', 'leads', lead_id, 'Lead',
         description=f'Scheduled callback for lead {lead.name} at {_format_ist_datetime(cb.callback_datetime)}',
+        tenant_id=lead.tenant_id,
+        correlation_id=cb.correlation_id,
     )
     return jsonify({'callback': cb.to_dict()}), 201
 

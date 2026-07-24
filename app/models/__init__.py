@@ -10,7 +10,9 @@ from .demo_request import DemoRequest
 from .notification import Notification
 from .oauth_session import OAuthSession
 from .meta_tier_test_run import MetaTierTestRun
-from .push import PushSubscription, NotificationEvent
+from .push import (
+    PushSubscription, NotificationEvent, NotificationDeliveryAttempt,
+)
 from .job import ImportJob, ImportJobRow, ExportJob, LeadReshuffleJob
 from .otp import OtpCode, OtpToken
 from .lead_source_mapping import LeadSourceFormMapping, MetaCampaignSnapshot
@@ -51,7 +53,7 @@ __all__ = [
     'Notification',
     'OAuthSession',
     'MetaTierTestRun',
-    'PushSubscription', 'NotificationEvent',
+    'PushSubscription', 'NotificationEvent', 'NotificationDeliveryAttempt',
     'ImportJob', 'ImportJobRow', 'ExportJob', 'LeadReshuffleJob',
     'OtpCode', 'OtpToken',
     'LeadSourceFormMapping', 'MetaCampaignSnapshot',

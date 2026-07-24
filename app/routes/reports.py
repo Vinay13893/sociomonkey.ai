@@ -23,6 +23,7 @@ from app.services.analytics import (
     analytics_workbook,
 )
 from app.utils.leads import get_user_visible_leads, apply_test_lead_filter, apply_valid_lead_capture_scope
+from app.utils.correlation import request_correlation_id
 from app.utils.time_utils import IST
 
 reports_bp = Blueprint('reports', __name__, url_prefix='/api/reports')
@@ -975,7 +976,9 @@ def v2_report_filters():
     try:
         filters = AnalyticsFilters.from_args(request.args)
         service = AnalyticsService(request.current_user, filters)
-        return jsonify(service.filter_options()), 200
+        payload = service.filter_options()
+        payload['correlation_id'] = request_correlation_id(request)
+        return jsonify(payload), 200
     except AnalyticsValidationError as exc:
         return jsonify({'error': str(exc)}), 400
 
@@ -986,7 +989,9 @@ def v2_report(report_key):
     try:
         filters = AnalyticsFilters.from_args(request.args)
         service = AnalyticsService(request.current_user, filters)
-        return jsonify(service.build(report_key)), 200
+        payload = service.build(report_key)
+        payload['correlation_id'] = request_correlation_id(request)
+        return jsonify(payload), 200
     except AnalyticsValidationError as exc:
         status = 404 if report_key not in REPORT_KEYS else 400
         return jsonify({'error': str(exc)}), status
@@ -999,6 +1004,7 @@ def export_v2_report(report_key):
         filters = AnalyticsFilters.from_args(request.args, export=True)
         service = AnalyticsService(request.current_user, filters)
         payload = service.build(report_key)
+        payload['correlation_id'] = request_correlation_id(request)
         buffer = analytics_workbook(payload)
     except AnalyticsValidationError as exc:
         status = 404 if report_key not in REPORT_KEYS else 400

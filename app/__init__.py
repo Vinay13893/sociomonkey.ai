@@ -517,6 +517,7 @@ def create_app(config_name: str = None) -> Flask:
                 'is_read': bool(row.is_read),
                 'read_at': to_ist_str(row.read_at),
                 'source': row.source,
+                'correlation_id': row.correlation_id,
                 'created_at': to_ist_str(row.created_at),
                 'lead_id': payload.get('lead_id'),
                 'callback_id': payload.get('callback_id'),
@@ -569,12 +570,13 @@ def create_app(config_name: str = None) -> Flask:
         except ValueError:
             batch = 100
         reminder_summary = process_pending_reminders(batch_size=batch)
-        from app.services.notification_processor import process_notification_queue
-        delivery_summary = process_notification_queue(batch_size=min(batch, 10))
         return jsonify({
             'status': 'ok',
             'reminders': reminder_summary,
-            'delivery': delivery_summary,
+            'delivery': {
+                'delegated_to': '/api/cron/drain-notifications',
+                'reason': 'single_delivery_worker',
+            },
         }), 200
 
     @app.route('/api/internal/jobs/process', methods=['GET', 'POST'])

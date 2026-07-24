@@ -18,6 +18,7 @@ class Notification(db.Model):
     is_read = db.Column(db.Boolean, default=False, nullable=False, index=True)
     read_at = db.Column(db.DateTime, nullable=True)
     source = db.Column(db.String(80), nullable=True)
+    correlation_id = db.Column(db.String(36), nullable=True, index=True)
     expires_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
@@ -36,6 +37,7 @@ class Notification(db.Model):
             'is_read': self.is_read,
             'read_at': to_ist_str(self.read_at),
             'source': self.source,
+            'correlation_id': self.correlation_id,
             'expires_at': to_ist_str(self.expires_at),
             'created_at': to_ist_str(self.created_at),
         }

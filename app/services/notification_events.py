@@ -1,9 +1,8 @@
 """
-Notification event enqueueing (Phase M1 foundation).
+Notification event enqueueing for the canonical bounded drain worker.
 
-Phase M1 only enqueues NotificationEvent rows. Delivery (push send, batching,
-retry) is intentionally out of scope; that ships in a later phase wired to a
-Vercel Cron worker that drains queued rows and posts to Web Push / FCM.
+Business transactions only enqueue. Push delivery, retry, dead-letter handling,
+and attempt history remain isolated in the notification worker.
 
 The deep_link strings follow the canonical tenant URL structure already used
 by the SPA router (/:slug/:tab/lead/:id).
@@ -13,6 +12,7 @@ from datetime import timezone as _tz
 
 from app.models.base import db
 from app.models.push import NotificationEvent
+from app.utils.correlation import correlation_id as ensure_correlation_id
 from app.utils.time_utils import IST
 
 
@@ -43,6 +43,7 @@ def enqueue_lead_assigned(user, lead, correlation_id=None, idempotency_key=None)
     body = lead.name or f'Lead #{lead.id}'
     if project_name:
         body = f'{body} \u00b7 {project_name}'
+    correlation_id = ensure_correlation_id(correlation_id)
     ev = NotificationEvent(
         tenant_id=getattr(user, 'tenant_id', None),
         correlation_id=correlation_id,
@@ -50,6 +51,8 @@ def enqueue_lead_assigned(user, lead, correlation_id=None, idempotency_key=None)
         user_id=user.id,
         event_type='lead_assigned',
         lead_id=lead.id,
+        origin_type='LEAD',
+        origin_id=lead.id,
         title='New Lead Assigned',
         body=body,
         deep_link=_build_lead_deep_link(slug, 'leads', lead.id),
@@ -66,6 +69,7 @@ def enqueue_lead_reassigned(user, lead, correlation_id=None, idempotency_key=Non
     if existing:
         return existing
     slug = _tenant_slug_for_user(user)
+    correlation_id = ensure_correlation_id(correlation_id)
     ev = NotificationEvent(
         tenant_id=getattr(user, 'tenant_id', None),
         correlation_id=correlation_id,
@@ -73,6 +77,8 @@ def enqueue_lead_reassigned(user, lead, correlation_id=None, idempotency_key=Non
         user_id=user.id,
         event_type='lead_reassigned',
         lead_id=lead.id,
+        origin_type='LEAD',
+        origin_id=lead.id,
         title='Lead Reassigned',
         body='New lead available',
         deep_link=_build_lead_deep_link(slug, 'leads', lead.id),
@@ -94,6 +100,7 @@ def enqueue_visit_assignment(user, visit, correlation_id=None,
     location_name = getattr(getattr(visit, 'location', None), 'name', None) or ''
     purpose = getattr(visit, 'purpose', None) or 'Visit'
     body = f'{purpose} at {location_name}' if location_name else purpose
+    correlation_id = ensure_correlation_id(correlation_id)
     ev = NotificationEvent(
         tenant_id=getattr(user, 'tenant_id', None),
         correlation_id=correlation_id,
@@ -101,6 +108,8 @@ def enqueue_visit_assignment(user, visit, correlation_id=None,
         user_id=user.id,
         event_type='visit_assigned',
         lead_id=getattr(visit, 'lead_id', None),
+        origin_type='VISIT',
+        origin_id=visit.id,
         title='Visit Assigned',
         body=body,
         deep_link=f'/{slug}/reception' if slug else '/',
@@ -146,6 +155,7 @@ def enqueue_channel_partner_event(user, partner, kind, correlation_id=None,
             'visit_id': visit.id,
             'location_id': visit.location_id,
         })
+    correlation_id = ensure_correlation_id(correlation_id)
     event = NotificationEvent(
         tenant_id=getattr(user, 'tenant_id', None),
         correlation_id=correlation_id,
@@ -153,6 +163,8 @@ def enqueue_channel_partner_event(user, partner, kind, correlation_id=None,
         user_id=user.id,
         event_type=event_type,
         channel_partner_id=partner.id,
+        origin_type='CHANNEL_PARTNER',
+        origin_id=partner.id,
         lead_id=getattr(visit, 'lead_id', None) if visit else None,
         title=title,
         body=partner.name,
@@ -189,6 +201,9 @@ def enqueue_callback_event(user, callback, kind: str, scheduled_for: datetime = 
         body = f'{lead_name} · {cb_ist}'
     else:
         body = lead_name
+    correlation_id = ensure_correlation_id(
+        correlation_id or getattr(callback, 'correlation_id', None)
+    )
     ev = NotificationEvent(
         tenant_id=getattr(callback, 'tenant_id', None) or getattr(user, 'tenant_id', None),
         correlation_id=correlation_id,
@@ -197,6 +212,8 @@ def enqueue_callback_event(user, callback, kind: str, scheduled_for: datetime = 
         event_type=event_type,
         lead_id=getattr(callback, 'lead_id', None),
         callback_id=getattr(callback, 'id', None),
+        origin_type='CALLBACK',
+        origin_id=getattr(callback, 'id', None),
         title=title,
         body=body,
         deep_link=_build_lead_deep_link(slug, 'action-board', getattr(callback, 'lead_id', None)),

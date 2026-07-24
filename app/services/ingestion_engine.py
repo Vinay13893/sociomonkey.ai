@@ -493,6 +493,7 @@ def write_timeline(lead: Lead, source, log: IngestedLeadLog):
             'platform_lead_id': log.platform_lead_id,
         },
         description='. '.join(parts),
+        correlation_id=log.correlation_id,
     )
     db.session.add(entry)
 
