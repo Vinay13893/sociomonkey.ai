@@ -101,12 +101,12 @@ Phase 1.
 | V2-7 | Channel Partners | Add reusable CP relationship foundation | Individuals, organizations, contacts, assignments, projects and Visits | Complete |
 | V2-8 | Role-Specific Action Boards | Add one operational work model | Action Items, types, priorities, assignment, lifecycle and role workspaces | Complete |
 | V2-9 | Unified Pipeline Engine | Orchestrate Lead lifecycle using existing foundations | Configured stages, immutable transitions, rules, Actions, Visits and ownership history | Complete |
-| V2-10 | Reports and Analytics Foundation | Extend reporting across V2 entities | Pipeline, organization, location, Visit, CP and Action reporting | Planned |
+| V2-10 | Reports and Analytics Foundation | Extend reporting across V2 entities | Pipeline, organization, location, Visit, CP and Action reporting | Complete |
 | V2-11 | Notification Reliability Completion | Complete event-driven delivery operations | Queue health, retry, dead-letter, diagnostics, correlation and manual recovery | Planned |
 | V2-12 | Staging, Release and Production Readiness | Validate and release the complete V2 train | Migration rehearsal, staging E2E, OAuth/cron certification, rollout and monitoring | Planned |
 
-V2-9 implementation and recovery validation are complete. V2-10 is the next
-planned phase and must not begin until the V2-9 completion report is approved.
+V2-10 implementation and local validation are complete. V2-11 is the next
+planned phase and must not begin until the V2-10 completion report is approved.
 
 ## 2. Feature Inventory
 
@@ -298,7 +298,7 @@ planned phase and must not begin until the V2-9 completion report is approved.
 | Visit and CP attribution | Complete | Tenant-scoped relationships validated |
 | Stage ageing and stalled Leads | Complete | Operational calculations validated |
 | Conversion funnel and today's movement | Complete | Operational metrics validated |
-| Pipeline history analytics | Planned | V2-10 |
+| Pipeline history analytics | Complete | V2-10 bounded SQL movement and time-in-stage reporting |
 | Multiple independent pipelines | Future Version | Current engine is reusable, but one Lead lifecycle is sufficient now |
 
 ### 2.14 Notifications and Reminders
@@ -329,12 +329,12 @@ planned phase and must not begin until the V2-9 completion report is approved.
 | Existing Lead Source performance | Complete | Source/form semantics established |
 | Existing operational Dashboard | Complete | Bounded current LMS metrics |
 | Existing management health metrics | Complete | Allocation/callback/stale visibility |
-| Pipeline history and time-in-stage reporting | Planned | V2-10 |
-| Organization and role performance | Planned | V2-10 |
-| Location and Gallery reporting | Planned | V2-10 |
-| Visit and Meeting Room reporting | Planned | V2-10 |
-| Channel Partner performance | Planned | V2-10 |
-| Action Item productivity | Planned | V2-10 |
+| Pipeline history and time-in-stage reporting | Complete | V2-10 |
+| Organization and role performance | Complete | V2-10 |
+| Location and Gallery reporting | Complete | V2-10 |
+| Visit and Meeting Room reporting | Complete | V2-10 |
+| Channel Partner performance | Complete | V2-10 |
+| Action Item productivity | Complete | V2-10 |
 | Advanced forecasting and attribution analytics | Future Version | Not required for first tenant release |
 | BI warehouse or separate analytics infrastructure | Future Version | Software/database optimization comes first |
 
@@ -427,9 +427,8 @@ Reports and Analytics       Notifications/Reminders
 
 ### 3.3 Safest Remaining Order
 
-1. Build V2-10 reports from stable V2-2 through V2-9 relationships.
-2. Complete V2-11 event delivery and operational diagnostics.
-3. Execute V2-12 migration rehearsal, staging E2E, release certification and
+1. Complete V2-11 event delivery and operational diagnostics.
+2. Execute V2-12 migration rehearsal, staging E2E, release certification and
    production rollout.
 
 This order is mandatory. Reporting requires finalized Pipeline history, and
@@ -468,6 +467,11 @@ Implementation rules:
 - Keep exports separate.
 - Use immutable internal keys and configured display labels.
 - Do not invent historical Pipeline or Visit events.
+
+Completed on 24 July 2026 with 11 report families, capability-scoped APIs,
+bounded SQL aggregation, separate aggregate exports, frontend filters,
+visual summaries, tables and module drill-downs. No reporting table,
+transactional copy or database migration was introduced.
 
 ### V2-11 - Notification Reliability Completion
 
@@ -690,12 +694,11 @@ release blockers are listed separately in Section 7.
 
 ### 7.1 Completion Estimate
 
-Estimated first modernized tenant release completion: **82%**.
+Estimated first modernized tenant release completion: **90%**.
 
 This is a planning estimate, not a test metric. It reflects:
 
-- V2-0 through V2-9 complete.
-- V2-10 reporting not started.
+- V2-0 through V2-10 complete.
 - V2-11 final notification operations not started.
 - V2-12 staging and release execution not started.
 
@@ -705,19 +708,18 @@ functionality.
 
 ### 7.2 Mandatory Before Tenant Deployment
 
-1. Implement and approve V2-10.
-2. Implement and approve V2-11.
-3. Complete V2-12A migration/release rehearsal.
-4. Pass V2-12B staging E2E for all roles and workflows.
-5. Reauthorize and validate Meta sources/webhooks.
-6. Validate cron-job.org jobs and eliminate duplicate scheduler authority.
-7. Remove hard-coded bootstrap/manual-test credentials.
-8. Pass capacity, tenant isolation, physical PWA push and rollback checks.
-9. Execute V2-12C controlled production rollout.
+1. Implement and approve V2-11.
+2. Complete V2-12A migration/release rehearsal.
+3. Pass V2-12B staging E2E for all roles and workflows.
+4. Reauthorize and validate Meta sources/webhooks.
+5. Validate cron-job.org jobs and eliminate duplicate scheduler authority.
+6. Remove hard-coded bootstrap/manual-test credentials.
+7. Pass capacity, tenant isolation, physical PWA push and rollback checks.
+8. Execute V2-12C controlled production rollout.
 
 ### 7.3 Current Release Blockers
 
-- V2-10 and V2-11 are not implemented.
+- V2-11 is not implemented.
 - Canonical Vercel backend project-level `DATABASE_URL` is empty and must be
   restored and verified before deployment.
 - Active production Meta credentials previously failed Graph validation and
@@ -746,8 +748,7 @@ The architecture is sufficiently complete to continue implementation without
 another discovery phase. The approved remaining sequence is:
 
 ```text
-V2-10 Reports
-    -> V2-11 Notification Reliability
+V2-11 Notification Reliability
     -> V2-12A Release Rehearsal
     -> V2-12B Staging E2E
     -> V2-12C Production Rollout
