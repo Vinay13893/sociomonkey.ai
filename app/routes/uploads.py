@@ -733,24 +733,30 @@ def bulk_update_apply():
                     if new_uid:
                         lead.assigned_to = new_uid
                         db.session.add(LeadAssignmentHistory(
+                            tenant_id=lead.tenant_id,
                             lead_id=lead.id,
                             assigned_from=old_uid,
                             assigned_to=new_uid,
                             assigned_by=user.id,
                             reason='Bulk update',
+                            source='UPLOAD_BULK_UPDATE',
+                            correlation_id=request.headers.get('X-Correlation-ID'),
                         ))
+                elif field == 'status':
+                    continue
                 else:
                     setattr(lead, field, change['new'])
 
-            # Status history entry
+            # Pipeline transition entry
             new_status = field_updates.get('status', {}).get('new')
             if new_status and new_status != old_status:
-                db.session.add(StatusHistory(
-                    lead_id=lead.id,
-                    old_status=old_status,
-                    new_status=new_status,
-                    changed_by=user.id,
-                ))
+                from app.services.pipeline_engine import transition_lead
+                transition_lead(
+                    lead, new_status, actor=user,
+                    source='UPLOAD_BULK_UPDATE',
+                    reason='Bulk update',
+                    correlation_id=request.headers.get('X-Correlation-ID'),
+                )
 
             # Append note (immutable timeline)
             note_text = row.get('note_text')

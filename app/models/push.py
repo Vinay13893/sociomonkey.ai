@@ -85,6 +85,10 @@ class NotificationEvent(db.Model):
     action_item_id = db.Column(
         db.Integer, db.ForeignKey('action_items.id'), nullable=True, index=True
     )
+    pipeline_transition_id = db.Column(
+        db.Integer, db.ForeignKey('pipeline_transitions.id'),
+        nullable=True, index=True,
+    )
     callback_id = db.Column(db.Integer, db.ForeignKey('callback_reminders.id'), nullable=True)
     title = db.Column(db.String(200), nullable=True)
     body = db.Column(db.String(400), nullable=True)
@@ -113,6 +117,7 @@ class NotificationEvent(db.Model):
             'lead_id': self.lead_id,
             'channel_partner_id': self.channel_partner_id,
             'action_item_id': self.action_item_id,
+            'pipeline_transition_id': self.pipeline_transition_id,
             'callback_id': self.callback_id,
             'title': self.title,
             'body': self.body,

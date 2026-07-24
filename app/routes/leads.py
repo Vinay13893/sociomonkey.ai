@@ -147,11 +147,14 @@ def _process_reshuffle_job(job, user, team, strategy, reason, cooldown_days):
 
         old_assignee_id = lead.assigned_to
         db.session.add(LeadAssignmentHistory(
+            tenant_id=lead.tenant_id,
             lead_id=lead_id,
             assigned_from=old_assignee_id,
             assigned_to=new_assignee.id,
             assigned_by=user.id,
             reason=reason,
+            source='RESHUFFLE',
+            correlation_id=request.headers.get('X-Correlation-ID'),
         ))
         lead.assigned_to = new_assignee.id
         lead.assigned_by = user.id
@@ -618,13 +621,22 @@ def update_lead(lead_id):
 
     new_status = data.get('status')
     if new_status and new_status != old_status:
-        lead.status = new_status
-        db.session.add(StatusHistory(
-            lead_id=lead_id,
-            old_status=old_status,
-            new_status=new_status,
-            changed_by=user.id,
-        ))
+        from app.services.pipeline_engine import (
+            PipelineTransitionError, transition_lead,
+        )
+        try:
+            transition_lead(
+                lead, new_status, actor=user, source='LEAD_EDIT',
+                reason=data.get('status_reason'),
+                context=data.get('pipeline_context')
+                if isinstance(data.get('pipeline_context'), dict) else {},
+                correlation_id=request.headers.get('X-Correlation-ID'),
+            )
+        except PipelineTransitionError as exc:
+            db.session.rollback()
+            return jsonify({
+                'error': str(exc), 'code': exc.code, 'details': exc.details,
+            }), 409 if exc.code == 'RULES_NOT_SATISFIED' else 400
 
     changes = []
     if old_data.get('phone') != lead.phone:
@@ -713,15 +725,21 @@ def bulk_update_status():
         lead = Lead.query.get(lead_id)
         if not lead:
             continue
-        old_status = lead.status
-        lead.status = new_status
-        history = StatusHistory(
-            lead_id=lead_id,
-            old_status=old_status,
-            new_status=new_status,
-            changed_by=user.id,
+        from app.services.pipeline_engine import (
+            PipelineTransitionError, transition_lead,
         )
-        db.session.add(history)
+        try:
+            transition_lead(
+                lead, new_status, actor=user, source='LEAD_BULK_STATUS',
+                reason=data.get('reason'),
+                correlation_id=request.headers.get('X-Correlation-ID'),
+            )
+        except PipelineTransitionError as exc:
+            db.session.rollback()
+            return jsonify({
+                'error': str(exc), 'code': exc.code, 'details': exc.details,
+                'lead_id': lead_id,
+            }), 409 if exc.code == 'RULES_NOT_SATISFIED' else 400
         updated += 1
 
     db.session.commit()
@@ -813,10 +831,13 @@ def bulk_assign():
         else:
             if assigned_to is not None:
                 assignment = LeadAssignmentHistory(
+                    tenant_id=lead.tenant_id,
                     lead_id=lead_id,
                     assigned_from=lead.assigned_to,
                     assigned_to=assigned_to,
                     assigned_by=user.id,
+                    source='LEADS_BULK_ASSIGN',
+                    correlation_id=request.headers.get('X-Correlation-ID'),
                 )
                 db.session.add(assignment)
                 lead.assigned_by = user.id
@@ -912,11 +933,14 @@ def assign_lead(lead_id):
         return jsonify({'error': 'Can only assign to your own team'}), 403
 
     assignment = LeadAssignmentHistory(
+        tenant_id=lead.tenant_id,
         lead_id=lead_id,
         assigned_from=lead.assigned_to,
         assigned_to=assigned_to,
         assigned_by=user.id,
         reason=data.get('reason'),
+        source='LEADS_ASSIGN',
+        correlation_id=request.headers.get('X-Correlation-ID'),
     )
     old_name = User.query.get(lead.assigned_to).name if lead.assigned_to else 'Unassigned'
     lead.assigned_to = assigned_to
@@ -2226,11 +2250,14 @@ def ar_bulk_assign():
         old_assignee = lead.assigned_to
         lead.assigned_to = target.id
         db.session.add(LeadAssignmentHistory(
+            tenant_id=lead.tenant_id,
             lead_id=lead.id,
             assigned_from=old_assignee,
             assigned_to=target.id,
             assigned_by=user.id,
             reason=data.get('reason', 'Bulk assign/reassign'),
+            source='ALLOCATION_BULK_ASSIGN',
+            correlation_id=request.headers.get('X-Correlation-ID'),
         ))
         log_activity(user.id, 'assign_lead', 'leads', lead.id, 'Lead',
             description=f'Bulk assigned lead {lead.name} to {target.name}')
@@ -2328,11 +2355,14 @@ def ar_workload_move():
             continue
         lead.assigned_to = to_user.id
         db.session.add(LeadAssignmentHistory(
+            tenant_id=lead.tenant_id,
             lead_id=lead.id,
             assigned_from=from_user.id,
             assigned_to=to_user.id,
             assigned_by=user.id,
             reason='Workload rebalance',
+            source='WORKLOAD_REBALANCE',
+            correlation_id=request.headers.get('X-Correlation-ID'),
         ))
         log_activity(user.id, 'assign_lead', 'leads', lead.id, 'Lead',
             description=f'Workload move: {lead.name} from {from_user.name} to {to_user.name}')

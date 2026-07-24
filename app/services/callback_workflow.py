@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from app.models.base import db
-from app.models.lead import CallbackReminder, Lead, StatusHistory
+from app.models.lead import CallbackReminder, Lead
 from app.models.user import User
 from app.utils.activity import log_activity
 from app.utils.time_utils import parse_business_datetime_to_utc_naive
@@ -63,13 +63,14 @@ def create_callback_for_lead(lead: Lead, actor: User, raw_datetime, notes=None):
 
     old_status = lead.status
     if old_status in ('new', 'follow_up', 'no_answer', 'callback_scheduled') and old_status != 'callback_scheduled':
-        lead.status = 'callback_scheduled'
-        db.session.add(StatusHistory(
-            lead_id=lead.id,
-            old_status=old_status,
-            new_status='callback_scheduled',
-            changed_by=actor.id if actor else None,
-        ))
+        from app.services.pipeline_engine import transition_lead
+        transition_lead(
+            lead, 'callback_scheduled', actor=actor,
+            source='CALLBACK_SCHEDULED',
+            reason='Callback scheduled',
+            context={'follow_up_completed': True},
+            notify=False,
+        )
 
     return cb, None, None
 

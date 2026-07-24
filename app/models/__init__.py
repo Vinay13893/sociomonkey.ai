@@ -30,6 +30,7 @@ from .action_item import (
     ActionTypeConfiguration, ActionStatusConfiguration,
     ActionPriorityConfiguration, ActionItem,
 )
+from .pipeline import PipelineTransition
 from .ingestion import ConnectedGoogleAdsAccount
 from .organisation import (
     OrganisationUnit, OrganisationUnitMembership, BusinessRole, UserBusinessRole,
@@ -62,6 +63,7 @@ __all__ = [
     'ChannelPartnerAssignment', 'ChannelPartnerNote',
     'ActionTypeConfiguration', 'ActionStatusConfiguration',
     'ActionPriorityConfiguration', 'ActionItem',
+    'PipelineTransition',
     'ConnectedGoogleAdsAccount',
     'OrganisationUnit', 'OrganisationUnitMembership', 'BusinessRole',
     'UserBusinessRole', 'ReportingRelationship', 'PermissionDefinition',

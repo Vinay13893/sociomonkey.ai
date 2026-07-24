@@ -23,6 +23,10 @@ class Lead(db.Model):
     budget_min = db.Column(db.Float)
     budget_max = db.Column(db.Float)
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True)
+    channel_partner_id = db.Column(
+        db.Integer, db.ForeignKey('channel_partners.id'), nullable=True,
+        index=True,
+    )
     status = db.Column(db.String(80), default='new')
     assigned_to = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     assigned_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
@@ -36,6 +40,7 @@ class Lead(db.Model):
     is_test = db.Column(db.Boolean, default=False, nullable=False, server_default='0', index=True)
 
     project = db.relationship('Project', backref='leads', lazy='joined')
+    channel_partner = db.relationship('ChannelPartner')
     assigned_user = db.relationship('User', foreign_keys=[assigned_to], lazy='joined')
     assigned_by_user = db.relationship('User', foreign_keys=[assigned_by])
     sales_manager = db.relationship('User', foreign_keys=[sales_manager_id], lazy='joined')
@@ -78,6 +83,10 @@ class Lead(db.Model):
             'budget_max': self.budget_max,
             'project_id': self.project_id,
             'project_name': self.project.name if self.project else None,
+            'channel_partner_id': self.channel_partner_id,
+            'channel_partner_name': (
+                self.channel_partner.name if self.channel_partner else None
+            ),
             'status': self.status,
             'assigned_to': self.assigned_to,
             'assigned_to_name': self.assigned_user.name if self.assigned_user else None,
@@ -154,11 +163,15 @@ class LeadAssignmentHistory(db.Model):
     __tablename__ = 'lead_assignment_history'
 
     id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey('tenants.id'), index=True)
     lead_id = db.Column(db.Integer, db.ForeignKey('leads.id'), nullable=False)
     assigned_from = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     assigned_to = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     assigned_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     reason = db.Column(db.Text)
+    source = db.Column(db.String(80), nullable=False, default='LEADS')
+    correlation_id = db.Column(db.String(36), index=True)
+    is_manager_override = db.Column(db.Boolean, nullable=False, default=False)
     assigned_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     lead = db.relationship('Lead', backref='assignment_history')
@@ -169,6 +182,7 @@ class LeadAssignmentHistory(db.Model):
     def to_dict(self):
         return {
             'id': self.id,
+            'tenant_id': self.tenant_id,
             'lead_id': self.lead_id,
             'assigned_from': self.assigned_from,
             'assigned_from_name': (
@@ -185,6 +199,9 @@ class LeadAssignmentHistory(db.Model):
                 self.assigned_by_user.name if self.assigned_by_user else None
             ),
             'reason': self.reason,
+            'source': self.source,
+            'correlation_id': self.correlation_id,
+            'is_manager_override': self.is_manager_override,
             'assigned_at': self.assigned_at.isoformat(),
         }
 

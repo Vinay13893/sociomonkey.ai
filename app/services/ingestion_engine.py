@@ -453,6 +453,8 @@ def create_lead(
         new_status=lead.status,
         changed_by=None,
     ))
+    from app.services.pipeline_engine import record_initial_stage
+    record_initial_stage(lead, source='INGESTION')
 
     return lead
 

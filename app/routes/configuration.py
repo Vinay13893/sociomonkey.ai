@@ -65,10 +65,28 @@ def update_status(internal_key):
                 setattr(row, key, value)
         db.session.add(row)
     old = row.to_dict()
-    for field in ('display_name','display_order','colour','is_active','pipeline_group',
-                  'is_qualified','is_lost','is_terminal','visibility'):
+    for field in (
+        'display_name', 'display_order', 'colour', 'is_active',
+        'pipeline_group', 'is_qualified', 'is_lost', 'is_terminal',
+        'is_success', 'entry_rule_keys', 'exit_rule_keys',
+        'required_action_type_keys', 'default_actions', 'visibility',
+    ):
         if field in data:
             setattr(row, field, data[field])
+    for field in (
+        'entry_rule_keys', 'exit_rule_keys', 'required_action_type_keys',
+        'default_actions',
+    ):
+        if not isinstance(getattr(row, field), list):
+            return jsonify({'error': f'{field} must be an array'}), 400
+    unknown_rules = (
+        set(row.entry_rule_keys or []) | set(row.exit_rule_keys or [])
+    ) - RULE_KEYS
+    if unknown_rules:
+        return jsonify({
+            'error': 'Unknown business rule key',
+            'rule_keys': sorted(unknown_rules),
+        }), 400
     if row.visibility not in VISIBILITY:
         return jsonify({'error': 'Invalid visibility'}), 400
     row.updated_by = request.current_user.id

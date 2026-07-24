@@ -19,6 +19,11 @@ class LeadStatusConfiguration(db.Model):
     is_qualified = db.Column(db.Boolean, nullable=False, default=False)
     is_lost = db.Column(db.Boolean, nullable=False, default=False)
     is_terminal = db.Column(db.Boolean, nullable=False, default=False)
+    is_success = db.Column(db.Boolean, nullable=False, default=False)
+    entry_rule_keys = db.Column(db.JSON, nullable=False, default=list)
+    exit_rule_keys = db.Column(db.JSON, nullable=False, default=list)
+    required_action_type_keys = db.Column(db.JSON, nullable=False, default=list)
+    default_actions = db.Column(db.JSON, nullable=False, default=list)
     visibility = db.Column(db.String(20), nullable=False, default='VISIBLE')
     updated_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -32,7 +37,8 @@ class LeadStatusConfiguration(db.Model):
         return {key: getattr(self, key) for key in (
             'id', 'tenant_id', 'internal_key', 'display_name', 'display_order',
             'colour', 'is_active', 'pipeline_group', 'is_qualified', 'is_lost',
-            'is_terminal', 'visibility',
+            'is_terminal', 'is_success', 'entry_rule_keys', 'exit_rule_keys',
+            'required_action_type_keys', 'default_actions', 'visibility',
         )}
 
 
