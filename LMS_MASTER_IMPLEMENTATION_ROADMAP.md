@@ -102,11 +102,11 @@ Phase 1.
 | V2-8 | Role-Specific Action Boards | Add one operational work model | Action Items, types, priorities, assignment, lifecycle and role workspaces | Complete |
 | V2-9 | Unified Pipeline Engine | Orchestrate Lead lifecycle using existing foundations | Configured stages, immutable transitions, rules, Actions, Visits and ownership history | Complete |
 | V2-10 | Reports and Analytics Foundation | Extend reporting across V2 entities | Pipeline, organization, location, Visit, CP and Action reporting | Complete |
-| V2-11 | Notification Reliability Completion | Complete event-driven delivery operations | Queue health, retry, dead-letter, diagnostics, correlation and manual recovery | Planned |
+| V2-11 | Notification Reliability Completion | Complete event-driven delivery operations | Queue health, retry, dead-letter, diagnostics, correlation and manual recovery | Complete |
 | V2-12 | Staging, Release and Production Readiness | Validate and release the complete V2 train | Migration rehearsal, staging E2E, OAuth/cron certification, rollout and monitoring | Planned |
 
-V2-10 implementation and local validation are complete. V2-11 is the next
-planned phase and must not begin until the V2-10 completion report is approved.
+V2-11 implementation, local validation and recovery-branch validation are
+complete. V2-12 is the only remaining approved phase.
 
 ## 2. Feature Inventory
 
@@ -282,7 +282,7 @@ planned phase and must not begin until the V2-10 completion report is approved.
 | Role-specific workspaces | Complete | Caller, manager, RM, Reception and Admin |
 | Lead Queue compatibility view | Complete | Existing Action Board behavior preserved |
 | Idempotent entity-generated Actions | Complete | Used by V2-9 instead of duplicate tasks |
-| Scheduled due/overdue event generation | Partial | Event model ready; final worker behavior belongs to V2-11 |
+| Scheduled due/overdue Action event generation | Partial | Event model is ready; operational certification remains a V2-12 gate |
 | Separate Pipeline task table | Not Required | Pipeline reuses Action Items |
 
 ### 2.13 Pipeline
@@ -313,9 +313,11 @@ planned phase and must not begin until the V2-10 completion report is approved.
 | Assignment notifications | Complete | Existing flow retained |
 | Callback warning and due reminders | Complete | Callback workflow centralized |
 | Conditional queue claim and stale recovery | Complete | V2-1 |
-| Retry, skip, dead-letter and manual retry diagnostics | Complete | V2-1 foundation |
+| Retry, skip, dead-letter and manual replay diagnostics | Complete | Bounded backoff, immutable attempts and operator controls completed in V2-11 |
 | Current cron-job.org execution evidence | Partial | Owner/API validation remains mandatory |
-| Correlation across all V2 event producers | Partial | Complete for V2 modules; consolidate in V2-11 |
+| Correlation across all V2 event producers | Complete | Ingestion, Pipeline, Actions, Visits, CP, reports, callbacks and notifications |
+| Notification Operations workspace | Complete | Queue, failure, retry, subscription and reminder health |
+| Immutable delivery-attempt history | Complete | PostgreSQL trigger and application contract validated |
 | Managed event/delayed queue replacement | Future Version | Recommended after first release |
 | Parallel notification system | Not Required | All modules use NotificationEvent |
 
@@ -427,12 +429,12 @@ Reports and Analytics       Notifications/Reminders
 
 ### 3.3 Safest Remaining Order
 
-1. Complete V2-11 event delivery and operational diagnostics.
-2. Execute V2-12 migration rehearsal, staging E2E, release certification and
+1. Execute V2-12 migration rehearsal, staging E2E, release certification and
    production rollout.
 
-This order is mandatory. Reporting requires finalized Pipeline history, and
-release certification requires finalized notification behavior.
+V2-11 is complete. V2-12 must now validate the complete release candidate and
+its external production dependencies without adding another implementation
+phase.
 
 ## 4. Remaining Phases
 
@@ -473,7 +475,7 @@ bounded SQL aggregation, separate aggregate exports, frontend filters,
 visual summaries, tables and module drill-downs. No reporting table,
 transactional copy or database migration was introduced.
 
-### V2-11 - Notification Reliability Completion
+### V2-11 - Notification Reliability Completion (Complete)
 
 | Item | Definition |
 |---|---|
@@ -486,6 +488,13 @@ transactional copy or database migration was introduced.
 The current cron-job.org jobs may remain for the first release if they are
 proven healthy. A managed queue replacement is post-release architecture work,
 not a reason to redesign V2-11.
+
+Completed on 24 July 2026. The existing `NotificationEvent` queue now has
+bounded exponential retry, dead-letter state, stale-claim recovery, immutable
+attempt history, queue/reminder/subscription health, tenant-scoped manual
+replay and soft archive controls, and end-to-end correlation. The additive
+migration passed guarded check/apply/reapply/check and rollback-only validation
+on the approved Neon recovery branch.
 
 ### V2-12 - Staging, Release and Production Readiness
 
@@ -694,12 +703,11 @@ release blockers are listed separately in Section 7.
 
 ### 7.1 Completion Estimate
 
-Estimated first modernized tenant release completion: **90%**.
+Estimated first modernized tenant release completion: **95%**.
 
 This is a planning estimate, not a test metric. It reflects:
 
-- V2-0 through V2-10 complete.
-- V2-11 final notification operations not started.
+- V2-0 through V2-11 complete.
 - V2-12 staging and release execution not started.
 
 The underlying legacy LMS is already operational, so the percentage represents
@@ -708,18 +716,16 @@ functionality.
 
 ### 7.2 Mandatory Before Tenant Deployment
 
-1. Implement and approve V2-11.
-2. Complete V2-12A migration/release rehearsal.
-3. Pass V2-12B staging E2E for all roles and workflows.
-4. Reauthorize and validate Meta sources/webhooks.
-5. Validate cron-job.org jobs and eliminate duplicate scheduler authority.
-6. Remove hard-coded bootstrap/manual-test credentials.
-7. Pass capacity, tenant isolation, physical PWA push and rollback checks.
-8. Execute V2-12C controlled production rollout.
+1. Complete V2-12A migration/release rehearsal.
+2. Pass V2-12B staging E2E for all roles and workflows.
+3. Reauthorize and validate Meta sources/webhooks.
+4. Validate cron-job.org jobs and eliminate duplicate scheduler authority.
+5. Remove hard-coded bootstrap/manual-test credentials.
+6. Pass capacity, tenant isolation, physical PWA push and rollback checks.
+7. Execute V2-12C controlled production rollout.
 
 ### 7.3 Current Release Blockers
 
-- V2-11 is not implemented.
 - Canonical Vercel backend project-level `DATABASE_URL` is empty and must be
   restored and verified before deployment.
 - Active production Meta credentials previously failed Graph validation and
@@ -748,8 +754,7 @@ The architecture is sufficiently complete to continue implementation without
 another discovery phase. The approved remaining sequence is:
 
 ```text
-V2-11 Notification Reliability
-    -> V2-12A Release Rehearsal
+V2-12A Release Rehearsal
     -> V2-12B Staging E2E
     -> V2-12C Production Rollout
 ```
