@@ -113,9 +113,14 @@ def create_tenant():
     db.session.add(tenant)
     db.session.flush()  # get tenant.id before creating admin user
 
-    # Auto-create default super-admin for the tenant if credentials provided
-    admin_password = data.get('admin_password', 'Admin@123')
+    # Auto-create the tenant administrator only with explicit credentials.
+    admin_password = data.get('admin_password', '')
     if admin_email:
+        if len(admin_password) < 8:
+            db.session.rollback()
+            return jsonify({
+                'error': 'Admin password must be at least 8 characters'
+            }), 400
         if User.query.filter_by(email=admin_email).first():
             db.session.rollback()
             return jsonify({'error': f'Email {admin_email} is already in use'}), 400

@@ -33,8 +33,15 @@ def create_user():
 
     email = data.get('email', '').strip()
     name = data.get('name', '').strip()
-    if not email or not name:
-        return jsonify({'error': 'Email and name are required'}), 400
+    password = data.get('password', '')
+    if not email or not name or not password:
+        return jsonify({
+            'error': 'Email, name and password are required'
+        }), 400
+    if len(password) < 8:
+        return jsonify({
+            'error': 'Password must be at least 8 characters'
+        }), 400
 
     if User.query.filter_by(email=email).first():
         return jsonify({'error': 'Email already in use'}), 400
@@ -47,7 +54,7 @@ def create_user():
         name=name,
         email=email,
         phone=data.get('phone'),
-        password_hash=hash_password(data.get('password', 'TeamMember@123')),
+        password_hash=hash_password(password),
         role=role,
         tenant_id=user.tenant_id,
         manager_id=user.id if user.role == 'sales_manager' else None,

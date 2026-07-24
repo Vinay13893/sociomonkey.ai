@@ -103,7 +103,7 @@ Phase 1.
 | V2-9 | Unified Pipeline Engine | Orchestrate Lead lifecycle using existing foundations | Configured stages, immutable transitions, rules, Actions, Visits and ownership history | Complete |
 | V2-10 | Reports and Analytics Foundation | Extend reporting across V2 entities | Pipeline, organization, location, Visit, CP and Action reporting | Complete |
 | V2-11 | Notification Reliability Completion | Complete event-driven delivery operations | Queue health, retry, dead-letter, diagnostics, correlation and manual recovery | Complete |
-| V2-12 | Staging, Release and Production Readiness | Validate and release the complete V2 train | Migration rehearsal, staging E2E, OAuth/cron certification, rollout and monitoring | Planned |
+| V2-12 | Staging, Release and Production Readiness | Validate and release the complete V2 train | Migration rehearsal, staging E2E, OAuth/cron certification, rollout and monitoring | Certification complete; external gates pending |
 
 V2-11 implementation, local validation and recovery-branch validation are
 complete. V2-12 is the only remaining approved phase.
@@ -703,12 +703,13 @@ release blockers are listed separately in Section 7.
 
 ### 7.1 Completion Estimate
 
-Estimated first modernized tenant release completion: **95%**.
+Estimated first modernized tenant release completion: **97%**.
 
 This is a planning estimate, not a test metric. It reflects:
 
 - V2-0 through V2-11 complete.
-- V2-12 staging and release execution not started.
+- V2-12 local certification and recovery migration rehearsal are complete.
+- Staging deployment, authenticated tenant QA and production rollout remain.
 
 The underlying legacy LMS is already operational, so the percentage represents
 the approved modernization and release train, not the existence of basic LMS
@@ -726,16 +727,16 @@ functionality.
 
 ### 7.3 Current Release Blockers
 
-- Canonical Vercel backend project-level `DATABASE_URL` is empty and must be
-  restored and verified before deployment.
-- Active production Meta credentials previously failed Graph validation and
-  require reauthorization.
+- The staging/preview database host cannot be decrypted with current read-only
+  Vercel access; isolation from production must be confirmed before staging.
+- Live Meta OAuth, webhook delivery and form delivery must be certified against
+  the staged V2 release candidate.
 - Current cron-job.org configuration and consecutive successful executions
   require owner/API evidence.
-- The complete V2 migration chain has not been rehearsed in staging.
-- Authenticated, cross-role V2 browser QA has not run.
-- Physical PWA push has not been certified against the final V2 release.
-- Hard-coded bootstrap/manual-test credentials remain in the repository.
+- Authenticated, cross-role V2 browser QA has not run because no browser session
+  was available during certification.
+- Physical Android and iOS PWA push has not been certified against the staged
+  V2 release candidate.
 
 ### 7.4 Can Wait Until a Future Version
 

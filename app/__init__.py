@@ -1,6 +1,7 @@
 import time
 import uuid
 import os
+import secrets
 
 from flask import Flask, g, has_request_context, jsonify, request
 from flask_cors import CORS
@@ -19,11 +20,12 @@ DEMO_LOGO_URL = 'Assets/top-banner-logo.png'
 DEMO_FAVICON_URL = 'Assets/top-banner-logo.png'
 DEMO_ADMIN_EMAIL = 'demo.admin@sociomonkey.com'
 DEMO_ADMIN_NAME = 'Sociomonkey Admin'
-DEMO_ADMIN_PASSWORD = 'SocioMonkey#2024'
 
 DEFAULT_APP_CORS_ORIGINS = (
     'https://lms.sociomonkey.com',
     'https://sociomonkey-ai.vercel.app',
+)
+DEFAULT_LOCAL_CORS_ORIGINS = (
     'http://127.0.0.1:8000',
     'http://localhost:8000',
     'http://127.0.0.1:5173',
@@ -112,15 +114,18 @@ def _perf_tenant_scope() -> str:
         return 'unknown'
 
 
-def _resolve_cors_origins(configured):
+def _resolve_cors_origins(configured, config_name='development'):
+    defaults = list(DEFAULT_APP_CORS_ORIGINS)
+    if (config_name or '').lower() != 'production':
+        defaults.extend(DEFAULT_LOCAL_CORS_ORIGINS)
     if configured == '*':
         # Credentialed requests cannot use wildcard origins.
-        return list(DEFAULT_APP_CORS_ORIGINS)
+        return defaults
     if isinstance(configured, str):
         origins = [configured] if configured.strip() else []
     else:
         origins = [origin for origin in (configured or []) if origin]
-    for origin in DEFAULT_APP_CORS_ORIGINS:
+    for origin in defaults:
         if origin not in origins:
             origins.append(origin)
     return origins or '*'
@@ -131,6 +136,22 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _bootstrap_password(app: Flask, env_name: str) -> str:
+    value = (os.getenv(env_name) or '').strip()
+    if value:
+        if len(value) < 12:
+            raise RuntimeError(f'{env_name} must be at least 12 characters.')
+        return value
+    runtime_env = (
+        app.config.get('ENV')
+        or get_config_name()
+        or ''
+    ).lower()
+    if runtime_env == 'production':
+        raise RuntimeError(f'{env_name} is required for production bootstrap.')
+    return secrets.token_urlsafe(32)
 
 
 def _should_run_startup_db_maintenance(config_name: str) -> bool:
@@ -275,12 +296,27 @@ def create_app(config_name: str = None) -> Flask:
         config_name = get_config_name('development')
     cfg = config_map.get(config_name, config_map['development'])
     app.config.from_object(cfg)
+    if config_name == 'production' and app.config.get('SECRET_KEY') in {
+        'change-me-in-production',
+        'REPLACE-WITH-SECURE-SECRET',
+        '',
+        None,
+    }:
+        raise RuntimeError(
+            'SECRET_KEY is required and must be non-default in production.'
+        )
 
     # ------------------------------------------------------------------ Extensions
     db.init_app(app)
     CORS(
         app,
-        resources={r'/api/*': {'origins': _resolve_cors_origins(app.config.get('CORS_ORIGINS', '*'))}},
+        resources={
+            r'/api/*': {
+                'origins': _resolve_cors_origins(
+                    app.config.get('CORS_ORIGINS', '*'), config_name
+                )
+            }
+        },
         supports_credentials=True,
     )
     enable_api_perf = _should_enable_api_perf(config_name)
@@ -818,7 +854,9 @@ def _ensure_platform_owner(app: 'Flask'):
         _ensure_user(
             name=PRIMARY_ADMIN_NAME,
             email=PRIMARY_ADMIN_NEW_EMAIL,
-            password='SocioMonkey#2024',
+            password=_bootstrap_password(
+                app, 'PLATFORM_OWNER_BOOTSTRAP_PASSWORD'
+            ),
             role='platform_owner',
             tenant_id=None,
         )
@@ -1022,7 +1060,9 @@ def _ensure_demo_lms_tenant(app: 'Flask'):
             demo_admin = User(
                 name=DEMO_ADMIN_NAME,
                 email=DEMO_ADMIN_EMAIL,
-                password_hash=hash_password(DEMO_ADMIN_PASSWORD),
+                password_hash=hash_password(
+                    _bootstrap_password(app, 'DEMO_ADMIN_BOOTSTRAP_PASSWORD')
+                ),
                 role='superadmin',
                 tenant_id=demo.id,
                 is_active=True,
@@ -1154,6 +1194,18 @@ def _seed(app: Flask):
     from app.models.tenant import Tenant
 
     with app.app_context():
+        admin_password = _bootstrap_password(
+            app, 'SEED_GANGA_ADMIN_PASSWORD'
+        )
+        manager_password = _bootstrap_password(
+            app, 'SEED_GANGA_MANAGER_PASSWORD'
+        )
+        team_password = _bootstrap_password(
+            app, 'SEED_GANGA_TEAM_PASSWORD'
+        )
+        platform_owner_password = _bootstrap_password(
+            app, 'PLATFORM_OWNER_BOOTSTRAP_PASSWORD'
+        )
         # Get Ganga Realty tenant (should already exist from migration)
         ganga = Tenant.query.filter_by(slug='ganga').first()
         ganga_id = ganga.id if ganga else None
@@ -1174,7 +1226,7 @@ def _seed(app: Flask):
             name='Ganga Realty Admin',
             email='admin@gangarealty.com',
             phone='+91 99999 99999',
-            password='Admin@123',
+            password=admin_password,
             role='superadmin',
             tenant_id=ganga_id,
         )
@@ -1184,7 +1236,7 @@ def _seed(app: Flask):
             name='Raj Kumar (Manager)',
             email='manager1@gangarealty.com',
             phone='+91 98765 43210',
-            password='Manager@123',
+            password=manager_password,
             role='sales_manager',
             tenant_id=ganga_id,
         )
@@ -1192,7 +1244,7 @@ def _seed(app: Flask):
             name='Priya Sharma (Manager)',
             email='manager2@gangarealty.com',
             phone='+91 98888 77777',
-            password='Manager@123',
+            password=manager_password,
             role='sales_manager',
             tenant_id=ganga_id,
         )
@@ -1211,7 +1263,7 @@ def _seed(app: Flask):
         ]:
             _ensure_user(
                 name=member[0], email=member[1], phone=member[2],
-                password='TeamMember@123', role='team_member',
+                password=team_password, role='team_member',
                 manager_id=manager1.id if manager1 else None,
                 tenant_id=ganga_id,
             )
@@ -1224,7 +1276,7 @@ def _seed(app: Flask):
         ]:
             _ensure_user(
                 name=member[0], email=member[1], phone=member[2],
-                password='TeamMember@123', role='team_member',
+                password=team_password, role='team_member',
                 manager_id=manager2.id if manager2 else None,
                 tenant_id=ganga_id,
             )
@@ -1308,7 +1360,7 @@ def _seed(app: Flask):
         _ensure_user(
             name=PRIMARY_ADMIN_NAME,
             email=PRIMARY_ADMIN_NEW_EMAIL,
-            password='SocioMonkey#2024',
+            password=platform_owner_password,
             role='platform_owner',
             tenant_id=None,
         )

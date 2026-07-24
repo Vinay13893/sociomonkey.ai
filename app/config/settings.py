@@ -106,13 +106,6 @@ class ProductionConfig(BaseConfig):
         _engine_opts['connect_args'] = {'connect_timeout': 10}
     SQLALCHEMY_ENGINE_OPTIONS = _engine_opts
 
-    # Guardrails for safer production defaults without hard-failing startup
-    if SECRET_KEY in ('change-me-in-production', 'REPLACE-WITH-SECURE-SECRET'):
-        print('[WARN] Using insecure SECRET_KEY default in production. Set SECRET_KEY env var.')
-
-    if os.getenv('CORS_ORIGINS', '*') == '*':
-        print('[WARN] CORS_ORIGINS is wildcard (*) in production. Restrict to app origin(s).')
-
 
 class TestingConfig(BaseConfig):
     TESTING = True

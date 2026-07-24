@@ -156,12 +156,14 @@ def create_user():
     
     email = data.get('email')
     name = data.get('name')
-    password = data.get('password', 'TeamMember@123')
+    password = data.get('password', '')
     role = data.get('role', 'team_member')
     phone = data.get('phone')
     
-    if not email or not name:
-        return jsonify({'error': 'Email and name required'}), 400
+    if not email or not name or not password:
+        return jsonify({'error': 'Email, name and password required'}), 400
+    if len(password) < 8:
+        return jsonify({'error': 'Password must be at least 8 characters'}), 400
     
     if User.query.filter_by(email=email).first():
         return jsonify({'error': 'Email already exists'}), 400
