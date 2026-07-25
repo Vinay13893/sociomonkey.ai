@@ -5,7 +5,8 @@ Public-facing inbound endpoints.  No user auth – verified by HMAC / platform
 tokens instead.
 
 Routes:
-  GET  /api/ingestion/meta/verify/<token>     – Meta webhook verification challenge
+  GET  /api/ingestion/meta/verify/<token>     – Meta webhook verification challenge (legacy path, kept for compatibility)
+  GET  /api/ingestion/meta/<token>            – Meta webhook verification challenge (Meta calls this on the registered callback URL itself)
   POST /api/ingestion/meta/<token>            – Meta lead-ads webhook delivery
   POST /api/ingestion/google/<token>          – Google lead form push
   POST /api/ingestion/webhook/<token>         – Generic / custom webhook
@@ -583,13 +584,17 @@ def meta_verify(token):
     return jsonify({'error': 'Verification failed'}), 403
 
 
-@ingestion_bp.route('/meta/<token>', methods=['POST'])
+@ingestion_bp.route('/meta/<token>', methods=['GET', 'POST'])
 def meta_webhook(token):
     """
-    Receive Meta Lead Ads webhook delivery.
-    Meta signs payloads with X-Hub-Signature-256 header.
+    Receive Meta Lead Ads webhook delivery, or answer Meta's GET
+    verification challenge sent to this same registered callback URL.
+    Meta signs POST payloads with X-Hub-Signature-256 header.
     One HTTP request may carry multiple lead entries.
     """
+    if request.method == 'GET':
+        return meta_verify(token)
+
     source = LeadSource.query.filter_by(
         source_type='meta',
         webhook_token=token,
