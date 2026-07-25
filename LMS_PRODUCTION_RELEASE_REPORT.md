@@ -268,23 +268,101 @@ an unrecoverable ingestion regression. The current Meta credential failure is
 external credential state; rolling back application code would not restore the
 invalid tokens.
 
+## Post-Report Update — 25 July 2026, ~15:30 IST
+
+A takeover session continued this release after the report above was
+written. Two concrete findings materially change the picture, though the
+overall status remains unchanged.
+
+### Webhook delivery bug found and fixed
+
+`/api/ingestion/meta/<token>` — the registered Callback URL for Meta webhook
+delivery — only accepted `POST`. Meta's Webhooks product always sends its
+`GET` verification challenge to the same Callback URL used for delivery, not
+a separate path, so every attempt to register the app-level webhook
+subscription failed with `HTTP 405` before Meta could validate it. Direct
+inspection of the Meta App Dashboard confirmed the app had **no webhook
+subscription configured at all**, consistent with `ingested_lead_logs`
+showing zero deliveries of any kind (success or failure) since 22 July.
+
+Fixed by accepting `GET` on the same route and delegating to the existing,
+already-correct verification handler. No changes to POST delivery logic, no
+schema changes.
+
+- Fix commit: `417889d1286dedd637b51ec97ad8e162ef50b86c` (on top of the
+  `f3e4592` release commit)
+- Deployed to: `dpl_DJ9HgwTCGDtuyRJ4xE21z6V8n5A6`, backend project
+- Tests: 139 passed / 2 failed (pre-existing unrelated harness misdetection,
+  same category as the already-excluded `test_login.py`/`test_app.py`); 8/8
+  ingestion-specific tests passed
+- Verified end-to-end: app-level webhook subscription saved successfully,
+  `leadgen` field subscribed, one real test lead sent via Meta's own Lead Ads
+  Testing Tool was received, signature-validated, correctly routed to source
+  12 by `page_id`, and logged in `ingested_lead_logs` (id 4442) with a
+  correct correlation ID and idempotency key
+
+This is very likely the actual reason webhook delivery had been silent since
+22 July — a defect independent of the OAuth token problem below, now
+resolved.
+
+### cron-job.org drift found and corrected
+
+Direct console inspection (not backend-log inference) found `LMS - Meta Lead
+Poll` and `LMS - Meta Report Sync` **actively running every 5 minutes**,
+directly contradicting this report's earlier certification that both were
+inactive. Both jobs call the Meta Graph API using the same Page tokens as
+everything else, every 5 minutes — a plausible contributor to repeated OAuth
+session invalidation. The owner disabled both jobs during this session.
+Notification Drain and Reminder Processor were directly confirmed healthy on
+their correct 2-minute/5-minute cadences.
+
+### OAuth/Page tokens — still invalid, root cause narrowed but unresolved
+
+Two clean, full reconnect passes were completed this session (all four
+sources, one Facebook login each pass). Both times, every token worked for a
+moment — successfully re-registering the Page's webhook subscription — then
+died again within minutes with the identical `code 190 / subcode 460`
+("session invalidated because the user changed their password or Facebook
+has changed the session for security reasons"). The real test lead sent
+after the webhook fix reached ingestion successfully but failed with `Lead
+payload missing name or contact method`, because Meta's webhook payload only
+carries IDs and fetching full lead detail needs this still-dead token.
+
+Investigated and ruled out: account compromise (owner confirmed only their
+own devices show active Facebook sessions, password-change timestamp matches
+their own action), Chrome/Google Password Manager auto-change, Meta App
+Dashboard restrictions (Required Actions clear, no blocking alerts, app
+Published/live), and cross-IP flagging from diagnostic tooling (confirmed via
+the LMS's own single-origin "Test" button showing the identical error).
+Leading theory: a Meta-side post-password-change security cooldown affecting
+third-party app tokens specifically. Immediate retries have not helped and
+may reset any cooldown timer running — **recommendation is to wait several
+hours, ideally a full day, before the next reconnection attempt**, rather
+than continuing to retry.
+
 ## Required Closure Sequence
 
-1. Complete one Meta authorization that refreshes all four existing Pages.
-2. Confirm all four source records retain their IDs and mappings.
-3. Verify Page access, forms access and `subscribed_apps` for every source.
-4. Run Refresh Forms and source Test for every source.
-5. Submit one controlled Meta test Lead.
-6. Replay the same delivery and prove exactly-once ingestion.
-7. Confirm assignment, Pipeline entry, Action Item, notification and report
+1. ~~Fix and prove the webhook delivery mechanism.~~ **Done, 25 July.**
+2. ~~Correct cron-job.org scheduler drift.~~ **Done, 25 July.**
+3. Wait a meaningful period, then complete one Meta authorization that
+   refreshes all four existing Pages.
+4. Confirm all four source records retain their IDs and mappings.
+5. Verify Page access, forms access and `subscribed_apps` for every source.
+6. Run Refresh Forms and source Test for every source.
+7. Submit one controlled Meta test Lead and confirm it captures real
+   name/phone data (not just a bare event).
+8. Replay the same delivery and prove exactly-once ingestion.
+9. Confirm assignment, Pipeline entry, Action Item, notification and report
    update.
-8. Complete role and device UAT.
-9. Re-run this production sign-off and change status only on evidence.
+10. Complete role and device UAT.
+11. Re-run this production sign-off and change status only on evidence.
 
 ## Final Status
 
 **Production Blocked**
 
-The software release candidate is deployed and operational, but the tenant
+The software release candidate is deployed and operational. The webhook
+delivery mechanism is now fixed and proven end-to-end. The tenant still
 cannot be declared production-ready while its primary Meta lead-ingestion
-credentials are invalid.
+credentials are invalid — a narrower, externally-caused blocker than before,
+but a blocker until resolved.
