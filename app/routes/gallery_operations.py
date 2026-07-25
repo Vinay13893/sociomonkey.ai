@@ -24,7 +24,8 @@ from app.services.notification_events import enqueue_visit_assignment
 from app.services.reminder_scheduler import push_notification
 from app.services.channel_partner_events import notify_channel_partner_visit
 from app.services.visit_builder import (
-    create_lead_row, default_visit_assigned_user, find_duplicate_lead_by_phone,
+    LEAD_OWNER_SLOTS, assign_lead_slot, create_lead_row,
+    default_visit_assigned_user, find_duplicate_lead_by_phone,
     sync_lead_owner_if_unset,
 )
 from app.services.pipeline_engine import transition_lead
@@ -430,7 +431,17 @@ def create_walk_in():
         if assigned and not assigned.is_active:
             raise ValueError('Assigned user is inactive')
         if lead and assigned:
-            sync_lead_owner_if_unset(lead, assigned)
+            # An explicit "assigning as" choice from Reception always wins -
+            # legacy-role inference can't tell a Caller from an RM, or a
+            # Calling Manager from a Sales Manager, so it's only a fallback
+            # for tenants that haven't set this picker up in their UI yet.
+            role_slot = str(data.get('lead_role_slot') or '').strip().lower()
+            if role_slot:
+                if role_slot not in LEAD_OWNER_SLOTS:
+                    raise ValueError('Invalid lead_role_slot')
+                assign_lead_slot(lead, assigned.id, role_slot)
+            else:
+                sync_lead_owner_if_unset(lead, assigned)
         room = _reference(
             MeetingRoom, data.get('meeting_room_id'), 'Meeting room', active_only=True
         )
@@ -634,16 +645,21 @@ def assign_visit(visit_id):
     if not row:
         return jsonify({'error': 'Visit not found'}), 404
     try:
-        user = _reference(
-            User, (request.get_json() or {}).get('assigned_user_id'), 'Assigned user'
-        )
+        data = request.get_json() or {}
+        user = _reference(User, data.get('assigned_user_id'), 'Assigned user')
         if not user or not user.is_active:
             raise ValueError('An active assigned user is required')
         old = row.to_dict()
         row.assigned_user_id = user.id
         row.updated_by = request.current_user.id
         if row.lead_id:
-            sync_lead_owner_if_unset(row.lead, user)
+            role_slot = str(data.get('lead_role_slot') or '').strip().lower()
+            if role_slot:
+                if role_slot not in LEAD_OWNER_SLOTS:
+                    raise ValueError('Invalid lead_role_slot')
+                assign_lead_slot(row.lead, user.id, role_slot)
+            else:
+                sync_lead_owner_if_unset(row.lead, user)
         correlation_id = _correlation_id()
         _audit('gallery_visit_assigned', row, old, correlation_id)
         _notify_assignment(row, user, correlation_id)

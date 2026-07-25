@@ -20,8 +20,8 @@ from app.services.pipeline_engine import (
     PipelineTransitionError, stage_definitions, transition_lead,
 )
 from app.services.visit_builder import (
-    active_planned_visit_for_lead, default_visit_assigned_user,
-    validate_visit_payload,
+    LEAD_OWNER_SLOTS, active_planned_visit_for_lead,
+    default_visit_assigned_user, validate_visit_payload,
 )
 from app.utils.leads import get_user_visible_leads
 from app.utils.time_utils import business_date_bounds_utc_naive
@@ -392,14 +392,6 @@ def pipeline_history(lead_id):
     return jsonify({'history': [row.to_dict() for row in rows]})
 
 
-SLOT_FIELDS = {
-    'rm': 'assigned_to',
-    'sales_manager': 'sales_manager_id',
-    'calling_manager': 'calling_manager_id',
-    'caller': 'caller_id',
-}
-
-
 @pipeline_bp.post('/leads/<int:lead_id>/assign')
 @require_capability('pipeline.assign', 'TEAM')
 def assign_pipeline_owner(lead_id):
@@ -411,9 +403,9 @@ def assign_pipeline_owner(lead_id):
     # slot defaults to 'rm' (today's assigned_to) so every existing caller
     # of this endpoint is unaffected - the other 3 slots are additive.
     slot = str(data.get('slot') or 'rm').strip().lower()
-    if slot not in SLOT_FIELDS:
+    if slot not in LEAD_OWNER_SLOTS:
         return jsonify({'error': 'Invalid slot'}), 400
-    field = SLOT_FIELDS[slot]
+    field = LEAD_OWNER_SLOTS[slot]
     target = User.query.filter_by(
         id=data.get('assigned_to'), tenant_id=_tenant_id(), is_active=True
     ).first()

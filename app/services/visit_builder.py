@@ -206,6 +206,34 @@ def sync_lead_owner_if_unset(lead, user):
             lead.assigned_to = user.id
 
 
+# The 4 lead co-ownership slots (app.models.lead.Lead), keyed by the string
+# a caller passes explicitly - shared by POST /pipeline/leads/<id>/assign
+# and Reception's walk-in/assignment "assigning as" picker, so both stay in
+# sync with exactly one definition of what a "slot" is.
+LEAD_OWNER_SLOTS = {
+    'rm': 'assigned_to',
+    'sales_manager': 'sales_manager_id',
+    'calling_manager': 'calling_manager_id',
+    'caller': 'caller_id',
+}
+
+
+def assign_lead_slot(lead, user_id, slot):
+    """Explicitly set one of the Lead's 4 co-ownership slots. Unlike
+    sync_lead_owner_if_unset, this is never inferred from the assignee's
+    legacy role (a Caller and an RM can both be legacy team_member, and a
+    Calling Manager and Sales Manager can both be legacy sales_manager - the
+    role field alone can't disambiguate 4 slots) and it always overwrites,
+    since the caller (Reception staff picking an explicit "assigning as"
+    role) made a deliberate choice, not a passive default-if-empty nudge.
+    No-ops silently on an unknown slot/missing lead/user so a malformed or
+    absent slot never blocks the surrounding walk-in/assignment action."""
+    field = LEAD_OWNER_SLOTS.get(slot)
+    if not field or not lead or not user_id:
+        return
+    setattr(lead, field, user_id)
+
+
 def active_planned_visit_for_lead(tenant_id, lead_id):
     """The Lead's current not-yet-arrived planned Visit, if any. SCHEDULED is
     the only status that precedes CHECKED_IN/NO_SHOW in the Reception state
