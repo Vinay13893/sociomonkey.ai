@@ -22,6 +22,9 @@ from app.models.visit import (
 from app.services.notification_events import enqueue_visit_assignment
 from app.services.reminder_scheduler import push_notification
 from app.services.channel_partner_events import notify_channel_partner_visit
+from app.services.visit_builder import (
+    create_lead_row, default_visit_assigned_user, find_duplicate_lead_by_phone,
+)
 from app.utils.time_utils import business_date_bounds_utc_naive, now_ist
 
 
@@ -325,8 +328,44 @@ def create_walk_in():
             VisitStatusConfiguration, 'CHECKED_IN', 'Checked-in visit status'
         )
         lead = _reference(Lead, data.get('lead_id'), 'Lead')
+        new_lead_data = data.get('new_lead') if not lead else None
+        new_lead_created = False
+        if new_lead_data:
+            new_lead_name = str(new_lead_data.get('name') or '').strip()
+            new_lead_phone = str(new_lead_data.get('phone') or '').strip()
+            new_lead_email = str(new_lead_data.get('email') or '').strip()
+            if not new_lead_name:
+                raise ValueError('New lead name is required')
+            if not new_lead_phone and not new_lead_email:
+                raise ValueError('At least one contact method is required for a new lead')
+            force = bool(new_lead_data.get('force')) and request.current_user.role == 'superadmin'
+            duplicate = find_duplicate_lead_by_phone(_tenant_id(), new_lead_phone, force=force)
+            if duplicate:
+                return jsonify({
+                    'error': 'duplicate_phone',
+                    'message': 'A lead with this phone number already exists.',
+                    'existing_lead': {
+                        'id': duplicate.id, 'name': duplicate.name,
+                        'phone': duplicate.phone, 'status': duplicate.status,
+                    },
+                }), 409
+            lead = create_lead_row(
+                _tenant_id(), request.current_user, new_lead_name,
+                phone=new_lead_phone or None,
+                alternate_phone=str(new_lead_data.get('alternate_phone') or '').strip() or None,
+                email=new_lead_email or None,
+                source=new_lead_data.get('source'),
+                project_id=data.get('project_id'),
+            )
+            db.session.add(lead)
+            db.session.flush()
+            new_lead_created = True
         project = _reference(Project, data.get('project_id'), 'Project')
-        assigned = _reference(User, data.get('assigned_user_id'), 'Assigned user')
+        assigned_user_id_value = (
+            default_visit_assigned_user(lead, data.get('assigned_user_id'))
+            if lead else data.get('assigned_user_id')
+        )
+        assigned = _reference(User, assigned_user_id_value, 'Assigned user')
         if assigned and not assigned.is_active:
             raise ValueError('Assigned user is inactive')
         room = _reference(
@@ -385,17 +424,28 @@ def create_walk_in():
             stored_type = {
                 'INTERNAL_VISITOR': 'OTHER', 'VENDOR': 'ORGANISATION',
             }.get(category, category or 'OTHER')
+            participant_metadata = {'reception_category': category or 'OTHER'}
+            if category == 'CHANNEL_PARTNER' and not participant_partner:
+                participant_metadata['unregistered'] = True
             row.participants.append(VisitParticipant(
                 tenant_id=_tenant_id(), participant_type=stored_type,
                 reference_id=(
                     participant_partner.id if participant_partner else None
                 ),
                 display_name=display_name, is_primary=True,
-                participant_metadata={'reception_category': category or 'OTHER'},
+                participant_metadata=participant_metadata,
             ))
         db.session.add(row)
         db.session.flush()
         correlation_id = _correlation_id()
+        if new_lead_created:
+            db.session.add(ActivityLog(
+                tenant_id=_tenant_id(), user_id=request.current_user.id,
+                action='lead_created_from_walk_in', module='gallery_operations',
+                resource_type='Lead', resource_id=lead.id,
+                old_value=None, new_value=lead.to_dict(),
+                correlation_id=correlation_id, ip_address=request.remote_addr,
+            ))
         _audit('gallery_walk_in_created', row, None, correlation_id)
         if assigned:
             _notify_assignment(row, assigned, correlation_id)
@@ -404,9 +454,10 @@ def create_walk_in():
                 row, 'visit_arrival', correlation_id
             )
         db.session.commit()
-        return jsonify({
-            'visit': row.to_dict(), 'correlation_id': correlation_id,
-        }), 201
+        response = {'visit': row.to_dict(), 'correlation_id': correlation_id}
+        if new_lead_created:
+            response['lead'] = lead.to_dict()
+        return jsonify(response), 201
     except (TypeError, ValueError) as exc:
         db.session.rollback()
         return jsonify({'error': str(exc)}), 400
