@@ -12,15 +12,18 @@ from app.models.activity import ActivityLog
 from app.models.base import db
 from app.models.channel_partner import ChannelPartner
 from app.models.lead import Lead
-from app.models.location import Location, MeetingRoom
-from app.models.project import Project
-from app.models.user import User
 from app.models.visit import (
     Visit, VisitAttachment, VisitParticipant, VisitStatusConfiguration,
     VisitTag, VisitTypeConfiguration,
 )
-from app.utils.time_utils import parse_business_datetime_to_utc_naive
 from app.services.channel_partner_events import notify_channel_partner_visit
+from app.services.visit_builder import (
+    parse_datetime as _shared_parse_datetime,
+    validate_reference as _shared_validate_reference,
+    validate_user as _shared_validate_user,
+    validate_configuration as _shared_validate_configuration,
+    validate_visit_payload as _shared_validate_visit_payload,
+)
 
 
 visits_bp = Blueprint('visits', __name__, url_prefix='/api/visits')
@@ -53,120 +56,39 @@ def _audit(action, resource_id, old_value, new_value, correlation_id,
     ))
 
 
-def _parse_datetime(value, field):
-    if value in (None, ''):
-        return None
-    try:
-        return parse_business_datetime_to_utc_naive(value)
-    except ValueError as exc:
-        raise ValueError(f'{field} must be an ISO-8601 datetime') from exc
-
-
 def _visit(visit_id):
     return Visit.query.filter_by(id=visit_id, tenant_id=_tenant_id()).first()
 
 
+# The functions below are thin tenant-scoped wrappers around
+# app.services.visit_builder, kept under their original names so every
+# existing call site in this file is unchanged. The actual validation logic
+# lives in visit_builder so app.routes.pipeline and
+# app.routes.gallery_operations can reuse it without importing this routes
+# module.
+
+def _parse_datetime(value, field):
+    return _shared_parse_datetime(value, field)
+
+
 def _validate_reference(model, value, label, required=False, active_only=False):
-    if value in (None, ''):
-        if required:
-            raise ValueError(f'{label} is required')
-        return None
-    query = model.query.filter_by(id=int(value), tenant_id=_tenant_id())
-    if active_only and hasattr(model, 'is_active'):
-        query = query.filter_by(is_active=True)
-    row = query.first()
-    if not row:
-        raise ValueError(f'{label} was not found in this tenant')
-    return row
+    return _shared_validate_reference(
+        _tenant_id(), model, value, label, required=required, active_only=active_only,
+    )
 
 
 def _validate_user(value, label):
-    return _validate_reference(User, value, label)
+    return _shared_validate_user(_tenant_id(), value, label)
 
 
 def _validate_configuration(model, internal_key, label, allow_inactive_key=None):
-    key = str(internal_key or '').strip().upper()
-    row = model.query.filter_by(
-        tenant_id=_tenant_id(), internal_key=key
-    ).first()
-    if not row or (not row.is_active and key != allow_inactive_key):
-        raise ValueError(f'{label} is not active for this tenant')
-    return key
+    return _shared_validate_configuration(
+        _tenant_id(), model, internal_key, label, allow_inactive_key=allow_inactive_key,
+    )
 
 
 def _validate_visit_payload(data, current=None):
-    location = _validate_reference(
-        Location, data.get('location_id', current.location_id if current else None),
-        'Location', required=True, active_only=current is None,
-    )
-    room_value = data.get('meeting_room_id', current.meeting_room_id if current else None)
-    room = _validate_reference(MeetingRoom, room_value, 'Meeting room')
-    if room and room.location_id != location.id:
-        raise ValueError('Meeting room must belong to the visit location')
-
-    project_value = data.get('project_id', current.project_id if current else None)
-    lead_value = data.get('lead_id', current.lead_id if current else None)
-    assigned_value = data.get('assigned_user_id', current.assigned_user_id if current else None)
-    reception_value = data.get(
-        'reception_assigned_user_id',
-        current.reception_assigned_user_id if current else None,
-    )
-    escort_value = data.get('escort_user_id', current.escort_user_id if current else None)
-    project = _validate_reference(Project, project_value, 'Project')
-    lead = _validate_reference(Lead, lead_value, 'Lead')
-    assigned = _validate_user(assigned_value, 'Assigned user')
-    reception = _validate_user(reception_value, 'Reception user')
-    escort = _validate_user(escort_value, 'Escort user')
-
-    visit_type_key = _validate_configuration(
-        VisitTypeConfiguration,
-        data.get('visit_type_key', current.visit_type_key if current else None),
-        'Visit type',
-        current.visit_type_key if current else None,
-    )
-    status_key = _validate_configuration(
-        VisitStatusConfiguration,
-        data.get('status_key', current.status_key if current else 'SCHEDULED'),
-        'Visit status',
-        current.status_key if current else None,
-    )
-    priority = str(data.get('priority', current.priority if current else 'NORMAL')).upper()
-    if priority not in PRIORITIES:
-        raise ValueError('Invalid visit priority')
-    visitor_count = int(data.get(
-        'visitor_count', current.visitor_count if current else 1
-    ))
-    if visitor_count < 1:
-        raise ValueError('Visitor count must be positive')
-
-    expected = _parse_datetime(
-        data.get('expected_arrival', current.expected_arrival if current else None),
-        'Expected arrival',
-    )
-    check_in = _parse_datetime(
-        data.get('actual_check_in', current.actual_check_in if current else None),
-        'Actual check-in',
-    )
-    check_out = _parse_datetime(
-        data.get('actual_check_out', current.actual_check_out if current else None),
-        'Actual check-out',
-    )
-    if check_in and check_out and check_out < check_in:
-        raise ValueError('Actual check-out cannot be before actual check-in')
-
-    return {
-        'location_id': location.id,
-        'meeting_room_id': room.id if room else None,
-        'project_id': project.id if project else None,
-        'lead_id': lead.id if lead else None,
-        'assigned_user_id': assigned.id if assigned else None,
-        'reception_assigned_user_id': reception.id if reception else None,
-        'escort_user_id': escort.id if escort else None,
-        'visit_type_key': visit_type_key, 'status_key': status_key,
-        'priority': priority, 'visitor_count': visitor_count,
-        'expected_arrival': expected, 'actual_check_in': check_in,
-        'actual_check_out': check_out,
-    }
+    return _shared_validate_visit_payload(_tenant_id(), data, current=current)
 
 
 def _sync_participants(row, values):

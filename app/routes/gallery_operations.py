@@ -196,7 +196,7 @@ def references():
         tenant_id=_tenant_id(), is_active=True
     ).order_by(User.name).limit(500).all()
     projects = Project.query.filter_by(
-        tenant_id=_tenant_id()
+        tenant_id=_tenant_id(), is_active=True
     ).order_by(Project.name).limit(500).all()
     channel_partners = ChannelPartner.query.filter_by(
         tenant_id=_tenant_id(), is_active=True
@@ -341,7 +341,7 @@ def create_walk_in():
         display_name = str(participant.get('display_name') or '').strip() or None
         participant_reference_id = participant.get('reference_id')
         participant_partner = None
-        if category == 'CHANNEL_PARTNER':
+        if category == 'CHANNEL_PARTNER' and participant_reference_id:
             participant_partner = _reference(
                 ChannelPartner, participant_reference_id,
                 'Channel Partner', active_only=True,
@@ -349,6 +349,9 @@ def create_walk_in():
             if not participant_partner:
                 raise ValueError('Channel Partner is required')
             display_name = participant_partner.name
+        # Unregistered Channel Partner: no reference_id given, fall through to
+        # the same free-text display_name path OTHER/VENDOR already use;
+        # 'A lead or visitor name is required' below enforces display_name.
         if not lead and not display_name:
             raise ValueError('A lead or visitor name is required')
         priority = str(data.get('priority') or 'NORMAL').upper()

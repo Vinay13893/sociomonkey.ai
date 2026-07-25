@@ -5,6 +5,10 @@ ROOT = Path(__file__).resolve().parent
 MODELS = (ROOT / 'app/models/visit.py').read_text(encoding='utf-8')
 ROUTES = (ROOT / 'app/routes/visits.py').read_text(encoding='utf-8')
 MIGRATION = (ROOT / 'migrations/phase5_visits_20260723.py').read_text(encoding='utf-8')
+# Visit-payload validation (reference/tenant checks, room/location
+# cross-check) lives in visit_builder so pipeline/gallery-operations routes
+# can reuse it; visits.py calls it via thin wrappers.
+BUILDER = (ROOT / 'app/services/visit_builder.py').read_text(encoding='utf-8')
 
 
 def test_one_generic_visit_aggregate_supports_required_relationships():
@@ -65,9 +69,11 @@ def test_visit_details_cover_timing_reception_and_metadata_foundations():
 
 def test_every_reference_is_tenant_validated_and_room_matches_location():
     assert "tenant_id=_tenant_id()" in ROUTES
-    assert "room.location_id != location.id" in ROUTES
-    for model in ('Project', 'Lead', 'User'):
-        assert model in ROUTES
+    assert "room.location_id != location.id" in BUILDER
+    assert "tenant_id=tenant_id" in BUILDER
+    for model in ('Project', 'User'):
+        assert model in BUILDER
+    assert 'Lead' in ROUTES
     assert "Participant lead" in ROUTES
     assert "Participant user" in ROUTES
 
