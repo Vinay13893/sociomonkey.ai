@@ -19,6 +19,10 @@ from app.services.permissions import capability_decision
 from app.services.pipeline_engine import (
     PipelineTransitionError, stage_definitions, transition_lead,
 )
+from app.services.visit_builder import (
+    active_planned_visit_for_lead, default_visit_assigned_user,
+    validate_visit_payload,
+)
 from app.utils.leads import get_user_visible_leads
 from app.utils.time_utils import business_date_bounds_utc_naive
 
@@ -280,10 +284,49 @@ def move_pipeline_lead(lead_id):
         id=channel_partner_id, tenant_id=_tenant_id(), is_active=True
     ).first():
         return jsonify({'error': 'Channel Partner not found in tenant'}), 400
+
+    to_status = str(data.get('to_status') or '').strip()
+    visit_payload = data.get('visit_payload')
+    callback_payload = data.get('callback_payload')
+
+    # Guided "Site Visit Planned" flow: build the Visit here from
+    # visit_payload rather than requiring the caller to create it via
+    # /api/visits first and pass visit_id. Only engages when the caller
+    # supplies visit_payload; a plain to_status move (e.g. bulk/manager
+    # paths, or visit_id already supplied above) is unaffected.
+    if visit is None and to_status == 'site_visit_planned' and isinstance(visit_payload, dict):
+        if not data.get('force_new_visit'):
+            existing_planned = active_planned_visit_for_lead(_tenant_id(), lead.id)
+            if existing_planned:
+                return jsonify({
+                    'error': 'active_planned_visit_exists',
+                    'visit': existing_planned.to_dict(),
+                }), 409
+        try:
+            visit_data = dict(visit_payload)
+            visit_data['lead_id'] = lead.id
+            visit_data['status_key'] = 'SCHEDULED'
+            validated = validate_visit_payload(_tenant_id(), visit_data)
+            validated['assigned_user_id'] = default_visit_assigned_user(
+                lead, visit_data.get('assigned_user_id')
+            )
+            visit = Visit(
+                tenant_id=_tenant_id(), created_by=user.id, updated_by=user.id,
+                purpose=str(visit_data.get('purpose') or 'Site visit')[:250],
+                notes=visit_data.get('notes'),
+                source=str(visit_data.get('source') or 'PIPELINE_SITE_VISIT_PLANNED')[:120],
+                **validated,
+            )
+            db.session.add(visit)
+            db.session.flush()
+        except (TypeError, ValueError) as exc:
+            db.session.rollback()
+            return jsonify({'error': str(exc)}), 400
+
     try:
         transition, actions = transition_lead(
             lead,
-            str(data.get('to_status') or '').strip(),
+            to_status,
             actor=user,
             source=data.get('source') or 'PIPELINE',
             reason=data.get('reason'),
@@ -294,21 +337,45 @@ def move_pipeline_lead(lead_id):
             correlation_id=_cid(),
         )
         if not transition:
+            # Still commit so a Visit built above (if any) is persisted even
+            # when the transition itself turned out to be a no-op.
+            db.session.commit()
             return jsonify({
                 'lead': lead.to_dict(),
+                'visit': visit.to_dict() if visit else None,
                 'message': 'No status change required',
             }), 200
+        if isinstance(callback_payload, dict) and callback_payload.get('callback_datetime'):
+            from app.services.callback_workflow import create_callback_for_lead
+            create_callback_for_lead(
+                lead, user, callback_payload['callback_datetime'],
+                notes=callback_payload.get('notes'), correlation_id=_cid(),
+            )
         db.session.commit()
     except PipelineTransitionError as exc:
         db.session.rollback()
         return jsonify({
             'error': str(exc), 'code': exc.code, 'details': exc.details,
         }), 409 if exc.code == 'RULES_NOT_SATISFIED' else 400
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({'error': str(exc)}), 400
     return jsonify({
         'lead': lead.to_dict(),
         'transition': transition.to_dict(),
         'generated_action_items': [row.to_dict() for row in actions],
+        'visit': visit.to_dict() if visit else None,
     }), 200
+
+
+@pipeline_bp.get('/leads/<int:lead_id>/planned-visit')
+@require_capability('pipeline.move', 'OWN')
+def get_planned_visit(lead_id):
+    lead = _visible_query().filter(Lead.id == lead_id).first()
+    if not lead:
+        return jsonify({'error': 'Lead not found'}), 404
+    visit = active_planned_visit_for_lead(_tenant_id(), lead.id)
+    return jsonify({'visit': visit.to_dict() if visit else None})
 
 
 @pipeline_bp.get('/leads/<int:lead_id>/history')
