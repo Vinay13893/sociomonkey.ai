@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from app.models.lead import Lead
 from app import db
 from flask import request as flask_request
@@ -113,6 +115,34 @@ def apply_valid_lead_capture_scope(query, tenant_id):
     ))
 
 
+def _reporting_team_ids(user):
+    """Union of user.id, everyone reporting to user via a real
+    ReportingRelationship (set up through the Roles & Teams admin UI), and
+    everyone reporting via the legacy manager_id hierarchy
+    (user.team_members). Mirrors app.routes.action_items's
+    _active_reporting_user_ids so that setting up real reporting lines
+    immediately extends Lead visibility, without requiring every tenant to
+    migrate off the legacy hierarchy first."""
+    from app.models.organisation import ReportingRelationship
+
+    now = datetime.utcnow()
+    rows = ReportingRelationship.query.with_entities(
+        ReportingRelationship.user_id
+    ).filter(
+        ReportingRelationship.tenant_id == user.tenant_id,
+        ReportingRelationship.manager_id == user.id,
+        ReportingRelationship.is_active == True,  # noqa: E712
+        ReportingRelationship.effective_from <= now,
+        db.or_(
+            ReportingRelationship.effective_to.is_(None),
+            ReportingRelationship.effective_to > now,
+        ),
+    ).all()
+    ids = {user.id, *(row[0] for row in rows)}
+    ids.update(tm.id for tm in user.team_members)
+    return ids
+
+
 def get_user_visible_leads(user):
     """Return a SQLAlchemy query filtered to leads visible to *user*, scoped by tenant.
 
@@ -139,7 +169,10 @@ def get_user_visible_leads(user):
         return apply_valid_lead_capture_scope(apply_test_lead_filter(query), tid)
 
     if user.role == 'sales_manager':
-        team_ids = [tm.id for tm in user.team_members]
+        # Real ReportingRelationship rows (Roles & Teams admin UI) extend
+        # this beyond the legacy manager_id hierarchy the moment a tenant
+        # sets them up - see _reporting_team_ids.
+        team_ids = _reporting_team_ids(user)
         query = Lead.query.filter(
             Lead.is_active == True,
             Lead.tenant_id == tid,

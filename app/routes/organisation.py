@@ -470,6 +470,26 @@ def upsert_user_permission_override(user_id):
     return jsonify({'override': row.to_dict()}), 200
 
 
+@organisation_bp.route('/my-roles', methods=['GET'])
+@require_auth
+def my_roles():
+    """The current user's own active business role keys - deliberately
+    @require_auth only (not gated behind organisation.view), since every
+    authenticated user needs to know their own roles to render their own
+    sidebar/module visibility, and not every role (Caller, Relationship
+    Manager) is granted organisation.view."""
+    user = request.current_user
+    rows = UserBusinessRole.query.filter_by(
+        user_id=user.id, is_active=True
+    ).all()
+    keys = [row.business_role.key for row in rows if row.business_role]
+    primary = next(
+        (row.business_role.key for row in rows if row.is_primary and row.business_role),
+        None,
+    )
+    return jsonify({'legacy_role': user.role, 'roles': keys, 'primary_role': primary}), 200
+
+
 @organisation_bp.route('/permissions/check', methods=['GET'])
 @require_auth
 def check_permission():

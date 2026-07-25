@@ -190,3 +190,33 @@ def test_visible_leads_reachable_via_any_coowner_slot():
         db.session.commit()
         visible_ids = [row.id for row in get_user_visible_leads(caller).all()]
         assert lead.id in visible_ids
+
+
+def test_reporting_relationship_extends_manager_visibility_beyond_legacy_hierarchy():
+    from app import create_app
+    from app.models.base import db
+    from app.models.lead import Lead
+    from app.models.organisation import ReportingRelationship
+    from app.utils.leads import get_user_visible_leads
+
+    app = create_app('testing')
+    with app.app_context():
+        tenant, manager, caller, calling_manager, rm, headers = _bootstrap(app)
+        # `rm` has no legacy manager_id pointing at `manager` - only a real
+        # ReportingRelationship row (set up via the Roles & Teams admin UI)
+        # says rm reports to manager. Visibility must follow that, not just
+        # the legacy User.manager_id hierarchy.
+        assert rm.manager_id != manager.id
+        db.session.add(ReportingRelationship(
+            tenant_id=tenant.id, user_id=rm.id, manager_id=manager.id,
+            relationship_type='LINE_MANAGER',
+        ))
+        lead = Lead(
+            tenant_id=tenant.id, name='Reports-To Lead', phone='9001110005',
+            status='new', created_by=manager.id, is_active=True,
+            assigned_to=rm.id,
+        )
+        db.session.add(lead)
+        db.session.commit()
+        visible_ids = [row.id for row in get_user_visible_leads(manager).all()]
+        assert lead.id in visible_ids
