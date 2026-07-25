@@ -392,6 +392,14 @@ def pipeline_history(lead_id):
     return jsonify({'history': [row.to_dict() for row in rows]})
 
 
+SLOT_FIELDS = {
+    'rm': 'assigned_to',
+    'sales_manager': 'sales_manager_id',
+    'calling_manager': 'calling_manager_id',
+    'caller': 'caller_id',
+}
+
+
 @pipeline_bp.post('/leads/<int:lead_id>/assign')
 @require_capability('pipeline.assign', 'TEAM')
 def assign_pipeline_owner(lead_id):
@@ -400,6 +408,12 @@ def assign_pipeline_owner(lead_id):
     lead = _visible_query().filter(Lead.id == lead_id).first()
     if not lead:
         return jsonify({'error': 'Lead not found'}), 404
+    # slot defaults to 'rm' (today's assigned_to) so every existing caller
+    # of this endpoint is unaffected - the other 3 slots are additive.
+    slot = str(data.get('slot') or 'rm').strip().lower()
+    if slot not in SLOT_FIELDS:
+        return jsonify({'error': 'Invalid slot'}), 400
+    field = SLOT_FIELDS[slot]
     target = User.query.filter_by(
         id=data.get('assigned_to'), tenant_id=_tenant_id(), is_active=True
     ).first()
@@ -411,9 +425,10 @@ def assign_pipeline_owner(lead_id):
     )['allowed']:
         return jsonify({'error': 'Manager override permission required'}), 403
     cid = _cid()
-    old_owner = lead.assigned_to
-    lead.assigned_to = target.id
-    lead.assigned_by = user.id
+    old_owner = getattr(lead, field)
+    setattr(lead, field, target.id)
+    if slot == 'rm':
+        lead.assigned_by = user.id
     history = LeadAssignmentHistory(
         tenant_id=_tenant_id(),
         lead_id=lead.id,
@@ -424,6 +439,7 @@ def assign_pipeline_owner(lead_id):
         source='PIPELINE',
         correlation_id=cid,
         is_manager_override=override,
+        role_slot=slot,
     )
     db.session.add(history)
     db.session.add(ActivityLog(
@@ -433,9 +449,9 @@ def assign_pipeline_owner(lead_id):
         module='pipeline',
         resource_id=lead.id,
         resource_type='Lead',
-        old_value={'assigned_to': old_owner},
+        old_value={field: old_owner},
         new_value={
-            'assigned_to': target.id, 'manager_override': override,
+            field: target.id, 'slot': slot, 'manager_override': override,
         },
         description='Pipeline Lead owner changed',
         correlation_id=cid,

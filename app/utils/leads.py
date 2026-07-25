@@ -147,6 +147,12 @@ def get_user_visible_leads(user):
                 Lead.sales_manager_id == user.id,
                 Lead.assigned_to == user.id,
                 Lead.assigned_to.in_(team_ids),
+                # A user can be a co-owner in the pre-sales slots even while
+                # their legacy role is sales_manager (a Calling Manager is
+                # commonly a legacy sales_manager today, until Phase A's
+                # role admin lets tenants migrate off the legacy field).
+                Lead.calling_manager_id == user.id,
+                Lead.caller_id == user.id,
             )
         )
         return apply_valid_lead_capture_scope(apply_test_lead_filter(query), tid)
@@ -155,7 +161,11 @@ def get_user_visible_leads(user):
         query = Lead.query.filter(
             Lead.is_active == True,
             Lead.tenant_id == tid,
-            Lead.assigned_to == user.id,
+            db.or_(
+                Lead.assigned_to == user.id,
+                Lead.calling_manager_id == user.id,
+                Lead.caller_id == user.id,
+            ),
         )
         return apply_valid_lead_capture_scope(apply_test_lead_filter(query), tid)
 

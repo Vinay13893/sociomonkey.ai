@@ -31,6 +31,13 @@ class Lead(db.Model):
     assigned_to = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     assigned_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     sales_manager_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    # Pre-sales team co-owners. Concurrent with assigned_to/sales_manager_id
+    # (the sales-side slots) by design: when a lead hands off from calling to
+    # sales, the Caller/Calling Manager who worked it stays visibly attached
+    # rather than being overwritten - see sync_lead_owner_if_unset /
+    # assign_lead_slot in app.services.visit_builder for the write side.
+    calling_manager_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    caller_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(
@@ -44,6 +51,8 @@ class Lead(db.Model):
     assigned_user = db.relationship('User', foreign_keys=[assigned_to], lazy='joined')
     assigned_by_user = db.relationship('User', foreign_keys=[assigned_by])
     sales_manager = db.relationship('User', foreign_keys=[sales_manager_id], lazy='joined')
+    calling_manager = db.relationship('User', foreign_keys=[calling_manager_id], lazy='joined')
+    caller = db.relationship('User', foreign_keys=[caller_id], lazy='joined')
     creator = db.relationship('User', foreign_keys=[created_by])
 
     def to_dict(self):
@@ -92,6 +101,10 @@ class Lead(db.Model):
             'assigned_to_name': self.assigned_user.name if self.assigned_user else None,
             'sales_manager_id': self.sales_manager_id,
             'sales_manager_name': self.sales_manager.name if self.sales_manager else None,
+            'calling_manager_id': self.calling_manager_id,
+            'calling_manager_name': self.calling_manager.name if self.calling_manager else None,
+            'caller_id': self.caller_id,
+            'caller_name': self.caller.name if self.caller else None,
             'manager_name': (
                 self.assigned_user.manager.name
                 if self.assigned_user and self.assigned_user.manager
@@ -172,6 +185,9 @@ class LeadAssignmentHistory(db.Model):
     source = db.Column(db.String(80), nullable=False, default='LEADS')
     correlation_id = db.Column(db.String(36), index=True)
     is_manager_override = db.Column(db.Boolean, nullable=False, default=False)
+    # Which of the 4 co-owner slots this entry changed - null for history
+    # rows written before co-ownership existed (they were all assigned_to).
+    role_slot = db.Column(db.String(20), nullable=True)
     assigned_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     lead = db.relationship('Lead', backref='assignment_history')
@@ -202,6 +218,7 @@ class LeadAssignmentHistory(db.Model):
             'source': self.source,
             'correlation_id': self.correlation_id,
             'is_manager_override': self.is_manager_override,
+            'role_slot': self.role_slot,
             'assigned_at': self.assigned_at.isoformat(),
         }
 
