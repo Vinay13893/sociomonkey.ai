@@ -357,6 +357,18 @@ than continuing to retry.
 10. Complete role and device UAT.
 11. Re-run this production sign-off and change status only on evidence.
 
+## Post-Report Update — 25 July 2026, later same session: Reception stabilization
+
+A separate, owner-requested Reception/Site Visit workflow stabilization
+pass was completed and locally committed (backend `641bd00`, frontend
+`1c5d36d`), independent of the Meta blocker above. Full details in
+`LMS_RECEPTION_WORKFLOW_STABILIZATION.md` and
+`LMS_RECEPTION_STABILIZATION_RESULTS.md`. Summary: 146 backend tests passed
+(139 pre-existing + 7 new), all frontend contract suites passed (12
+pre-existing + 3 new), zero schema changes, zero duplicate routes, secret
+scan clean. Not yet deployed. This work does not change the Meta blocker
+status below and is independently deployable.
+
 ## Final Status
 
 **Production Blocked**
@@ -366,3 +378,7 @@ delivery mechanism is now fixed and proven end-to-end. The tenant still
 cannot be declared production-ready while its primary Meta lead-ingestion
 credentials are invalid — a narrower, externally-caused blocker than before,
 but a blocker until resolved.
+
+The Reception/Site Visit stabilization pass above is complete, tested, and
+committed, but not yet deployed — it can ship independently of the Meta
+blocker whenever the owner approves.

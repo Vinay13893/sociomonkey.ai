@@ -633,6 +633,22 @@ These are gates inside V2-12, not parallel phases.
 - [ ] Review at 1 hour, 24 hours, 7 days and 14 days.
 - [ ] Roll back application aliases on any defined failure trigger.
 
+## 5.1 Reception and Site Visit Workflow Stabilization (25 July 2026)
+
+A production stabilization pass, not a new phase — see
+`LMS_RECEPTION_WORKFLOW_STABILIZATION.md` and
+`LMS_RECEPTION_STABILIZATION_RESULTS.md`. Closed five confirmed UX/workflow
+gaps in Reception (Site Visit Planned not creating an actual Visit, no
+Lead lookup/dup-check in the walk-in modal, no unregistered Channel Partner
+path, inactive Projects appearing in the walk-in form, and an inconsistent
+date picker), after a read-only audit found several other screenshot-
+suggested gaps were already correctly implemented. Owner explicitly
+deferred building an auto-allocation engine (none exists in the codebase);
+Visit assignment now defaults to the Lead's current owner at creation time
+only, not continuous syncing. No schema changes. Backend `641bd00`,
+frontend `1c5d36d`, both local-only pending the same push-target decision
+as the rest of this release train.
+
 ## 6. Technical Debt
 
 Technical debt is not automatically a release blocker. Items promoted to
