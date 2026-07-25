@@ -315,3 +315,28 @@ class UserPermissionOverride(db.Model):
             'effective_to': self.effective_to.isoformat() if self.effective_to else None,
             'is_active': self.is_active,
         }
+
+
+class RoleAssignmentRotation(db.Model):
+    """Round-robin cursor for org-scoped auto-assignment (Phase 13d) - one
+    row per (tenant, business role key, organisation unit) pool, mirroring
+    the existing per-form/per-source rr_last_index columns
+    (LeadSourceFormMapping, LeadSource) but generalized since a role+unit
+    pool isn't owned by any single source/form."""
+    __tablename__ = 'role_assignment_rotations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey('tenants.id'), nullable=False, index=True)
+    business_role_key = db.Column(db.String(80), nullable=False)
+    organisation_unit_id = db.Column(
+        db.Integer, db.ForeignKey('organisation_units.id'), nullable=False,
+    )
+    last_index = db.Column(db.Integer, nullable=False, default=0)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'tenant_id', 'business_role_key', 'organisation_unit_id',
+            name='uq_role_assignment_rotation_scope',
+        ),
+    )

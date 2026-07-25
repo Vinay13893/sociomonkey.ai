@@ -402,6 +402,46 @@ def resolve_assignee(source, mapped: dict, form_mapping: LeadSourceFormMapping |
 # STAGE 4 – LEAD CREATOR / UPDATER
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _org_scoped_assignment_enabled(tenant_id):
+    """Dark-launch gate (Phase 13d): off for every tenant unless a
+    FeatureFlag row is explicitly created with is_enabled=True for that
+    tenant. Keeps the new Calling Manager auto-assign tier entirely inert
+    (one indexed lookup, no behaviour change) until a tenant is
+    deliberately opted in."""
+    from app.models.product import FeatureFlag
+
+    flag = FeatureFlag.query.filter_by(
+        tenant_id=tenant_id, flag_key='org_scoped_calling_manager_assignment',
+    ).first()
+    return bool(flag and flag.is_enabled)
+
+
+def _resolve_calling_manager_id(tenant_id, project_id):
+    """Best-effort, additive Calling Manager auto-assign - independent of
+    (and never touching) the existing assignee/sales_manager_id/assigned_to
+    resolution above. Returns None (leaves the slot empty) on any missing
+    config or unexpected error; must never block inbound lead creation."""
+    if not project_id or not _org_scoped_assignment_enabled(tenant_id):
+        return None
+    try:
+        from app.models.project import Project
+        from app.services.org_scope import resolve_org_scoped_assignee
+
+        proj = Project.query.filter_by(id=project_id, tenant_id=tenant_id).first()
+        if not proj:
+            return None
+        chosen = resolve_org_scoped_assignee(
+            tenant_id, 'CALLING_MANAGER', proj.organisation_unit_id,
+        )
+        return chosen.id if chosen else None
+    except Exception:
+        logger.exception(
+            'org-scoped Calling Manager assignment failed for tenant %s project %s',
+            tenant_id, project_id,
+        )
+        return None
+
+
 def create_lead(
     mapped: dict,
     source,
@@ -419,6 +459,9 @@ def create_lead(
         else:
             assigned_to = assignee.id
 
+    project_id = mapped.get('project_id')
+    calling_manager_id = _resolve_calling_manager_id(source.tenant_id, project_id)
+
     lead = Lead(
         tenant_id=source.tenant_id,
         name=mapped.get('name') or 'Unknown',
@@ -433,12 +476,13 @@ def create_lead(
         utm_content=mapped.get('utm_content'),
         utm_term=mapped.get('utm_term'),
         landing_page_url=mapped.get('landing_page_url'),
-        project_id=mapped.get('project_id'),
+        project_id=project_id,
         budget_min=mapped.get('budget_min'),
         budget_max=mapped.get('budget_max'),
         status=mapped.get('status', 'new'),
         assigned_to=assigned_to,
         sales_manager_id=sales_manager_id,
+        calling_manager_id=calling_manager_id,
         created_by=None,   # system-created
         is_test=is_test,
         created_at=platform_created_at or datetime.utcnow(),

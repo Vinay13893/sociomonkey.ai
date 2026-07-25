@@ -63,6 +63,7 @@ def create_project():
         project_type=data.get('project_type'),
         budget_min=data.get('budget_min'),
         budget_max=data.get('budget_max'),
+        organisation_unit_id=data.get('organisation_unit_id'),
         tenant_id=tid,
         created_by=user.id,
     )
@@ -103,6 +104,8 @@ def update_project(project_id):
     project.project_type = data.get('project_type', project.project_type)
     project.budget_min = data.get('budget_min', project.budget_min)
     project.budget_max = data.get('budget_max', project.budget_max)
+    if 'organisation_unit_id' in data:
+        project.organisation_unit_id = data.get('organisation_unit_id')
 
     db.session.commit()
 

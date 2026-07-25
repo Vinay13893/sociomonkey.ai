@@ -15,6 +15,12 @@ class Project(db.Model):
     budget_min = db.Column(db.Float, nullable=True)
     budget_max = db.Column(db.Float, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
+    # Which organisation unit's role holders (Calling Manager, Sales
+    # Manager, ...) this project's leads should auto-route to. Null =
+    # tenant-wide (the org unit's own root). See app.services.org_scope.
+    organisation_unit_id = db.Column(
+        db.Integer, db.ForeignKey('organisation_units.id'), nullable=True,
+    )
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(
@@ -32,6 +38,7 @@ class Project(db.Model):
             'budget_min': self.budget_min,
             'budget_max': self.budget_max,
             'is_active': self.is_active,
+            'organisation_unit_id': self.organisation_unit_id,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
         }
