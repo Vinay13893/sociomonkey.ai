@@ -515,6 +515,7 @@ def create_lead():
             existing = Lead.query.filter(
                 Lead.phone == phone_val,
                 Lead.tenant_id == user.tenant_id,
+                Lead.is_active == True,
             ).first()
             if existing:
                 return jsonify({

@@ -252,7 +252,9 @@ def lead_lookup():
         return jsonify({'leads': []})
     limit = min(10, max(1, request.args.get('limit', 8, type=int)))
     like = f'%{search}%'
-    rows = Lead.query.options(joinedload(Lead.project)).filter(
+    rows = Lead.query.options(
+        joinedload(Lead.project), joinedload(Lead.channel_partner),
+    ).filter(
         Lead.tenant_id == _tenant_id(), Lead.is_active == True,
         or_(Lead.name.ilike(like), Lead.phone.ilike(like), Lead.email.ilike(like)),
     ).order_by(Lead.created_at.desc()).limit(limit).all()
@@ -261,7 +263,10 @@ def lead_lookup():
             'id': row.id, 'name': row.name,
             'phone_masked': _mask_phone(row.phone),
             'status': row.status,
+            'project_id': row.project_id,
             'project_name': row.project.name if row.project else None,
+            'channel_partner_id': row.channel_partner_id,
+            'channel_partner_name': row.channel_partner.name if row.channel_partner else None,
         }
         for row in rows
     ]})
@@ -425,7 +430,7 @@ def create_walk_in():
         if assigned and not assigned.is_active:
             raise ValueError('Assigned user is inactive')
         if lead and assigned:
-            sync_lead_owner_if_unset(lead, assigned.id)
+            sync_lead_owner_if_unset(lead, assigned)
         room = _reference(
             MeetingRoom, data.get('meeting_room_id'), 'Meeting room', active_only=True
         )
@@ -638,7 +643,7 @@ def assign_visit(visit_id):
         row.assigned_user_id = user.id
         row.updated_by = request.current_user.id
         if row.lead_id:
-            sync_lead_owner_if_unset(row.lead, user.id)
+            sync_lead_owner_if_unset(row.lead, user)
         correlation_id = _correlation_id()
         _audit('gallery_visit_assigned', row, old, correlation_id)
         _notify_assignment(row, user, correlation_id)

@@ -135,6 +135,10 @@ def find_duplicate_lead_by_phone(tenant_id, phone, force=False):
     No phone normalization is applied, matching the existing behaviour in
     create_lead exactly (raw stripped-string comparison). force=True skips
     the check entirely, mirroring create_lead's superadmin-only override.
+    Only considers is_active leads: a soft-deleted Lead (DELETE /api/leads/<id>)
+    must not permanently block re-entering that phone number - it's invisible
+    to every lookup/search already, so blocking creation on it is a dead end
+    the caller (and Reception) has no way to resolve.
     """
     if force:
         return None
@@ -143,6 +147,7 @@ def find_duplicate_lead_by_phone(tenant_id, phone, force=False):
         return None
     return Lead.query.filter(
         Lead.phone == phone_val, Lead.tenant_id == tenant_id,
+        Lead.is_active == True,
     ).first()
 
 
@@ -175,14 +180,30 @@ def default_visit_assigned_user(lead, explicit_assigned_user_id):
     return lead.assigned_to if lead else None
 
 
-def sync_lead_owner_if_unset(lead, user_id):
+MANAGER_ROLES = {'sales_manager', 'superadmin', 'platform_owner'}
+
+
+def sync_lead_owner_if_unset(lead, user):
     """When a Visit's responsible user is set (at walk-in creation or via a
     later reassignment) and the linked Lead has no owner recorded yet, give
-    the Lead that same owner. One-directional and only fires on a currently-
-    empty Lead: never overwrites an existing Lead owner, so this can't
-    silently reassign a Lead someone else already owns."""
-    if lead and user_id and lead.assigned_to is None:
-        lead.assigned_to = user_id
+    the Lead that same owner - routed into the correct ownership field for
+    that user's role, mirroring the manager/member split
+    POST /api/leads/bulk-assign already uses (assign_type='manager' vs
+    'member'): a Sales Manager (or admin) picked from Reception is routing
+    the lead for calling, so they belong in lead.sales_manager_id, not
+    lead.assigned_to - assigning a manager must never masquerade as
+    assigning the RM who actually works the lead.
+    One-directional and only fires on a currently-empty field: never
+    overwrites an existing manager/owner, so this can't silently reassign a
+    Lead someone else already owns."""
+    if not lead or not user:
+        return
+    if user.role in MANAGER_ROLES:
+        if lead.sales_manager_id is None:
+            lead.sales_manager_id = user.id
+    else:
+        if lead.assigned_to is None:
+            lead.assigned_to = user.id
 
 
 def active_planned_visit_for_lead(tenant_id, lead_id):

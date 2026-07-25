@@ -447,6 +447,152 @@ def test_reception_search_finds_visits_outside_current_tab_and_date():
         assert visit_id in ids
 
 
+def test_soft_deleted_lead_does_not_block_walkin_duplicate_phone_check():
+    from app import create_app
+    from app.models.base import db
+    from app.models.lead import Lead
+    import app.services.permissions as permissions
+
+    app = create_app('testing')
+    permissions.capability_decision = lambda user, capability, scope='OWN', scope_ref_id=None: {
+        'allowed': True, 'source': 'test', 'scope': scope,
+    }
+    with app.app_context():
+        tenant, receptionist, owner, location, headers = _bootstrap(app)
+        client = app.test_client()
+
+        # A previously-deleted lead with this phone must not permanently
+        # block re-registering the same number - it's invisible to
+        # lead-lookup already (is_active=False), so a duplicate-phone 409
+        # against it is a dead end the user has no way to resolve.
+        deleted = Lead(
+            tenant_id=tenant.id, name='Deleted Lead', phone='9990008888',
+            status='new', created_by=receptionist.id, is_active=False,
+        )
+        db.session.add(deleted)
+        db.session.commit()
+
+        lookup = client.get(
+            '/api/gallery-operations/lead-lookup?search=9990008888', headers=headers,
+        )
+        assert lookup.get_json()['leads'] == []
+
+        created = client.post(
+            '/api/gallery-operations/walk-ins', headers=headers,
+            json={
+                'location_id': location.id,
+                'new_lead': {'name': 'Reused Number', 'phone': '9990008888'},
+                'purpose': 'Walk-in',
+            },
+        )
+        assert created.status_code == 201, created.get_data(as_text=True)
+        assert created.get_json()['lead']['name'] == 'Reused Number'
+
+
+def test_assign_visit_routes_manager_role_to_sales_manager_field():
+    from app import create_app
+    from app.models.base import db
+    from app.models.lead import Lead
+    from app.models.user import User
+    import app.services.permissions as permissions
+
+    app = create_app('testing')
+    permissions.capability_decision = lambda user, capability, scope='OWN', scope_ref_id=None: {
+        'allowed': True, 'source': 'test', 'scope': scope,
+    }
+    with app.app_context():
+        tenant, receptionist, owner, location, headers = _bootstrap(app)
+        client = app.test_client()
+        manager = User(
+            name='Reception Manager', email='reception-mgr-stab@example.invalid',
+            password_hash='x', role='sales_manager', tenant_id=tenant.id,
+            is_active=True,
+        )
+        db.session.add(manager)
+        db.session.commit()
+
+        # Assigning a Sales Manager from Reception must route into
+        # lead.sales_manager_id (the routing/hierarchy field), never into
+        # lead.assigned_to (the RM actually working the lead) - picking a
+        # manager for triage/calling must not masquerade as assigning the RM.
+        unowned = Lead(
+            tenant_id=tenant.id, name='Needs Manager', phone='9990009999',
+            status='new', created_by=receptionist.id, is_active=True,
+        )
+        db.session.add(unowned)
+        db.session.commit()
+        created = client.post(
+            '/api/gallery-operations/walk-ins', headers=headers,
+            json={
+                'location_id': location.id, 'lead_id': unowned.id,
+                'purpose': 'Walk-in',
+            },
+        )
+        visit_id = created.get_json()['visit']['id']
+        resp = client.put(
+            f'/api/gallery-operations/visits/{visit_id}/assignment',
+            headers=headers, json={'assigned_user_id': manager.id},
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        db.session.refresh(unowned)
+        assert unowned.sales_manager_id == manager.id
+        assert unowned.assigned_to is None
+
+        # A team_member assigned afterward still fills assigned_to (the two
+        # fields are independent) - the RM slot isn't blocked by the
+        # manager routing having already happened.
+        resp2 = client.put(
+            f'/api/gallery-operations/visits/{visit_id}/assignment',
+            headers=headers, json={'assigned_user_id': owner.id},
+        )
+        assert resp2.status_code == 200, resp2.get_data(as_text=True)
+        db.session.refresh(unowned)
+        assert unowned.assigned_to == owner.id
+        assert unowned.sales_manager_id == manager.id  # untouched
+
+
+def test_lead_lookup_includes_project_and_channel_partner_ids():
+    from app import create_app
+    from app.models.base import db
+    from app.models.lead import Lead
+    from app.models.project import Project
+    import app.services.permissions as permissions
+
+    app = create_app('testing')
+    permissions.capability_decision = lambda user, capability, scope='OWN', scope_ref_id=None: {
+        'allowed': True, 'source': 'test', 'scope': scope,
+    }
+    with app.app_context():
+        tenant, receptionist, owner, location, headers = _bootstrap(app)
+        client = app.test_client()
+        project = Project(
+            tenant_id=tenant.id, name='Lookup Project', is_active=True,
+            created_by=receptionist.id,
+        )
+        db.session.add(project)
+        db.session.flush()
+
+        # The walk-in dialog's "Find existing lead" pick needs project_id
+        # (not just project_name) to pre-select the Project dropdown -
+        # a name-only response can't drive a <select>.
+        lead = Lead(
+            tenant_id=tenant.id, name='Autofill Lead', phone='9990001010',
+            status='new', created_by=receptionist.id, is_active=True,
+            project_id=project.id,
+        )
+        db.session.add(lead)
+        db.session.commit()
+
+        resp = client.get(
+            '/api/gallery-operations/lead-lookup?search=Autofill', headers=headers,
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        result = resp.get_json()['leads'][0]
+        assert result['project_id'] == project.id
+        assert result['project_name'] == 'Lookup Project'
+        assert 'channel_partner_id' in result
+
+
 if __name__ == '__main__':
     test_project_reference_list_excludes_inactive()
     test_unregistered_channel_partner_walk_in_uses_free_text()
@@ -456,4 +602,7 @@ if __name__ == '__main__':
     test_checkout_advances_lead_to_site_visit_done_without_failing_on_error()
     test_lead_lookup_finds_leads_hidden_from_the_countable_leads_endpoint()
     test_reception_search_finds_visits_outside_current_tab_and_date()
+    test_soft_deleted_lead_does_not_block_walkin_duplicate_phone_check()
+    test_assign_visit_routes_manager_role_to_sales_manager_field()
+    test_lead_lookup_includes_project_and_channel_partner_ids()
     print('Reception walk-in stabilization tests passed')
