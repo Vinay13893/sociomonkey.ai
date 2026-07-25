@@ -108,3 +108,15 @@ def test_required_operational_routes_are_still_present():
         "/forms/mappings",
     ):
         assert route in src
+
+
+def test_meta_reauthorization_reuses_existing_page_source():
+    src = _text(LEAD_SOURCES)
+    save_section = src[
+        src.index("def meta_save_connection"):
+        src.index("def _pull_recent_meta_source")
+    ]
+    lookup = "if _meta_page_id(existing_source) == page_id"
+    create = "source = LeadSource("
+    assert lookup in save_section
+    assert save_section.index(lookup) < save_section.index(create)

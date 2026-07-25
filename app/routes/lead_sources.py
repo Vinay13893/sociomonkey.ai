@@ -5079,14 +5079,31 @@ def meta_save_connection():
         existing_creds.update({k: v for k, v in creds.items() if v})
         source.credentials = existing_creds
     else:
-        source = LeadSource(
-            tenant_id=user.tenant_id,
-            name=name,
-            source_type='meta',
-            credentials=creds,
-            created_by=user.id,
+        source = next(
+            (
+                existing_source
+                for existing_source in LeadSource.query.filter_by(
+                    tenant_id=user.tenant_id,
+                    source_type='meta',
+                ).all()
+                if _meta_page_id(existing_source) == page_id
+            ),
+            None,
         )
-        db.session.add(source)
+        if source:
+            source.name = name
+            existing_creds = source.credentials or {}
+            existing_creds.update({k: v for k, v in creds.items() if v})
+            source.credentials = existing_creds
+        else:
+            source = LeadSource(
+                tenant_id=user.tenant_id,
+                name=name,
+                source_type='meta',
+                credentials=creds,
+                created_by=user.id,
+            )
+            db.session.add(source)
 
     source.connected_account = f'{page_name} (Page ID: {page_id})'
     source.available_forms   = selected_forms
