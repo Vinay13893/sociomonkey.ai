@@ -703,13 +703,22 @@ release blockers are listed separately in Section 7.
 
 ### 7.1 Completion Estimate
 
-Estimated first modernized tenant release completion: **97%**.
+Estimated first modernized tenant release completion: **98%**, updated 25
+July 2026 ~16:00 IST.
 
 This is a planning estimate, not a test metric. It reflects:
 
 - V2-0 through V2-11 complete.
 - V2-12 local certification and recovery migration rehearsal are complete.
-- Staging deployment, authenticated tenant QA and production rollout remain.
+- Production deployment already occurred directly (staging was bypassed);
+  migrations applied to the canonical production database and verified
+  idempotent. See `LMS_PRODUCTION_RELEASE_REPORT.md`.
+- A webhook delivery defect (GET verification challenge rejected) was found
+  and fixed post-deployment, and proven end-to-end with a real test lead.
+- A cron-job.org scheduler drift (two duplicate Meta jobs incorrectly active)
+  was found and corrected post-deployment.
+- Remaining: Meta OAuth token validity (external, Meta-side session issue),
+  non-Admin role QA, and physical Android/iOS PWA push certification.
 
 The underlying legacy LMS is already operational, so the percentage represents
 the approved modernization and release train, not the existence of basic LMS
@@ -727,16 +736,32 @@ functionality.
 
 ### 7.3 Current Release Blockers
 
-- The staging/preview database host cannot be decrypted with current read-only
-  Vercel access; isolation from production must be confirmed before staging.
-- Live Meta OAuth, webhook delivery and form delivery must be certified against
-  the staged V2 release candidate.
-- Current cron-job.org configuration and consecutive successful executions
-  require owner/API evidence.
-- Authenticated, cross-role V2 browser QA has not run because no browser session
-  was available during certification.
-- Physical Android and iOS PWA push has not been certified against the staged
-  V2 release candidate.
+Updated 25 July 2026 ~16:00 IST — production deployment already occurred;
+blockers below are re-scoped against live production, not a staging
+candidate.
+
+- **Critical:** Meta Page/User OAuth access tokens return Graph API error
+  `190 / subcode 460` for all four active sources. Account compromise has
+  been ruled out (owner confirmed only their own devices show active
+  sessions). Leading theory is a Meta-side post-password-change security
+  cooldown affecting third-party app tokens. Webhook delivery mechanism
+  itself is fixed and proven working independently of this issue — once a
+  token holds, full lead capture should resume immediately.
+- Authenticated, cross-role V2 browser QA has run for Admin only; Manager,
+  Caller, RM, Reception and Platform Owner remain outstanding.
+- Physical Android and iOS PWA push has not been certified against the
+  current production deployment.
+- Backend/frontend release commits (`417889d`/`fb0b5d9`) are not yet present
+  on any remote Git branch; owner has deferred the push-target decision.
+
+Resolved this session (25 July):
+
+- Webhook delivery mechanism (GET verification challenge previously
+  rejected with `405`) — fixed, deployed, proven end-to-end.
+- cron-job.org duplicate scheduler authority (`Meta Lead Poll`, `Meta Report
+  Sync` incorrectly active every 5 minutes) — found and disabled.
+- Production performance/Neon baseline — measured and healthy (40 MB DB,
+  2 connections, 200-460ms endpoint latency, zero queue backlog).
 
 ### 7.4 Can Wait Until a Future Version
 
