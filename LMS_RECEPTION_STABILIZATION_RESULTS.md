@@ -61,7 +61,49 @@ intentionally replaced by the search-first lookup. Updated to check for the
 new lookup UI's markers instead; the invariant (walk-in can associate an
 existing Lead) is unchanged.
 
-## Manual Production Verification Checklist (not yet executed — pending deployment)
+## Deployment
+
+Deployed 25 July 2026 ~18:25 IST.
+
+- Backend: `dpl_48krSjoPfGHci6x1spNXSms1iFt6`, project `backend`, commit `641bd00`. Deployed directly from `D:\AI\release_worktrees\backend-final-freeze` (same directory that worked cleanly for the earlier webhook fix).
+- Frontend: `dpl_BdQeJQWMXfMhwhiM5nLbXGzmpvbW`, project `frontend_static`, commit `1c5d36d`.
+
+### Deployment incident (second occurrence) and fix
+
+Deploying the frontend directly from `frontend-final-freeze` sent the build
+to the **`backend`** Vercel project again, despite that directory's own
+`.vercel/project.json` correctly specifying `frontend_static` — the exact
+incident already documented in `LMS_PRODUCTION_RELEASE_REPORT.md` from the
+original release. Root cause identified this time: **`D:\AI\.vercel\project.json`
+is linked to the `backend` project**, and something in Vercel CLI's project
+resolution prefers that parent-directory link over the correct one in the
+worktree. `lms.sociomonkey.com` was briefly aliased to a `backend`-project
+deployment (which happened to still be serving correct frontend HTML
+content, so there was no user-facing outage, but the project association
+was wrong).
+
+Fix applied: immediately reassigned the alias back to the last-known-good
+`frontend_static` deployment, then deployed the actual new frontend build
+from a fully isolated directory outside `D:\AI` (`git archive` of the
+frontend worktree's HEAD into a scratch directory, linked via `vercel link
+--project=frontend_static` rather than hand-copying config), matching the
+same fix already used once before. Verified after redeploy: `vercel
+inspect` confirms project `frontend_static`; `reception.js` and `leads.js`
+served from the live domain contain the new code (`Find existing lead`,
+`openSiteVisitPlanningDialog`); health, root, and tenant login route all
+return HTTP 200.
+
+**Standing infrastructure risk, not yet resolved:** `D:\AI\.vercel` should
+not exist, or should not be linked to `backend` — its presence is what
+causes this incident to recur. Recommend either deleting
+`D:\AI\.vercel` entirely (nothing should ever deploy from the `D:\AI` root)
+or relinking it to a project that can't be mistaken for a real target.
+Until that's done, **any future frontend deployment must use the same
+isolated-directory approach**, not a direct deploy from
+`frontend-final-freeze`, even though that directory's own link file is
+correct.
+
+## Manual Production Verification Checklist (deployment complete; functional checklist below still pending)
 
 Per the stabilization document's rollout plan, before/after deploying:
 
