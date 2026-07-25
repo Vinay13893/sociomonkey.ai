@@ -46,7 +46,7 @@ def _bootstrap(app):
         tenant_id=tenant.id, internal_key='WALK_IN',
         display_name='Walk-in', display_order=1, updated_by=receptionist.id,
     ))
-    for order, key in enumerate(['SCHEDULED', 'CHECKED_IN'], 1):
+    for order, key in enumerate(['SCHEDULED', 'CHECKED_IN', 'COMPLETED'], 1):
         db.session.add(VisitStatusConfiguration(
             tenant_id=tenant.id, internal_key=key,
             display_name=key.title(), display_order=order,
@@ -209,8 +209,251 @@ def test_walk_in_creates_new_lead_atomically_and_defaults_assignment():
         assert owned.get_json()['visit']['assigned_user_id'] == owner.id
 
 
+def test_new_lead_walk_in_defaults_source_to_walk_in():
+    from app import create_app
+    from app.models.base import db
+    from app.models.lead import Lead
+    import app.services.permissions as permissions
+
+    app = create_app('testing')
+    permissions.capability_decision = lambda user, capability, scope='OWN', scope_ref_id=None: {
+        'allowed': True, 'source': 'test', 'scope': scope,
+    }
+    with app.app_context():
+        tenant, receptionist, owner, location, headers = _bootstrap(app)
+        client = app.test_client()
+
+        created = client.post(
+            '/api/gallery-operations/walk-ins', headers=headers,
+            json={
+                'location_id': location.id,
+                'new_lead': {'name': 'No Source Given', 'phone': '9990002222'},
+                'purpose': 'Walk-in',
+            },
+        )
+        assert created.status_code == 201, created.get_data(as_text=True)
+        lead = db.session.get(Lead, created.get_json()['lead']['id'])
+        assert lead.source == 'Walk-in'
+
+
+def test_assign_visit_syncs_lead_owner_only_when_unset():
+    from app import create_app
+    from app.models.base import db
+    from app.models.lead import Lead
+    import app.services.permissions as permissions
+
+    app = create_app('testing')
+    permissions.capability_decision = lambda user, capability, scope='OWN', scope_ref_id=None: {
+        'allowed': True, 'source': 'test', 'scope': scope,
+    }
+    with app.app_context():
+        tenant, receptionist, owner, location, headers = _bootstrap(app)
+        client = app.test_client()
+        other = _add_user(tenant, 'Other RM', 'other-rm-stab@example.invalid')
+
+        # Unowned lead: assigning the Visit also sets the Lead's owner.
+        unowned = Lead(
+            tenant_id=tenant.id, name='Unowned Lead', phone='9990003333',
+            status='new', created_by=receptionist.id, is_active=True,
+        )
+        db.session.add(unowned)
+        db.session.commit()
+        created = client.post(
+            '/api/gallery-operations/walk-ins', headers=headers,
+            json={
+                'location_id': location.id, 'lead_id': unowned.id,
+                'purpose': 'Walk-in',
+            },
+        )
+        assert created.status_code == 201, created.get_data(as_text=True)
+        visit_id = created.get_json()['visit']['id']
+        resp = client.put(
+            f'/api/gallery-operations/visits/{visit_id}/assignment',
+            headers=headers, json={'assigned_user_id': owner.id},
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        db.session.refresh(unowned)
+        assert unowned.assigned_to == owner.id
+
+        # Already-owned lead: reassigning the Visit does NOT overwrite the
+        # Lead's existing owner.
+        owned = Lead(
+            tenant_id=tenant.id, name='Owned Lead', phone='9990004444',
+            status='new', assigned_to=owner.id,
+            created_by=receptionist.id, is_active=True,
+        )
+        db.session.add(owned)
+        db.session.commit()
+        created2 = client.post(
+            '/api/gallery-operations/walk-ins', headers=headers,
+            json={
+                'location_id': location.id, 'lead_id': owned.id,
+                'purpose': 'Walk-in',
+            },
+        )
+        visit_id2 = created2.get_json()['visit']['id']
+        resp2 = client.put(
+            f'/api/gallery-operations/visits/{visit_id2}/assignment',
+            headers=headers, json={'assigned_user_id': other.id},
+        )
+        assert resp2.status_code == 200, resp2.get_data(as_text=True)
+        db.session.refresh(owned)
+        assert owned.assigned_to == owner.id  # unchanged
+
+
+def _add_user(tenant, name, email):
+    from app.models.base import db
+    from app.models.user import User
+    user = User(
+        name=name, email=email, password_hash='x', role='team_member',
+        tenant_id=tenant.id, is_active=True,
+    )
+    db.session.add(user)
+    db.session.commit()
+    return user
+
+
+def test_checkout_advances_lead_to_site_visit_done_without_failing_on_error():
+    from app import create_app
+    from app.models.base import db
+    from app.models.lead import Lead
+    import app.services.permissions as permissions
+
+    app = create_app('testing')
+    permissions.capability_decision = lambda user, capability, scope='OWN', scope_ref_id=None: {
+        'allowed': True, 'source': 'test', 'scope': scope,
+    }
+    with app.app_context():
+        tenant, receptionist, owner, location, headers = _bootstrap(app)
+        client = app.test_client()
+
+        lead = Lead(
+            tenant_id=tenant.id, name='Checkout Lead', phone='9990005555',
+            status='new', created_by=receptionist.id, is_active=True,
+        )
+        db.session.add(lead)
+        db.session.commit()
+        created = client.post(
+            '/api/gallery-operations/walk-ins', headers=headers,
+            json={
+                'location_id': location.id, 'lead_id': lead.id,
+                'purpose': 'Walk-in',
+            },
+        )
+        visit_id = created.get_json()['visit']['id']
+        resp = client.post(
+            f'/api/gallery-operations/visits/{visit_id}/check-out', headers=headers,
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        db.session.refresh(lead)
+        assert lead.status == 'site_visit_done'
+
+        # Checking out a second, unrelated walk-in for the SAME lead (already
+        # past site_visit_done) must still succeed - the pipeline nudge is
+        # best-effort and never blocks the physical checkout action.
+        created2 = client.post(
+            '/api/gallery-operations/walk-ins', headers=headers,
+            json={
+                'location_id': location.id, 'lead_id': lead.id,
+                'purpose': 'Second walk-in',
+            },
+        )
+        visit_id2 = created2.get_json()['visit']['id']
+        resp2 = client.post(
+            f'/api/gallery-operations/visits/{visit_id2}/check-out', headers=headers,
+        )
+        assert resp2.status_code == 200, resp2.get_data(as_text=True)
+
+
+def test_lead_lookup_finds_leads_hidden_from_the_countable_leads_endpoint():
+    from app import create_app
+    from app.models.base import db
+    from app.models.lead import Lead
+    import app.services.permissions as permissions
+
+    app = create_app('testing')
+    permissions.capability_decision = lambda user, capability, scope='OWN', scope_ref_id=None: {
+        'allowed': True, 'source': 'test', 'scope': scope,
+    }
+    with app.app_context():
+        tenant, receptionist, owner, location, headers = _bootstrap(app)
+        client = app.test_client()
+
+        # A manually-created lead with no trustworthy-provenance evidence -
+        # exactly the kind of row apply_valid_lead_capture_scope (used by
+        # GET /api/leads) can exclude, but that genuinely exists and must
+        # still be findable for walk-in linking/duplicate-detection purposes.
+        lead = Lead(
+            tenant_id=tenant.id, name='Findable Lead', phone='9990006666',
+            status='new', source='Manual', created_by=receptionist.id,
+            is_active=True,
+        )
+        db.session.add(lead)
+        db.session.commit()
+
+        resp = client.get(
+            '/api/gallery-operations/lead-lookup?search=9990006666', headers=headers,
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        results = resp.get_json()['leads']
+        assert len(results) == 1
+        assert results[0]['id'] == lead.id
+        # Phone is masked, not returned in full.
+        assert results[0]['phone_masked'] != lead.phone
+        assert results[0]['phone_masked'].endswith(lead.phone[-4:])
+        assert '*' in results[0]['phone_masked']
+
+
+def test_reception_search_finds_visits_outside_current_tab_and_date():
+    from app import create_app
+    from app.models.base import db
+    from app.models.lead import Lead
+    import app.services.permissions as permissions
+
+    app = create_app('testing')
+    permissions.capability_decision = lambda user, capability, scope='OWN', scope_ref_id=None: {
+        'allowed': True, 'source': 'test', 'scope': scope,
+    }
+    with app.app_context():
+        tenant, receptionist, owner, location, headers = _bootstrap(app)
+        client = app.test_client()
+
+        lead = Lead(
+            tenant_id=tenant.id, name='Findable Visitor', phone='9990007777',
+            status='new', created_by=receptionist.id, is_active=True,
+        )
+        db.session.add(lead)
+        db.session.commit()
+        created = client.post(
+            '/api/gallery-operations/walk-ins', headers=headers,
+            json={
+                'location_id': location.id, 'lead_id': lead.id,
+                'purpose': 'Walk-in',
+            },
+        )
+        visit_id = created.get_json()['visit']['id']
+        client.post(
+            f'/api/gallery-operations/visits/{visit_id}/check-out', headers=headers,
+        )
+
+        # The default view ('expected', today) would never include a visit
+        # that already completed - search must find it anyway.
+        resp = client.get(
+            '/api/gallery-operations/visits?view=expected&search=Findable+Visitor',
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        ids = [v['id'] for v in resp.get_json()['visits']]
+        assert visit_id in ids
+
+
 if __name__ == '__main__':
     test_project_reference_list_excludes_inactive()
     test_unregistered_channel_partner_walk_in_uses_free_text()
     test_walk_in_creates_new_lead_atomically_and_defaults_assignment()
+    test_new_lead_walk_in_defaults_source_to_walk_in()
+    test_assign_visit_syncs_lead_owner_only_when_unset()
+    test_checkout_advances_lead_to_site_visit_done_without_failing_on_error()
+    test_lead_lookup_finds_leads_hidden_from_the_countable_leads_endpoint()
+    test_reception_search_finds_visits_outside_current_tab_and_date()
     print('Reception walk-in stabilization tests passed')

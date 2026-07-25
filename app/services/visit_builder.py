@@ -175,6 +175,16 @@ def default_visit_assigned_user(lead, explicit_assigned_user_id):
     return lead.assigned_to if lead else None
 
 
+def sync_lead_owner_if_unset(lead, user_id):
+    """When a Visit's responsible user is set (at walk-in creation or via a
+    later reassignment) and the linked Lead has no owner recorded yet, give
+    the Lead that same owner. One-directional and only fires on a currently-
+    empty Lead: never overwrites an existing Lead owner, so this can't
+    silently reassign a Lead someone else already owns."""
+    if lead and user_id and lead.assigned_to is None:
+        lead.assigned_to = user_id
+
+
 def active_planned_visit_for_lead(tenant_id, lead_id):
     """The Lead's current not-yet-arrived planned Visit, if any. SCHEDULED is
     the only status that precedes CHECKED_IN/NO_SHOW in the Reception state

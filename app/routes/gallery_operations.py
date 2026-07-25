@@ -1,5 +1,6 @@
 """Visit-driven Gallery Operations and Reception APIs."""
 
+import logging
 from datetime import date, datetime
 from uuid import uuid4
 
@@ -24,8 +25,12 @@ from app.services.reminder_scheduler import push_notification
 from app.services.channel_partner_events import notify_channel_partner_visit
 from app.services.visit_builder import (
     create_lead_row, default_visit_assigned_user, find_duplicate_lead_by_phone,
+    sync_lead_owner_if_unset,
 )
+from app.services.pipeline_engine import transition_lead
 from app.utils.time_utils import business_date_bounds_utc_naive, now_ist
+
+logger = logging.getLogger(__name__)
 
 
 gallery_operations_bp = Blueprint(
@@ -143,13 +148,17 @@ def _serialize(row):
     return data
 
 
-def _view_query(view, start, end):
+def _base_visit_query():
     query = Visit.query.options(
         joinedload(Visit.location), joinedload(Visit.meeting_room),
         joinedload(Visit.project), joinedload(Visit.lead),
         joinedload(Visit.assigned_user), selectinload(Visit.participants),
     ).filter_by(tenant_id=_tenant_id(), is_active=True)
-    query = _location_filter(query)
+    return _location_filter(query)
+
+
+def _view_query(view, start, end):
+    query = _base_visit_query()
     if view == 'expected':
         return query.filter(
             Visit.status_key == 'SCHEDULED',
@@ -210,12 +219,52 @@ def references():
             {'id': row.id, 'name': row.name, 'location_id': row.location_id}
             for row in rooms
         ],
-        'users': [{'id': row.id, 'name': row.name} for row in users],
+        'users': [{'id': row.id, 'name': row.name, 'role': row.role} for row in users],
         'projects': [{'id': row.id, 'name': row.name} for row in projects],
         'channel_partners': [
             {'id': row.id, 'name': row.name} for row in channel_partners
         ],
     })
+
+
+def _mask_phone(phone):
+    value = str(phone or '').strip()
+    if len(value) <= 4:
+        return value
+    return '*' * (len(value) - 4) + value[-4:]
+
+
+@gallery_operations_bp.get('/lead-lookup')
+@require_capability('gallery.check_in', 'TENANT')
+def lead_lookup():
+    """Search existing Leads for the walk-in/visit-planning "find existing
+    lead" flows. Deliberately NOT the same query as GET /api/leads: that
+    endpoint applies apply_valid_lead_capture_scope, a "countable lead"
+    business-quality filter meant for the Leads dashboard, which can hide a
+    perfectly real Lead from this lookup (e.g. a lead the duplicate-phone
+    check on Lead creation would still find). Reception needs to find any
+    active Lead in the tenant by name/phone/email, tenant-scoped only.
+    Phone is returned masked - this lookup is a visual pick-list, not a
+    place to expose full contact numbers to whoever is on Reception duty.
+    """
+    search = str(request.args.get('search') or '').strip()
+    if len(search) < 2:
+        return jsonify({'leads': []})
+    limit = min(10, max(1, request.args.get('limit', 8, type=int)))
+    like = f'%{search}%'
+    rows = Lead.query.options(joinedload(Lead.project)).filter(
+        Lead.tenant_id == _tenant_id(), Lead.is_active == True,
+        or_(Lead.name.ilike(like), Lead.phone.ilike(like), Lead.email.ilike(like)),
+    ).order_by(Lead.created_at.desc()).limit(limit).all()
+    return jsonify({'leads': [
+        {
+            'id': row.id, 'name': row.name,
+            'phone_masked': _mask_phone(row.phone),
+            'status': row.status,
+            'project_name': row.project.name if row.project else None,
+        }
+        for row in rows
+    ]})
 
 
 @gallery_operations_bp.get('/dashboard')
@@ -290,17 +339,24 @@ def list_operational_visits():
         return jsonify({'error': 'Invalid reception view'}), 400
     page = max(1, request.args.get('page', 1, type=int))
     per_page = min(100, max(1, request.args.get('per_page', 25, type=int)))
+    search = str(request.args.get('search') or '').strip()
     try:
-        start, end = _business_bounds()
-        query = _view_query(view, start, end)
+        if search:
+            # A search term is looking for one specific record across the
+            # tenant, not browsing the currently selected tab - status/date
+            # scoping would otherwise hide results that legitimately match
+            # (e.g. a visit that already completed, or one on another day).
+            query = _base_visit_query()
+        else:
+            start, end = _business_bounds()
+            query = _view_query(view, start, end)
     except (TypeError, ValueError) as exc:
         return jsonify({'error': str(exc)}), 400
-    search = str(request.args.get('search') or '').strip()
     if search:
         like = f'%{search}%'
         query = query.outerjoin(Lead, Lead.id == Visit.lead_id).filter(or_(
             Visit.purpose.ilike(like), Visit.source.ilike(like),
-            Lead.name.ilike(like),
+            Lead.name.ilike(like), Lead.phone.ilike(like),
         ))
     total = query.count()
     rows = query.order_by(
@@ -354,7 +410,7 @@ def create_walk_in():
                 phone=new_lead_phone or None,
                 alternate_phone=str(new_lead_data.get('alternate_phone') or '').strip() or None,
                 email=new_lead_email or None,
-                source=new_lead_data.get('source'),
+                source=str(new_lead_data.get('source') or '').strip() or 'Walk-in',
                 project_id=data.get('project_id'),
             )
             db.session.add(lead)
@@ -368,6 +424,8 @@ def create_walk_in():
         assigned = _reference(User, assigned_user_id_value, 'Assigned user')
         if assigned and not assigned.is_active:
             raise ValueError('Assigned user is inactive')
+        if lead and assigned:
+            sync_lead_owner_if_unset(lead, assigned.id)
         room = _reference(
             MeetingRoom, data.get('meeting_room_id'), 'Meeting room', active_only=True
         )
@@ -494,6 +552,27 @@ def _transition(visit_id, target, allowed, action, timestamp_field=None):
             notify_channel_partner_visit(
                 row, 'visit_completed', correlation_id
             )
+            if row.lead_id and row.lead:
+                # A completed physical visit is real-world evidence the
+                # Lead should advance to site_visit_done. Best-effort: the
+                # pipeline engine's own rules decide whether that's actually
+                # a valid move from the Lead's current stage (e.g. it's a
+                # no-op if already past that stage); checkout itself must
+                # never fail because of this.
+                try:
+                    transition_lead(
+                        row.lead, 'site_visit_done', actor=request.current_user,
+                        source='GALLERY_CHECKOUT', reason='Visit checked out',
+                        context={}, visit=row, correlation_id=correlation_id,
+                    )
+                except Exception:
+                    # Best-effort only - an invalid/blocked transition (or
+                    # any unexpected error in this secondary nudge) must
+                    # never roll back a real physical checkout.
+                    logger.exception(
+                        'gallery checkout: pipeline transition to '
+                        'site_visit_done failed for lead %s', row.lead_id,
+                    )
         db.session.commit()
         return jsonify({'visit': row.to_dict(), 'correlation_id': correlation_id})
     except ValueError as exc:
@@ -558,6 +637,8 @@ def assign_visit(visit_id):
         old = row.to_dict()
         row.assigned_user_id = user.id
         row.updated_by = request.current_user.id
+        if row.lead_id:
+            sync_lead_owner_if_unset(row.lead, user.id)
         correlation_id = _correlation_id()
         _audit('gallery_visit_assigned', row, old, correlation_id)
         _notify_assignment(row, user, correlation_id)
