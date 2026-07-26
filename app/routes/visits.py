@@ -343,6 +343,7 @@ def list_visits():
             )
             item['participant_id'] = participant.reference_id if participant else None
             item['participant_name'] = participant.display_name if participant else None
+            item['contact_name'] = (row.operational_metadata or {}).get('contact_name')
         serialized.append(item)
     return jsonify({
         'visits': serialized,
@@ -373,7 +374,7 @@ def export_visits():
     ws = wb.active
     ws.title = 'Meetings' if participant_type == 'CHANNEL_PARTNER' else 'Visits'
 
-    headers = ['#', 'Channel Partner', 'Assigned To', 'Sales Manager', 'Purpose', 'Expected Arrival', 'Status', 'Location', 'Venue Note']
+    headers = ['#', 'Channel Partner', 'Contact', 'Assigned To', 'Sales Manager', 'Purpose', 'Expected Arrival', 'Status', 'Location', 'Venue Note']
     header_fill = PatternFill('solid', fgColor='1E3A5F')
     header_font = Font(color='FFFFFF', bold=True, size=11)
     for col, h in enumerate(headers, 1):
@@ -392,6 +393,7 @@ def export_visits():
         values = [
             row.id,
             participant.display_name if participant else '',
+            (row.operational_metadata or {}).get('contact_name', ''),
             row.assigned_user.name if row.assigned_user else '',
             row.sales_manager.name if row.sales_manager else '',
             row.purpose or '',
@@ -404,7 +406,7 @@ def export_visits():
             cell = ws.cell(row=row_idx, column=col, value=val)
             cell.fill = fill
 
-    col_widths = [6, 22, 18, 18, 30, 20, 14, 18, 26]
+    col_widths = [6, 22, 18, 18, 18, 30, 20, 14, 18, 26]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = 'A2'
