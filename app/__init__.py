@@ -386,52 +386,6 @@ def create_app(config_name: str = None) -> Flask:
             'db_identity': db_identity,
         }), 200
 
-    @app.route('/api/_internal/phase13i-fixups-20260726', methods=['POST'])
-    def _phase13i_fixups():
-        # Temporary, token-gated. Runs entirely through this app's own
-        # already-correct db.session (not a local script + DATABASE_URL,
-        # which is exactly what pointed at the wrong Neon project during
-        # the phase13 outage - see ece4cc9). Diagnoses the "no activity
-        # logs after 2026-07-20" report and additively grants the
-        # reports.export capability to Sales Manager / Calling Manager.
-        # Delete this route once verified live.
-        import os
-        expected_token = os.environ.get('INTERNAL_OPS_TOKEN')
-        if not expected_token or request.headers.get('X-Internal-Token') != expected_token:
-            return jsonify({'error': 'Route not found'}), 404
-        from sqlalchemy import text
-        result = {}
-        try:
-            cols = db.session.execute(text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'activity_logs' ORDER BY column_name"
-            )).fetchall()
-            result['activity_logs_columns'] = [r[0] for r in cols]
-            counts = db.session.execute(text(
-                "SELECT COUNT(*), MAX(created_at), "
-                "COUNT(*) FILTER (WHERE created_at > '2026-07-20') "
-                "FROM activity_logs"
-            )).fetchone()
-            result['activity_logs_total'] = counts[0]
-            result['activity_logs_max_created_at'] = str(counts[1]) if counts[1] else None
-            result['activity_logs_after_2026_07_20'] = counts[2]
-
-            db.session.execute(text(
-                "INSERT INTO role_permissions "
-                "(tenant_id, business_role_id, permission_id, scope_type, effect) "
-                "SELECT br.tenant_id, br.id, p.id, 'TEAM', 'ALLOW' "
-                "FROM business_roles br CROSS JOIN permission_definitions p "
-                "WHERE br.key IN ('SALES_MANAGER', 'CALLING_MANAGER') "
-                "AND p.key = 'reports.export' AND br.tenant_id IS NOT NULL "
-                "ON CONFLICT DO NOTHING"
-            ))
-            db.session.commit()
-            result['reports_export_grant'] = 'applied'
-        except Exception as exc:
-            db.session.rollback()
-            result['error'] = f'{type(exc).__name__}: {exc}'
-        return jsonify(result), 200
-
     @app.errorhandler(404)
     def not_found(_err):
         return jsonify({'error': 'Route not found'}), 404
