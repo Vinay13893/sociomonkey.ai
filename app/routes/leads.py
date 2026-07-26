@@ -1454,6 +1454,7 @@ def action_board():
         'no_answer': _page_param('no_answer_page'),
         'warm_leads': _page_param('warm_leads_page'),
         'hot_leads': _page_param('hot_leads_page'),
+        'other_active': _page_param('other_active_page'),
     }
 
     def _query_page(query, page, *order_by):
@@ -1549,6 +1550,14 @@ def action_board():
     no_answer_q = lead_buckets_base.filter(Lead.status == 'no_answer')
     warm_q = lead_buckets_base.filter(Lead.status.in_(warm_statuses))
     hot_q = lead_buckets_base.filter(Lead.status.in_(hot_statuses))
+    # A lead can carry status='callback_scheduled' without an actual
+    # CallbackReminder row (e.g. the reminder was later deleted/completed
+    # without the status being updated) - lead_buckets_base already
+    # excludes anything WITH a live reminder (first_callback_lead_ids), so
+    # this is exactly the orphaned set that would otherwise be an active,
+    # visible, assigned lead that never appears in any Action Board
+    # section under any date range.
+    other_active_q = lead_buckets_base.filter(Lead.status == 'callback_scheduled')
 
     # counts
     current_callbacks_q = unique_cb_base.filter(
@@ -1566,6 +1575,7 @@ def action_board():
     no_answer_count = no_answer_q.count()
     warm_count = warm_q.count()
     hot_count = hot_q.count()
+    other_active_count = other_active_q.count()
 
     # paged section lists
     current_callbacks_page = _query_page(
@@ -1585,12 +1595,13 @@ def action_board():
     no_answer = _query_page(no_answer_q, section_pages['no_answer'], Lead.updated_at.asc(), Lead.id.asc())
     warm_leads = _query_page(warm_q, section_pages['warm_leads'], Lead.updated_at.desc(), Lead.id.desc())
     hot_leads = _query_page(hot_q, section_pages['hot_leads'], Lead.updated_at.desc(), Lead.id.desc())
+    other_active = _query_page(other_active_q, section_pages['other_active'], Lead.updated_at.asc(), Lead.id.asc())
 
     page_lead_ids = set()
     for cb in current_callbacks_page + overdue_callbacks_page:
         if cb.lead_id:
             page_lead_ids.add(cb.lead_id)
-    for lead in new_today + follow_up + no_answer + warm_leads + hot_leads:
+    for lead in new_today + follow_up + no_answer + warm_leads + hot_leads + other_active:
         page_lead_ids.add(lead.id)
 
     latest_notes = {}
@@ -1625,6 +1636,7 @@ def action_board():
         'no_answer_leads':   [_lead_card_dict(l) for l in no_answer],
         'warm_leads':        [_lead_card_dict(l) for l in warm_leads],
         'hot_leads':         [_lead_card_dict(l) for l in hot_leads],
+        'other_active_leads': [_lead_card_dict(l) for l in other_active],
         'summary': {
             'today_callbacks_count': today_callbacks_count,
             'overdue_count':         overdue_callbacks_count,
@@ -1633,6 +1645,7 @@ def action_board():
             'no_answer_count':       no_answer_count,
             'warm_leads_count':      warm_count,
             'hot_leads_count':       hot_count,
+            'other_active_count':    other_active_count,
         },
         'pagination': {
             'today_callbacks': _pagination_meta(today_callbacks_count, section_pages['today_callbacks'], len(current_callbacks_page)),
@@ -1642,6 +1655,7 @@ def action_board():
             'no_answer': _pagination_meta(no_answer_count, section_pages['no_answer'], len(no_answer)),
             'warm_leads': _pagination_meta(warm_count, section_pages['warm_leads'], len(warm_leads)),
             'hot_leads': _pagination_meta(hot_count, section_pages['hot_leads'], len(hot_leads)),
+            'other_active': _pagination_meta(other_active_count, section_pages['other_active'], len(other_active)),
         },
         'selected_range': {
             'date_from': selected_from_date.isoformat(),
