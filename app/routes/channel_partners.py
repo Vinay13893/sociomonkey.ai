@@ -877,7 +877,7 @@ def channel_partner_timeline(partner_id):
             'type': 'VISIT',
             'timestamp': to_ist_str(row.created_at),
             'title': row.purpose or row.visit_type_key.replace('_', ' ').title(),
-            'summary': f'{row.status_key} at {row.location.name}',
+            'summary': f'{row.status_key} at {row.location.name if row.location else (row.operational_metadata or {}).get("venue_note") or "an unspecified location"}',
             'reference_id': row.id,
             '_sort': row.created_at,
         })

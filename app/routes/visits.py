@@ -4,7 +4,7 @@ from datetime import datetime
 import re
 from uuid import uuid4
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import or_
 
 from app.middleware import require_capability
@@ -24,6 +24,7 @@ from app.services.visit_builder import (
     validate_configuration as _shared_validate_configuration,
     validate_visit_payload as _shared_validate_visit_payload,
 )
+from app.utils.time_utils import to_ist_str
 
 
 visits_bp = Blueprint('visits', __name__, url_prefix='/api/visits')
@@ -262,12 +263,10 @@ def update_visit_status(internal_key):
     return _update_configuration(VisitStatusConfiguration, internal_key, 'VisitStatusConfiguration')
 
 
-@visits_bp.get('')
-@require_capability('visits.view', 'TENANT')
-def list_visits():
-    page = max(1, request.args.get('page', 1, type=int))
-    per_page = min(100, max(1, request.args.get('per_page', 25, type=int)))
-    query = Visit.query.filter_by(tenant_id=_tenant_id())
+def _apply_visit_filters(query):
+    """Shared filter-building for list_visits and export_visits - keeping
+    this in one place means the export always matches exactly what the
+    on-screen list shows for the same query params."""
     active = str(request.args.get('active', 'true')).lower()
     if active in ('true', 'false'):
         query = query.filter(Visit.is_active == (active == 'true'))
@@ -281,13 +280,10 @@ def list_visits():
             try:
                 parsed = int(value) if argument.endswith('_id') else value.upper()
             except ValueError:
-                return jsonify({'error': f'{argument} must be numeric'}), 400
+                raise ValueError(f'{argument} must be numeric')
             query = query.filter(column == parsed)
-    try:
-        date_from = _parse_datetime(request.args.get('date_from'), 'Date from')
-        date_to = _parse_datetime(request.args.get('date_to'), 'Date to')
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
+    date_from = _parse_datetime(request.args.get('date_from'), 'Date from')
+    date_to = _parse_datetime(request.args.get('date_to'), 'Date to')
     if date_from:
         query = query.filter(Visit.expected_arrival >= date_from)
     if date_to:
@@ -319,6 +315,19 @@ def list_visits():
                 Visit.assigned_user_id.in_(visible_ids),
                 Visit.sales_manager_id.in_(visible_ids),
             ))
+    return query, participant_type
+
+
+@visits_bp.get('')
+@require_capability('visits.view', 'TENANT')
+def list_visits():
+    page = max(1, request.args.get('page', 1, type=int))
+    per_page = min(100, max(1, request.args.get('per_page', 25, type=int)))
+    query = Visit.query.filter_by(tenant_id=_tenant_id())
+    try:
+        query, participant_type = _apply_visit_filters(query)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
 
     total = query.count()
     rows = query.order_by(
@@ -339,6 +348,78 @@ def list_visits():
         'visits': serialized,
         'pagination': {'page': page, 'per_page': per_page, 'total': total},
     })
+
+
+@visits_bp.get('/export')
+@require_capability('visits.view', 'TENANT')
+def export_visits():
+    """Excel export mirroring exactly whatever filters the on-screen
+    list is currently using (same query-building as list_visits)."""
+    query = Visit.query.filter_by(tenant_id=_tenant_id())
+    try:
+        query, participant_type = _apply_visit_filters(query)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    rows = query.order_by(
+        Visit.expected_arrival.desc().nullslast(), Visit.id.desc()
+    ).limit(5000).all()
+
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    from io import BytesIO
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Meetings' if participant_type == 'CHANNEL_PARTNER' else 'Visits'
+
+    headers = ['#', 'Channel Partner', 'Assigned To', 'Sales Manager', 'Purpose', 'Expected Arrival', 'Status', 'Location', 'Venue Note']
+    header_fill = PatternFill('solid', fgColor='1E3A5F')
+    header_font = Font(color='FFFFFF', bold=True, size=11)
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    alt_fill = PatternFill('solid', fgColor='EEF2F7')
+    for row_idx, row in enumerate(rows, 2):
+        fill = alt_fill if row_idx % 2 == 0 else PatternFill()
+        participant = next(
+            (p for p in row.participants if p.participant_type == 'CHANNEL_PARTNER'),
+            None,
+        )
+        values = [
+            row.id,
+            participant.display_name if participant else '',
+            row.assigned_user.name if row.assigned_user else '',
+            row.sales_manager.name if row.sales_manager else '',
+            row.purpose or '',
+            to_ist_str(row.expected_arrival) if row.expected_arrival else '',
+            row.status_key,
+            row.location.name if row.location else '',
+            (row.operational_metadata or {}).get('venue_note', ''),
+        ]
+        for col, val in enumerate(values, 1):
+            cell = ws.cell(row=row_idx, column=col, value=val)
+            cell.fill = fill
+
+    col_widths = [6, 22, 18, 18, 30, 20, 14, 18, 26]
+    for i, w in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = 'A2'
+    ws.auto_filter.ref = f'A1:{get_column_letter(len(headers))}1'
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f'meetings_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.xlsx'
+    return send_file(
+        buf,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename,
+    )
 
 
 def _visible_assignee_ids(user):
