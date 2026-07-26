@@ -70,7 +70,10 @@ class Visit(db.Model):
     tenant_id = db.Column(db.Integer, db.ForeignKey('tenants.id'), nullable=False, index=True)
     visit_type_key = db.Column(db.String(80), nullable=False, index=True)
     status_key = db.Column(db.String(80), nullable=False, default='SCHEDULED', index=True)
-    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=False, index=True)
+    # Nullable - not every Visit happens at a registered Location (e.g. a
+    # Channel Partner meeting at the partner's own office). Reception's
+    # walk-in intake still enforces its own location selection client-side.
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), index=True)
     meeting_room_id = db.Column(db.Integer, db.ForeignKey('meeting_rooms.id'), index=True)
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), index=True)
     lead_id = db.Column(db.Integer, db.ForeignKey('leads.id'), index=True)

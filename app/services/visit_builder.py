@@ -55,13 +55,18 @@ def validate_configuration(tenant_id, model, internal_key, label, allow_inactive
 
 
 def validate_visit_payload(tenant_id, data, current=None):
+    # Not every Visit happens at a registered Location - a Channel
+    # Partner meeting is commonly at the partner's own office. Location
+    # stays optional here; callers that genuinely need it required (e.g.
+    # Reception's walk-in intake) enforce that themselves before calling
+    # in, rather than this shared validator forcing it on everyone.
     location = validate_reference(
         tenant_id, Location, data.get('location_id', current.location_id if current else None),
-        'Location', required=True, active_only=current is None,
+        'Location', required=False, active_only=current is None,
     )
     room_value = data.get('meeting_room_id', current.meeting_room_id if current else None)
     room = validate_reference(tenant_id, MeetingRoom, room_value, 'Meeting room')
-    if room and room.location_id != location.id:
+    if room and (not location or room.location_id != location.id):
         raise ValueError('Meeting room must belong to the visit location')
 
     project_value = data.get('project_id', current.project_id if current else None)
@@ -119,7 +124,7 @@ def validate_visit_payload(tenant_id, data, current=None):
         raise ValueError('Actual check-out cannot be before actual check-in')
 
     return {
-        'location_id': location.id,
+        'location_id': location.id if location else None,
         'meeting_room_id': room.id if room else None,
         'project_id': project.id if project else None,
         'lead_id': lead.id if lead else None,
