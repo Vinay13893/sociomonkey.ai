@@ -386,6 +386,32 @@ def create_app(config_name: str = None) -> Flask:
             'db_identity': db_identity,
         }), 200
 
+    @app.route('/api/_internal/phase13o-fixups-20260726', methods=['POST'])
+    def _phase13o_fixups():
+        # Temporary, token-gated, runs through this app's own already-
+        # correct db.session. Drops the NOT NULL constraint on
+        # visits.location_id. Delete once verified.
+        import os
+        expected_token = os.environ.get('INTERNAL_OPS_TOKEN')
+        if not expected_token or request.headers.get('X-Internal-Token') != expected_token:
+            return jsonify({'error': 'Route not found'}), 404
+        from sqlalchemy import text
+        result = {}
+        try:
+            db.session.execute(text(
+                "ALTER TABLE visits ALTER COLUMN location_id DROP NOT NULL"
+            ))
+            db.session.commit()
+            row = db.session.execute(text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'visits' AND column_name = 'location_id'"
+            )).fetchone()
+            result['is_nullable'] = row[0] if row else None
+        except Exception as exc:
+            db.session.rollback()
+            result['error'] = f'{type(exc).__name__}: {exc}'
+        return jsonify(result), 200
+
     @app.errorhandler(404)
     def not_found(_err):
         return jsonify({'error': 'Route not found'}), 404
