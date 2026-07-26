@@ -311,7 +311,14 @@ def list_visits():
         query = query.filter(Visit.id.in_(participant_visit_ids))
         visible_ids = _visible_assignee_ids(request.current_user)
         if visible_ids is not None:
-            query = query.filter(Visit.assigned_user_id.in_(visible_ids))
+            # Visible if the caller (or their reporting-line team) holds
+            # either owner slot - a Sales Manager must see meetings their
+            # RM is personally attending even though assigned_user_id
+            # names the RM, not them.
+            query = query.filter(or_(
+                Visit.assigned_user_id.in_(visible_ids),
+                Visit.sales_manager_id.in_(visible_ids),
+            ))
 
     total = query.count()
     rows = query.order_by(

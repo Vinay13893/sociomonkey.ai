@@ -75,6 +75,12 @@ class Visit(db.Model):
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), index=True)
     lead_id = db.Column(db.Integer, db.ForeignKey('leads.id'), index=True)
     assigned_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), index=True)
+    # Co-owner alongside assigned_user_id, mirroring the Lead co-ownership
+    # model - for a Channel Partner meeting, assigned_user_id is typically
+    # the Relationship Manager actually attending, and sales_manager_id is
+    # their manager, tracked here so hierarchy reporting doesn't have to
+    # infer it from the org chart at query time.
+    sales_manager_id = db.Column(db.Integer, db.ForeignKey('users.id'), index=True)
     purpose = db.Column(db.String(250))
     notes = db.Column(db.Text)
     expected_arrival = db.Column(db.DateTime, index=True)
@@ -99,6 +105,7 @@ class Visit(db.Model):
     project = db.relationship('Project')
     lead = db.relationship('Lead')
     assigned_user = db.relationship('User', foreign_keys=[assigned_user_id])
+    sales_manager = db.relationship('User', foreign_keys=[sales_manager_id])
     reception_assigned_user = db.relationship(
         'User', foreign_keys=[reception_assigned_user_id]
     )
@@ -135,6 +142,8 @@ class Visit(db.Model):
             'lead_name': self.lead.name if self.lead else None,
             'assigned_user_id': self.assigned_user_id,
             'assigned_user_name': self.assigned_user.name if self.assigned_user else None,
+            'sales_manager_id': self.sales_manager_id,
+            'sales_manager_name': self.sales_manager.name if self.sales_manager else None,
             'reception_assigned_user_id': self.reception_assigned_user_id,
             'reception_assigned_user_name': (
                 self.reception_assigned_user.name

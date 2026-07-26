@@ -67,6 +67,9 @@ def validate_visit_payload(tenant_id, data, current=None):
     project_value = data.get('project_id', current.project_id if current else None)
     lead_value = data.get('lead_id', current.lead_id if current else None)
     assigned_value = data.get('assigned_user_id', current.assigned_user_id if current else None)
+    sales_manager_value = data.get(
+        'sales_manager_id', current.sales_manager_id if current else None,
+    )
     reception_value = data.get(
         'reception_assigned_user_id',
         current.reception_assigned_user_id if current else None,
@@ -75,6 +78,7 @@ def validate_visit_payload(tenant_id, data, current=None):
     project = validate_reference(tenant_id, Project, project_value, 'Project')
     lead = validate_reference(tenant_id, Lead, lead_value, 'Lead')
     assigned = validate_user(tenant_id, assigned_value, 'Assigned user')
+    sales_manager = validate_user(tenant_id, sales_manager_value, 'Sales manager')
     reception = validate_user(tenant_id, reception_value, 'Reception user')
     escort = validate_user(tenant_id, escort_value, 'Escort user')
 
@@ -120,6 +124,7 @@ def validate_visit_payload(tenant_id, data, current=None):
         'project_id': project.id if project else None,
         'lead_id': lead.id if lead else None,
         'assigned_user_id': assigned.id if assigned else None,
+        'sales_manager_id': sales_manager.id if sales_manager else None,
         'reception_assigned_user_id': reception.id if reception else None,
         'escort_user_id': escort.id if escort else None,
         'visit_type_key': visit_type_key, 'status_key': status_key,
