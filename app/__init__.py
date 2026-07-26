@@ -386,6 +386,35 @@ def create_app(config_name: str = None) -> Flask:
             'db_identity': db_identity,
         }), 200
 
+    @app.route('/api/_internal/phase13n-fixups-20260726', methods=['POST'])
+    def _phase13n_fixups():
+        # Temporary, token-gated, runs through this app's own already-
+        # correct db.session. Adds visits.sales_manager_id. Delete once
+        # verified.
+        import os
+        expected_token = os.environ.get('INTERNAL_OPS_TOKEN')
+        if not expected_token or request.headers.get('X-Internal-Token') != expected_token:
+            return jsonify({'error': 'Route not found'}), 404
+        from sqlalchemy import text
+        result = {}
+        try:
+            db.session.execute(text(
+                "ALTER TABLE visits ADD COLUMN IF NOT EXISTS sales_manager_id INTEGER REFERENCES users(id)"
+            ))
+            db.session.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_visits_sales_manager_id ON visits(sales_manager_id)"
+            ))
+            db.session.commit()
+            cols = db.session.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'visits' AND column_name = 'sales_manager_id'"
+            )).fetchall()
+            result['sales_manager_id_present'] = bool(cols)
+        except Exception as exc:
+            db.session.rollback()
+            result['error'] = f'{type(exc).__name__}: {exc}'
+        return jsonify(result), 200
+
     @app.errorhandler(404)
     def not_found(_err):
         return jsonify({'error': 'Route not found'}), 404
