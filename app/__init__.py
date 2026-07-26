@@ -386,42 +386,6 @@ def create_app(config_name: str = None) -> Flask:
             'db_identity': db_identity,
         }), 200
 
-    @app.route('/api/_internal/phase13j-fixups-20260726', methods=['POST'])
-    def _phase13j_fixups():
-        # Temporary, token-gated, runs through this app's own already-
-        # correct db.session. Applies the visits.view/visits.manage TENANT
-        # grant for Sales Manager/Relationship Manager. Delete once verified.
-        import os
-        expected_token = os.environ.get('INTERNAL_OPS_TOKEN')
-        if not expected_token or request.headers.get('X-Internal-Token') != expected_token:
-            return jsonify({'error': 'Route not found'}), 404
-        from sqlalchemy import text
-        result = {}
-        try:
-            db.session.execute(text(
-                "INSERT INTO role_permissions "
-                "(tenant_id, business_role_id, permission_id, scope_type, effect) "
-                "SELECT br.tenant_id, br.id, p.id, 'TENANT', 'ALLOW' "
-                "FROM business_roles br CROSS JOIN permission_definitions p "
-                "WHERE br.key IN ('SALES_MANAGER', 'RELATIONSHIP_MANAGER') "
-                "AND p.key IN ('visits.view', 'visits.manage') AND br.tenant_id IS NOT NULL "
-                "ON CONFLICT DO NOTHING"
-            ))
-            db.session.commit()
-            rows = db.session.execute(text(
-                "SELECT br.key, p.key, rp.scope_type FROM role_permissions rp "
-                "JOIN business_roles br ON br.id = rp.business_role_id "
-                "JOIN permission_definitions p ON p.id = rp.permission_id "
-                "WHERE p.key IN ('visits.view', 'visits.manage') "
-                "AND br.key IN ('SALES_MANAGER', 'RELATIONSHIP_MANAGER') "
-                "AND rp.scope_type = 'TENANT'"
-            )).fetchall()
-            result['grants_now_present'] = [list(r) for r in rows]
-        except Exception as exc:
-            db.session.rollback()
-            result['error'] = f'{type(exc).__name__}: {exc}'
-        return jsonify(result), 200
-
     @app.errorhandler(404)
     def not_found(_err):
         return jsonify({'error': 'Route not found'}), 404
