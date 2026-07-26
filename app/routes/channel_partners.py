@@ -91,6 +91,29 @@ def _page_args():
     return page, per_page
 
 
+def _visible_assignment_user_ids(user):
+    """None means unrestricted (admin-like); otherwise the set of user ids
+    whose active assignments make a Channel Partner visible to *user* - the
+    caller themself plus, for a manager, their reporting-line team (mirrors
+    the Lead co-ownership visibility model in app.utils.leads)."""
+    if user.role in ('superadmin', 'platform_owner'):
+        return None
+    from app.utils.leads import _reporting_team_ids
+    return _reporting_team_ids(user)
+
+
+def _can_view_partner(partner, user):
+    visible_ids = _visible_assignment_user_ids(user)
+    if visible_ids is None:
+        return True
+    return ChannelPartnerAssignment.query.filter(
+        ChannelPartnerAssignment.tenant_id == _tenant_id(),
+        ChannelPartnerAssignment.channel_partner_id == partner.id,
+        ChannelPartnerAssignment.is_active.is_(True),
+        ChannelPartnerAssignment.user_id.in_(visible_ids),
+    ).first() is not None
+
+
 def _partner(partner_id, include_inactive=True):
     query = ChannelPartner.query.options(
         selectinload(ChannelPartner.contacts),
@@ -343,6 +366,16 @@ def list_channel_partners():
             query = query.filter(
                 ChannelPartnerAssignment.user_id == assigned_user_id
             )
+    visible_ids = _visible_assignment_user_ids(request.current_user)
+    if visible_ids is not None:
+        visible_partner_ids = db.session.query(
+            ChannelPartnerAssignment.channel_partner_id
+        ).filter(
+            ChannelPartnerAssignment.tenant_id == _tenant_id(),
+            ChannelPartnerAssignment.is_active.is_(True),
+            ChannelPartnerAssignment.user_id.in_(visible_ids),
+        )
+        query = query.filter(ChannelPartner.id.in_(visible_partner_ids))
     query = query.distinct()
     total = query.count()
     rows = query.order_by(
@@ -394,6 +427,21 @@ def create_channel_partner():
         _apply_profile(row, data)
         db.session.add(row)
         db.session.flush()
+        for owner_type, payload_key in (
+            ('SALES_MANAGER', 'sales_manager_id'),
+            ('RELATIONSHIP_MANAGER', 'relationship_manager_id'),
+        ):
+            owner_user_id = data.get(payload_key)
+            if not owner_user_id:
+                continue
+            owner_user = _validate_assignment_user(owner_user_id, owner_type)
+            db.session.add(ChannelPartnerAssignment(
+                tenant_id=_tenant_id(),
+                channel_partner_id=row.id,
+                user_id=owner_user.id,
+                assignment_type=owner_type,
+                assigned_by=request.current_user.id,
+            ))
         correlation_id = _cid()
         _audit(
             'channel_partner_created', 'ChannelPartner', row.id,
@@ -418,6 +466,8 @@ def get_channel_partner(partner_id):
     row = _partner(partner_id)
     if not row:
         return jsonify({'error': 'Channel Partner not found'}), 404
+    if not _can_view_partner(row, request.current_user):
+        return jsonify({'error': 'Permission denied'}), 403
     reveal = _can_reveal()
     return jsonify({
         'channel_partner': row.to_dict(
@@ -806,6 +856,8 @@ def channel_partner_timeline(partner_id):
     partner = _partner(partner_id)
     if not partner:
         return jsonify({'error': 'Channel Partner not found'}), 404
+    if not _can_view_partner(partner, request.current_user):
+        return jsonify({'error': 'Permission denied'}), 403
     limit = min(200, max(10, request.args.get('limit', 100, type=int)))
     entries = []
     participants = VisitParticipant.query.filter_by(

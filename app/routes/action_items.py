@@ -607,6 +607,23 @@ def _apply_filters(query):
         query = query.filter(
             ActionItem.source_type == args['source_type'].strip().upper()
         )
+    date_from = args.get('date_from')
+    date_to = args.get('date_to')
+    if date_from:
+        try:
+            query = query.filter(
+                ActionItem.due_at >= datetime.strptime(date_from, '%Y-%m-%d')
+            )
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            query = query.filter(
+                ActionItem.due_at
+                < datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)
+            )
+        except ValueError:
+            pass
     if args.get('due_today', '').lower() == 'true':
         start, end = business_date_bounds_utc_naive()
         query = query.filter(ActionItem.due_at >= start, ActionItem.due_at < end)

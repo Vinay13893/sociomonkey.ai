@@ -327,7 +327,18 @@ def lead_report():
     terminal_statuses = ['booking_done', 'lost', 'junk', 'not_interested']
     stale_cutoff = datetime.utcnow() - timedelta(days=5)
     today_start = datetime(datetime.utcnow().year, datetime.utcnow().month, datetime.utcnow().day)
-    unassigned_count = query.filter(Lead.assigned_to.is_(None)).count()
+    # Allocation Pending = nobody at all owns this lead yet across any of
+    # the co-ownership slots (assigned_to, sales_manager_id, plus the
+    # pre-sales calling_manager_id/caller_id slots) - checking assigned_to
+    # alone overstated this for tenants using pre-sales co-ownership, since
+    # a lead already picked up by a Calling Manager/Caller but not yet
+    # handed to a final RM would still count as "pending".
+    unassigned_count = query.filter(
+        Lead.assigned_to.is_(None),
+        Lead.sales_manager_id.is_(None),
+        Lead.calling_manager_id.is_(None),
+        Lead.caller_id.is_(None),
+    ).count()
     pending_callbacks = db.session.query(func.count(func.distinct(CallbackReminder.lead_id))).filter(
         CallbackReminder.tenant_id == user.tenant_id,
         CallbackReminder.status == 'pending',
