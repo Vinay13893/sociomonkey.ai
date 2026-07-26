@@ -96,12 +96,22 @@ def _active_configuration(model, internal_key, label):
 
 
 def _business_bounds():
-    raw = str(request.args.get('date') or '').strip()
+    """[start, end) bounds for a business date range. `date_to` is optional
+    and additive - every existing caller that only ever sent `date` keeps
+    its exact single-business-day behaviour (date_to defaults to date)."""
+    raw_from = str(request.args.get('date') or '').strip()
+    raw_to = str(request.args.get('date_to') or '').strip()
     try:
-        selected = date.fromisoformat(raw) if raw else None
+        selected_from = date.fromisoformat(raw_from) if raw_from else None
+        selected_to = date.fromisoformat(raw_to) if raw_to else None
     except ValueError as exc:
         raise ValueError('date must use YYYY-MM-DD') from exc
-    return business_date_bounds_utc_naive(selected)
+    start, end = business_date_bounds_utc_naive(selected_from)
+    if selected_to:
+        if selected_from and selected_to < selected_from:
+            raise ValueError('date_to cannot be before date')
+        _, end = business_date_bounds_utc_naive(selected_to)
+    return start, end
 
 
 def _business_date_label():
