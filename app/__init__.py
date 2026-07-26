@@ -372,11 +372,18 @@ def create_app(config_name: str = None) -> Flask:
 
     @app.route('/api/health', methods=['GET'])
     def health_check():
+        db_identity = None
+        try:
+            from urllib.parse import urlparse
+            db_identity = urlparse(app.config.get('SQLALCHEMY_DATABASE_URI') or '').hostname
+        except Exception:
+            db_identity = 'unavailable'
         return jsonify({
             'status': 'ok',
             'service': 'sociomonkey-backend',
             'env': app.config.get('ENV', config_name),
             'lead_count_contract': 'valid-capture-v1',
+            'db_identity': db_identity,
         }), 200
 
     @app.errorhandler(404)
