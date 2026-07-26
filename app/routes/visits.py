@@ -298,14 +298,50 @@ def list_visits():
         query = query.outerjoin(Lead, Lead.id == Visit.lead_id).filter(or_(
             Visit.purpose.ilike(like), Visit.source.ilike(like), Lead.name.ilike(like),
         ))
+
+    # Opt-in participant scoping (e.g. Channel Partner "Meetings") - never
+    # applied unless explicitly requested, so Reception's existing
+    # unrestricted TENANT-wide visit listing stays exactly as it was.
+    participant_type = str(request.args.get('participant_type') or '').upper()
+    if participant_type:
+        participant_visit_ids = db.session.query(VisitParticipant.visit_id).filter(
+            VisitParticipant.tenant_id == _tenant_id(),
+            VisitParticipant.participant_type == participant_type,
+        )
+        query = query.filter(Visit.id.in_(participant_visit_ids))
+        visible_ids = _visible_assignee_ids(request.current_user)
+        if visible_ids is not None:
+            query = query.filter(Visit.assigned_user_id.in_(visible_ids))
+
     total = query.count()
     rows = query.order_by(
         Visit.expected_arrival.desc().nullslast(), Visit.id.desc()
     ).offset((page - 1) * per_page).limit(per_page).all()
+    serialized = []
+    for row in rows:
+        item = row.to_dict(include_details=False)
+        if participant_type:
+            participant = next(
+                (p for p in row.participants if p.participant_type == participant_type),
+                None,
+            )
+            item['participant_id'] = participant.reference_id if participant else None
+            item['participant_name'] = participant.display_name if participant else None
+        serialized.append(item)
     return jsonify({
-        'visits': [row.to_dict(include_details=False) for row in rows],
+        'visits': serialized,
         'pagination': {'page': page, 'per_page': per_page, 'total': total},
     })
+
+
+def _visible_assignee_ids(user):
+    """None means unrestricted (admin-like); otherwise the set of user ids
+    whose visits are visible to *user* - mirrors the Channel Partner
+    ownership visibility model (app.routes.channel_partners)."""
+    if user.role in ('superadmin', 'platform_owner'):
+        return None
+    from app.utils.leads import _reporting_team_ids
+    return _reporting_team_ids(user)
 
 
 @visits_bp.post('')
