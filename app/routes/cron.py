@@ -528,6 +528,26 @@ def meta_report_sync():
         return jsonify({'ok': False, 'error': str(exc)}), 500
 
 
+@cron_bp.route('/check-lead-source-health', methods=['GET', 'POST'])
+def check_lead_source_health_route():
+    """
+    Live token-validity check on every active Meta lead source. Alerts
+    tenant admins (in-app + push) the first time a source's OAuth token
+    goes invalid, then again roughly once/day while it stays broken.
+    """
+    if not _auth_cron():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        from app.services.lead_source_health import check_lead_source_health
+        summary = check_lead_source_health()
+        logger.info('[Cron] check-lead-source-health complete: %s', summary)
+        return jsonify({'ok': True, 'ts': datetime.utcnow().isoformat(), 'summary': summary}), 200
+    except Exception as exc:
+        logger.exception('[Cron] check-lead-source-health error: %s', exc)
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
 @cron_bp.route('/repair-source-lead-visibility', methods=['POST'])
 def repair_source_lead_visibility():
     """Repair leads linked to valid post-cutoff lead-source logs."""
