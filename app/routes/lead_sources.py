@@ -7100,4 +7100,112 @@ def run_validation():
 
     db.session.commit()
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TEMPORARY: Meta ingestion diagnostics (2026-07-27)
+# Token-gated read-only audit of every Meta LeadSource - live token/permission
+# check against the Graph API plus the actual page webhook subscription state,
+# to find why leads have stopped arriving without needing tenant admin login.
+# Remove once the root cause is confirmed and fixed.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@lead_sources_bp.route('/_internal/meta-diagnostics-20260727', methods=['GET'])
+def _internal_meta_diagnostics():
+    configured_token = os.environ.get('INTERNAL_OPS_TOKEN')
+    if not configured_token or request.headers.get('X-Internal-Token') != configured_token:
+        return jsonify({'error': 'Not found'}), 404
+
+    sources = LeadSource.query.filter_by(source_type='meta').all()
+    report = []
+    for source in sources:
+        creds = source.credentials or {}
+        entry = {
+            'source_id': source.id,
+            'tenant_id': source.tenant_id,
+            'tenant_name': source.tenant.name if source.tenant else None,
+            'name': source.name,
+            'is_active': source.is_active,
+            'connected_account': source.connected_account,
+            'stored_permission_status': source.permission_status,
+            'stored_permission_details': source.permission_details,
+            'last_tested_at': source.last_tested_at.isoformat() if source.last_tested_at else None,
+            'last_test_result': source.last_test_result,
+            'last_test_message': source.last_test_message,
+            'last_lead_at': source.last_lead_at.isoformat() if source.last_lead_at else None,
+            'total_leads_ingested': source.total_leads_ingested,
+            'total_errors': source.total_errors,
+            'has_user_token': bool(creds.get('user_token')),
+            'has_page_access_token': bool(creds.get('page_access_token') or creds.get('access_token')),
+            'has_app_secret': bool(creds.get('app_secret')),
+            'page_id': creds.get('page_id') or None,
+            'form_id': creds.get('form_id') or None,
+            'available_forms_count': len(source.available_forms or []),
+            'webhook_token_present': bool(source.webhook_token),
+        }
+
+        try:
+            entry['live_test'] = _test_meta(source)
+        except Exception as exc:
+            entry['live_test'] = {'result': 'fail', 'message': f'live test crashed: {exc}'}
+
+        page_id = str(creds.get('page_id') or '').strip()
+        page_token = str(creds.get('page_access_token') or creds.get('access_token') or '').strip()
+        if page_id and page_token:
+            try:
+                sub_url = (
+                    f'https://graph.facebook.com/v25.0/{_parse.quote(page_id)}/subscribed_apps'
+                    f'?access_token={_parse.quote(page_token)}'
+                )
+                with _req.urlopen(_req.Request(sub_url), timeout=10) as resp:
+                    sub_data = _json.loads(resp.read())
+                apps = sub_data.get('data', []) if isinstance(sub_data, dict) else []
+                entry['webhook_subscription'] = {
+                    'subscribed_app_count': len(apps),
+                    'apps': [
+                        {
+                            'id': a.get('id'),
+                            'name': a.get('name'),
+                            'subscribed_fields': a.get('subscribed_fields', []),
+                        }
+                        for a in apps
+                    ],
+                }
+            except Exception as exc:
+                entry['webhook_subscription'] = {'error': str(exc)}
+        else:
+            entry['webhook_subscription'] = {'error': 'no page_id/page_token stored on this source'}
+
+        report.append(entry)
+
+    source_ids = [s.id for s in sources]
+    recent_logs = []
+    if source_ids:
+        recent_logs = (
+            IngestedLeadLog.query
+            .filter(IngestedLeadLog.source_id.in_(source_ids))
+            .order_by(IngestedLeadLog.received_at.desc())
+            .limit(20)
+            .all()
+        )
+
+    return jsonify({
+        'meta_sources': report,
+        'recent_ingestion_logs': [
+            {
+                'id': log.id,
+                'source_id': log.source_id,
+                'status': log.status,
+                'error_message': log.error_message,
+                'received_at': log.received_at.isoformat() if log.received_at else None,
+                'platform_lead_id': log.platform_lead_id,
+            }
+            for log in recent_logs
+        ],
+        'app_env_check': {
+            'META_APP_ID_set': bool(os.environ.get('META_APP_ID')),
+            'META_APP_SECRET_set': bool(os.environ.get('META_APP_SECRET')),
+            'BACKEND_URL': os.environ.get('BACKEND_URL', ''),
+        },
+    }), 200
+
     return jsonify(report), 200
