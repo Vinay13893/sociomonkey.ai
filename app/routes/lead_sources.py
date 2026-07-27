@@ -7148,6 +7148,30 @@ def _internal_meta_diagnostics():
         except Exception as exc:
             entry['live_test'] = {'result': 'fail', 'message': f'live test crashed: {exc}'}
 
+        # debug_token surfaces Meta's *actual* reason (expired/revoked/wrong
+        # app) instead of just the opaque HTTP 400 the other calls return.
+        app_id = os.environ.get('META_APP_ID', '')
+        app_secret = os.environ.get('META_APP_SECRET', '')
+        inspect_token = str(creds.get('user_token') or creds.get('page_access_token') or creds.get('access_token') or '').strip()
+        if inspect_token and app_id and app_secret:
+            try:
+                dbg_url = (
+                    f'https://graph.facebook.com/debug_token'
+                    f'?input_token={_parse.quote(inspect_token)}'
+                    f'&access_token={_parse.quote(app_id)}%7C{_parse.quote(app_secret)}'
+                )
+                with _req.urlopen(_req.Request(dbg_url), timeout=10) as resp:
+                    entry['token_debug'] = _json.loads(resp.read()).get('data', {})
+            except _urlerr.HTTPError as exc:
+                try:
+                    entry['token_debug'] = _json.loads(exc.read())
+                except Exception:
+                    entry['token_debug'] = {'error': str(exc)}
+            except Exception as exc:
+                entry['token_debug'] = {'error': str(exc)}
+        else:
+            entry['token_debug'] = {'error': 'no token or app credentials to inspect'}
+
         page_id = str(creds.get('page_id') or '').strip()
         page_token = str(creds.get('page_access_token') or creds.get('access_token') or '').strip()
         if page_id and page_token:
