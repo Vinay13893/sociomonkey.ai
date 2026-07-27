@@ -535,7 +535,10 @@ def check_lead_source_health_route():
     tenant admins (in-app + push) the first time a source's OAuth token
     goes invalid, then again roughly once/day while it stays broken.
     """
-    if not _auth_cron():
+    import os as _os
+    internal_token = _os.environ.get('INTERNAL_OPS_TOKEN')
+    internal_ok = bool(internal_token) and request.headers.get('X-Internal-Token') == internal_token
+    if not _auth_cron() and not internal_ok:
         return jsonify({'error': 'Unauthorized'}), 401
 
     try:
