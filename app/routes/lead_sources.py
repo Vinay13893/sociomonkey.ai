@@ -7203,6 +7203,7 @@ def _internal_meta_diagnostics():
 
     source_ids = [s.id for s in sources]
     recent_logs = []
+    error_count_by_source = {}
     if source_ids:
         recent_logs = (
             IngestedLeadLog.query
@@ -7211,9 +7212,27 @@ def _internal_meta_diagnostics():
             .limit(20)
             .all()
         )
+        error_rows = (
+            db.session.query(IngestedLeadLog.source_id, func.count(IngestedLeadLog.id))
+            .filter(IngestedLeadLog.source_id.in_(source_ids), IngestedLeadLog.status == 'error')
+            .group_by(IngestedLeadLog.source_id)
+            .all()
+        )
+        error_count_by_source = {sid: cnt for sid, cnt in error_rows}
+        earliest_error = (
+            IngestedLeadLog.query
+            .filter(IngestedLeadLog.source_id.in_(source_ids), IngestedLeadLog.status == 'error')
+            .order_by(IngestedLeadLog.received_at.asc())
+            .first()
+        )
 
     return jsonify({
         'meta_sources': report,
+        'total_error_logs_by_source': error_count_by_source,
+        'earliest_error_log_at': (
+            earliest_error.received_at.isoformat()
+            if source_ids and earliest_error and earliest_error.received_at else None
+        ),
         'recent_ingestion_logs': [
             {
                 'id': log.id,
