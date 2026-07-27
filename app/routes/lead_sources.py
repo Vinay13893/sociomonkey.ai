@@ -2599,6 +2599,12 @@ def _test_meta(source: LeadSource) -> dict:
 
         me_data = {'name': source.connected_account or 'Meta Account'}
         granted = []
+        # None (not []) means "couldn't introspect" - e.g. a Business System
+        # User token, which has no OAuth consent-scope list the way a
+        # personal login does. Asset access for those comes from Business
+        # Manager role assignment instead, so an empty /me/permissions
+        # response there is expected, not a sign the connection is broken.
+        permissions_introspectable = True
 
         # Prefer user token for account + permission checks.
         if user_token:
@@ -2606,10 +2612,15 @@ def _test_meta(source: LeadSource) -> dict:
             with urllib_req.urlopen(urllib_req.Request(me_url), timeout=10) as resp:
                 me_data = _json.loads(resp.read())
 
-            perm_url = f'https://graph.facebook.com/v25.0/me/permissions?access_token={urllib_parse.quote(user_token)}'
-            with urllib_req.urlopen(urllib_req.Request(perm_url), timeout=10) as resp:
-                perm_data = _json.loads(resp.read())
-            granted = [p['permission'] for p in perm_data.get('data', []) if p.get('status') == 'granted']
+            try:
+                perm_url = f'https://graph.facebook.com/v25.0/me/permissions?access_token={urllib_parse.quote(user_token)}'
+                with urllib_req.urlopen(urllib_req.Request(perm_url), timeout=10) as resp:
+                    perm_data = _json.loads(resp.read())
+                granted = [p['permission'] for p in perm_data.get('data', []) if p.get('status') == 'granted']
+                if not granted:
+                    permissions_introspectable = False
+            except Exception:
+                permissions_introspectable = False
 
         # List pages using available token.
         pages_url = f'https://graph.facebook.com/v25.0/me/accounts?access_token={urllib_parse.quote(test_token)}'
@@ -2664,8 +2675,16 @@ def _test_meta(source: LeadSource) -> dict:
         required = _get_meta_oauth_scopes()
         missing  = [r for r in required if r not in granted]
 
+        # A Business System User token has no OAuth permissions list to
+        # introspect, but successfully listing pages/forms above already
+        # proves the token works for the operations we actually need -
+        # don't report it as "missing permissions" just because the
+        # consent-scope check doesn't apply to this token type.
+        if user_token and not permissions_introspectable and pages:
+            perm_status = 'ok'
+            missing = []
         # If no user token exists, report partial rather than hard-fail.
-        if not user_token:
+        elif not user_token:
             perm_status = 'partial'
             if 'user_token' not in missing:
                 missing = ['user_token'] + missing
@@ -2674,7 +2693,8 @@ def _test_meta(source: LeadSource) -> dict:
 
         return {
             'result': 'pass' if not missing else 'partial',
-            'message': f'Connected as {me_data.get("name", "Unknown")}. {len(pages)} page(s) accessible.',
+            'message': f'Connected as {me_data.get("name", "Unknown")}. {len(pages)} page(s) accessible.'
+                       + ('' if permissions_introspectable else ' (Business System User token - permission scopes are granted via Business Manager, not OAuth consent.)'),
             'connected_account': me_data.get('name', ''),
             'permission_status': perm_status,
             'permission_details': {'granted': granted, 'missing': missing, 'required': required},
