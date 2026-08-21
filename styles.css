@@ -1125,6 +1125,113 @@ a:focus-visible {
   color: #334155;
 }
 
+.leads-source-cell,
+.leads-table {
+  overflow: visible;
+}
+
+.lead-attribution-wrap {
+  position: relative;
+  display: inline-flex;
+  justify-content: center;
+  max-width: 100%;
+}
+
+.lead-attribution-trigger {
+  gap: 5px;
+  max-width: 100%;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, color .15s ease;
+}
+
+.lead-attribution-trigger:hover,
+.lead-attribution-trigger[aria-expanded="true"] {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.lead-attribution-trigger > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lead-attribution-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border-radius: 50%;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.lead-attribution-popover {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 7px);
+  left: 50%;
+  width: min(320px, 78vw);
+  padding: 13px;
+  transform: translateX(-50%);
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, .18);
+  text-align: left;
+}
+
+.lead-attribution-popover[hidden] { display: none; }
+
+.lead-attribution-heading {
+  margin-bottom: 9px;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.lead-attribution-row {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 9px;
+  padding: 7px 0;
+  border-top: 1px solid #f1f5f9;
+}
+
+.lead-attribution-row span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.lead-attribution-row strong {
+  color: #1e293b;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .lead-attribution-wrap { justify-content: flex-start; }
+  .lead-attribution-popover {
+    position: fixed;
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    transform: none;
+  }
+}
+
 .lead-status-chip {
   display: inline-flex;
   align-items: center;

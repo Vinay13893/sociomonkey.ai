@@ -563,6 +563,56 @@ function _sourceBadgeLabel(source) {
   return map[norm] || src
 }
 
+function _leadSourceCellHtml(lead) {
+  var item = lead || {}
+  var pageName = String(item.page_name || '').trim()
+  var audience = String(item.audience || item.ad_set_name || '').trim()
+  var adName = String(item.ad_name || '').trim()
+  var hasMetaAttribution = Boolean(pageName || audience || adName)
+  var label = pageName || _sourceBadgeLabel(item.source)
+  if (!hasMetaAttribution) return `<span class="leads-source-badge">${escape(label)}</span>`
+
+  return `<div class="lead-attribution-wrap">
+    <button type="button" class="leads-source-badge lead-attribution-trigger" aria-expanded="false" aria-controls="leadAttribution-${item.id}" onclick="toggleLeadAttributionPopover(event, ${item.id})">
+      <span>${escape(label)}</span><span class="lead-attribution-caret">i</span>
+    </button>
+    <div class="lead-attribution-popover" id="leadAttribution-${item.id}" role="dialog" aria-label="Meta lead attribution" hidden>
+      <div class="lead-attribution-heading">Meta lead details</div>
+      <div class="lead-attribution-row"><span>Page</span><strong>${escape(pageName || 'Not available')}</strong></div>
+      <div class="lead-attribution-row"><span>Audience</span><strong>${escape(audience || 'Not available')}</strong></div>
+      <div class="lead-attribution-row"><span>Ad</span><strong>${escape(adName || 'Not available')}</strong></div>
+    </div>
+  </div>`
+}
+
+function closeLeadAttributionPopovers(exceptId) {
+  document.querySelectorAll('.lead-attribution-popover').forEach(function (popover) {
+    if (exceptId && popover.id === exceptId) return
+    popover.hidden = true
+    var trigger = popover.parentElement && popover.parentElement.querySelector('.lead-attribution-trigger')
+    if (trigger) trigger.setAttribute('aria-expanded', 'false')
+  })
+}
+
+function toggleLeadAttributionPopover(event, leadId) {
+  if (event) event.stopPropagation()
+  var popoverId = 'leadAttribution-' + Number(leadId)
+  var popover = document.getElementById(popoverId)
+  if (!popover) return
+  var willOpen = popover.hidden
+  closeLeadAttributionPopovers(willOpen ? popoverId : null)
+  popover.hidden = !willOpen
+  var trigger = popover.parentElement && popover.parentElement.querySelector('.lead-attribution-trigger')
+  if (trigger) trigger.setAttribute('aria-expanded', willOpen ? 'true' : 'false')
+}
+
+document.addEventListener('click', function (event) {
+  if (!event.target.closest('.lead-attribution-wrap')) closeLeadAttributionPopovers()
+})
+document.addEventListener('keydown', function (event) {
+  if (event.key === 'Escape') closeLeadAttributionPopovers()
+})
+
 function _leadsSyncQuickFilterChips(statusFilter) {
   var target = String(statusFilter || '')
   var chips = document.querySelectorAll('.leads-quick-chip')
@@ -745,7 +795,7 @@ async function filterAndRenderLeads(resetPage = true) {
               <td class="ta-center" data-label="Phone" style="padding:6px 4px;">
                 <button class="leads-phone-link" onclick='_abStartCallFlow(${l.id}, ${JSON.stringify(l.phone || '')}, ${JSON.stringify(l.name || 'Lead')})' title="Call lead">${escape(l.phone || '—')}</button>
               </td>
-              <td class="ta-center" data-label="Source" style="padding:6px 3px;"><span class="leads-source-badge">${escape(_sourceBadgeLabel(l.source))}</span></td>
+              <td class="ta-center leads-source-cell" data-label="Source" style="padding:6px 3px;">${_leadSourceCellHtml(l)}</td>
               <td class="ta-center" data-label="Project" style="font-size:11px;padding:6px 4px;">${escape(projectMap[l.project_id] || '-')}</td>
               <td class="ta-center" data-label="Status" style="padding:6px 3px;">${buildStatusControl(l)}</td>
               <td class="ta-center" data-label="Owner" style="font-size:11px;padding:6px 4px;">
@@ -1027,6 +1077,9 @@ async function bulkExportSelectedLeads() {
       Phone: l.phone || '',
       Email: l.email || '',
       Source: l.source || '',
+      PageName: l.page_name || '',
+      Audience: l.audience || l.ad_set_name || '',
+      AdName: l.ad_name || '',
       Status: l.status || '',
       Project: l.project_name || '',
       AssignedTo: l.assigned_to_name || '',
