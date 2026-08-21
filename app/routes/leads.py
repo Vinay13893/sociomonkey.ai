@@ -21,6 +21,7 @@ from app.utils.leads import (
     apply_valid_lead_capture_scope,
     VALID_STATUSES,
 )
+from app.utils.lead_attribution import latest_meta_attribution_for_leads
 from app.utils.time_utils import (
     business_date_bounds_utc_naive,
     IST,
@@ -397,8 +398,10 @@ def get_leads():
     lead_ids = [lead.id for lead in leads]
     latest_notes = {}
     next_callbacks = {}
+    meta_attribution = {}
 
     if lead_ids:
+        meta_attribution = latest_meta_attribution_for_leads(lead_ids)
         latest_note_subq = (
             db.session.query(
                 LeadNote.lead_id.label('lead_id'),
@@ -443,7 +446,7 @@ def get_leads():
         }
 
     def lead_list_dict(lead):
-        return {
+        payload = {
             'id': lead.id,
             'name': lead.name,
             'phone': lead.phone,
@@ -470,6 +473,8 @@ def get_leads():
             'latest_note': latest_notes.get(lead.id),
             'next_callback': next_callbacks.get(lead.id),
         }
+        payload.update(meta_attribution.get(lead.id) or {})
+        return payload
 
     total_pages = max(1, (total + page_size - 1) // page_size)
     server_time = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace('+00:00', 'Z')
@@ -2885,6 +2890,7 @@ def get_lead_detail_bundle(lead_id):
     )
     acquisition = None
     if latest_ingestion:
+        attribution = latest_meta_attribution_for_leads([lead_id]).get(lead_id) or {}
         acquisition = {
             'source_type': latest_ingestion.source_type,
             'platform_lead_id': latest_ingestion.platform_lead_id,
@@ -2897,6 +2903,8 @@ def get_lead_detail_bundle(lead_id):
             'form_id': latest_ingestion.form_id,
             'form_name': latest_ingestion.form_name,
             'page_id': latest_ingestion.page_id,
+            'page_name': attribution.get('page_name'),
+            'audience': attribution.get('audience') or latest_ingestion.ad_set_name,
             'mapped_fields': latest_ingestion.mapped_fields or {},
             'received_at': latest_ingestion.received_at.isoformat() if latest_ingestion.received_at else None,
         }

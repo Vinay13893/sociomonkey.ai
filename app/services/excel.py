@@ -20,6 +20,7 @@ from app.models.user import User
 from app.models.project import Project
 from app.utils.activity import log_activity
 from app.utils.leads import VALID_STATUSES
+from app.utils.lead_attribution import latest_meta_attribution_for_leads
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +40,7 @@ THIN_BORDER = Border(
 # Columns for the import template / export sheet
 LEAD_COLUMNS = [
     'ID', 'Name', 'Phone', 'Email', 'Source',
+    'Page Name', 'Audience', 'Ad Name',
     'Status', 'Budget Min', 'Budget Max',
     'Project ID', 'Project Name',
     'Assigned To (Email)', 'Assigned To (Name)',
@@ -185,14 +187,19 @@ class ExcelService:
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = THIN_BORDER
 
+        attribution_by_lead = latest_meta_attribution_for_leads([lead.id for lead in leads])
         for row_idx, lead in enumerate(leads, start=2):
             fill = ALT_ROW_FILL if row_idx % 2 == 0 else PatternFill()
+            attribution = attribution_by_lead.get(lead.id) or {}
             row_values = [
                 lead.id,
                 lead.name,
                 lead.phone or '',
                 lead.email or '',
                 lead.source or '',
+                attribution.get('page_name') or '',
+                attribution.get('audience') or '',
+                attribution.get('ad_name') or '',
                 lead.status or '',
                 lead.budget_min,
                 lead.budget_max,
@@ -211,7 +218,7 @@ class ExcelService:
         ws.freeze_panes = 'A2'
         ws.auto_filter.ref = f'A1:{get_column_letter(len(LEAD_COLUMNS))}1'
 
-        col_widths = [6, 25, 16, 28, 16, 22, 14, 14, 12, 25, 30, 25, 20, 20]
+        col_widths = [6, 25, 16, 28, 20, 28, 42, 32, 22, 14, 14, 12, 25, 30, 25, 20, 20]
         for col_idx, width in enumerate(col_widths, start=1):
             ws.column_dimensions[get_column_letter(col_idx)].width = width
 
