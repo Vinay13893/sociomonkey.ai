@@ -61,6 +61,13 @@ from app.utils.lead_source_cutoff import (
     effective_start_with_cutoff,
     lead_source_cutoff_for,
 )
+from app.utils.time_utils import (
+    business_date_range_utc_naive,
+    now_ist,
+    parse_business_date,
+    to_ist_str,
+    utc_naive_to_business_datetime,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -518,30 +525,26 @@ def _enrich_attribution_rows_with_meta(user, rows, date_from='', date_to='', inc
 
 
 def _apply_log_date_filters(query, model, date_from, date_to):
-    if date_from:
-        try:
-            query = query.filter(model.received_at >= datetime.fromisoformat(date_from))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            query = query.filter(model.received_at < datetime.fromisoformat(date_to) + timedelta(days=1))
-        except ValueError:
-            pass
+    try:
+        start, end = business_date_range_utc_naive(date_from, date_to)
+    except ValueError:
+        return query
+    if start:
+        query = query.filter(model.received_at >= start)
+    if end:
+        query = query.filter(model.received_at < end)
     return query
 
 
 def _apply_snapshot_date_filters(query, date_from, date_to):
-    if date_from:
-        try:
-            query = query.filter(MetaCampaignSnapshot.snapshot_at >= datetime.fromisoformat(date_from))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            query = query.filter(MetaCampaignSnapshot.snapshot_at < datetime.fromisoformat(date_to) + timedelta(days=1))
-        except ValueError:
-            pass
+    try:
+        start, end = business_date_range_utc_naive(date_from, date_to)
+    except ValueError:
+        return query
+    if start:
+        query = query.filter(MetaCampaignSnapshot.snapshot_at >= start)
+    if end:
+        query = query.filter(MetaCampaignSnapshot.snapshot_at < end)
     return query
 
 
@@ -549,7 +552,8 @@ def _parse_report_datetime(value):
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).strip())
+        start, _ = business_date_range_utc_naive(value, None)
+        return start
     except ValueError:
         return None
 
@@ -561,7 +565,7 @@ def _effective_source_start(source_obj, date_from=''):
 
 def _source_added_iso(source_obj):
     created = getattr(source_obj, 'created_at', None)
-    return created.isoformat() if created else None
+    return to_ist_str(created) if created else None
 
 
 def _source_form_project_map(tenant_id, source_ids):
@@ -586,7 +590,7 @@ def _source_form_project_map(tenant_id, source_ids):
 
 
 def _metric_timestamp(value):
-    return value.isoformat() if value else None
+    return to_ist_str(value) if value else None
 
 
 def _snapshot_quality_score(snapshot: MetaCampaignSnapshot):
@@ -642,15 +646,19 @@ def _resolve_project_name(lead_obj, extra_metrics, source_id=None, form_id=None,
 
 
 def _report_date_to_exclusive(date_to=''):
-    parsed = _parse_report_datetime(date_to)
-    if parsed:
-        return parsed + timedelta(days=1)
-    return None
+    try:
+        _, end = business_date_range_utc_naive(None, date_to)
+        return end
+    except ValueError:
+        return None
 
 
 def _report_meta_until_date(date_to=''):
-    parsed = _parse_report_datetime(date_to)
-    return (parsed.date() if parsed else datetime.utcnow().date()).isoformat()
+    try:
+        parsed = parse_business_date(date_to)
+    except ValueError:
+        parsed = None
+    return (parsed or now_ist().date()).isoformat()
 
 
 def _snapshot_matches_report_window(snapshot, source_obj, date_from='', date_to=''):
@@ -658,7 +666,10 @@ def _snapshot_matches_report_window(snapshot, source_obj, date_from='', date_to=
     insight_from = extra.get('insight_date_from')
     insight_to = extra.get('insight_date_to')
     effective_start = _effective_source_start(source_obj, date_from)
-    expected_from = (effective_start.date() if effective_start else datetime.utcnow().date()).isoformat()
+    expected_from = (
+        utc_naive_to_business_datetime(effective_start).date()
+        if effective_start else now_ist().date()
+    ).isoformat()
     expected_to = _report_meta_until_date(date_to)
     if insight_from or insight_to:
         return insight_from == expected_from and insight_to == expected_to
@@ -813,7 +824,7 @@ def _build_performance_report(user, date_from='', date_to='', source_id=None, in
                 'source_id': log_row.source_id,
                 'source_name': source_obj.name if source_obj else 'Unknown Source',
                 'source_added_at': _source_added_iso(source_obj),
-                'effective_date_from': effective_start.isoformat() if effective_start else None,
+                'effective_date_from': to_ist_str(effective_start) if effective_start else None,
                 'project_name': project_name,
                 'source_status': 'Active Source' if source_obj and source_obj.is_active else 'Archived Source',
                 'leads': 0,
@@ -844,8 +855,8 @@ def _build_performance_report(user, date_from='', date_to='', source_id=None, in
         elif status == 'error':
             source_bucket['errors'] += 1
 
-        if log_row.received_at and (not source_bucket['last_sync'] or log_row.received_at.isoformat() > source_bucket['last_sync']):
-            source_bucket['last_sync'] = log_row.received_at.isoformat()
+        if log_row.received_at and (not source_bucket['last_sync'] or to_ist_str(log_row.received_at) > source_bucket['last_sync']):
+            source_bucket['last_sync'] = to_ist_str(log_row.received_at)
 
         if status != 'processed' or not _is_reportable_meta_log(log_row, project_name):
             continue
@@ -863,7 +874,7 @@ def _build_performance_report(user, date_from='', date_to='', source_id=None, in
             campaign_bucket = {
                 'source_id': log_row.source_id,
                 'source_added_at': _source_added_iso(source_obj),
-                'effective_date_from': effective_start.isoformat() if effective_start else None,
+                'effective_date_from': to_ist_str(effective_start) if effective_start else None,
                 'project_name': project_name,
                 'campaign_id': log_row.campaign_id,
                 'campaign_name': log_row.campaign_name,
@@ -895,8 +906,8 @@ def _build_performance_report(user, date_from='', date_to='', source_id=None, in
             campaign_bucket['leads'] += 1
             campaign_bucket['created'] += 1
             campaign_bucket['total'] = campaign_bucket['leads']
-        if log_row.received_at and (not campaign_bucket['last_sync'] or log_row.received_at.isoformat() > campaign_bucket['last_sync']):
-            campaign_bucket['last_sync'] = log_row.received_at.isoformat()
+        if log_row.received_at and (not campaign_bucket['last_sync'] or to_ist_str(log_row.received_at) > campaign_bucket['last_sync']):
+            campaign_bucket['last_sync'] = to_ist_str(log_row.received_at)
 
     snapshot_query = (
         MetaCampaignSnapshot.query
@@ -1089,7 +1100,7 @@ def _build_lms_source_form_performance(user, date_from='', date_to='', source_id
             'source_type': src.source_type,
             'source_status': 'Active Source' if src.is_active else 'Archived Source',
             'source_added_at': _source_added_iso(src),
-            'effective_date_from': (_effective_source_start(src, date_from).isoformat() if _effective_source_start(src, date_from) else None),
+            'effective_date_from': (to_ist_str(_effective_source_start(src, date_from)) if _effective_source_start(src, date_from) else None),
             'form_id': '',
             'form_name': 'All Forms',
             'project_name': 'All Projects',
@@ -1133,7 +1144,7 @@ def _build_lms_source_form_performance(user, date_from='', date_to='', source_id
                 'source_type': row.source_type,
                 'source_status': 'Active Source' if source_obj and source_obj.is_active else 'Archived Source',
                 'source_added_at': _source_added_iso(source_obj),
-                'effective_date_from': effective_start.isoformat() if effective_start else None,
+                'effective_date_from': to_ist_str(effective_start) if effective_start else None,
                 'form_id': form_id,
                 'form_name': form_name,
                 'project_name': project_name,
@@ -1175,8 +1186,8 @@ def _build_lms_source_form_performance(user, date_from='', date_to='', source_id
             elif effective_status == 'error':
                 bucket['total_leads'] += 1
                 bucket['errors'] += 1
-            if row.received_at and (not bucket['last_sync'] or row.received_at.isoformat() > bucket['last_sync']):
-                bucket['last_sync'] = row.received_at.isoformat()
+            if row.received_at and (not bucket['last_sync'] or to_ist_str(row.received_at) > bucket['last_sync']):
+                bucket['last_sync'] = to_ist_str(row.received_at)
 
     snapshot_query = (
         db.session.query(
@@ -1306,7 +1317,6 @@ def _build_source_report_rows(user, date_from='', date_to='', source_id=None):
         log_query = log_query.filter(IngestedLeadLog.source_id.in_(active_source_ids))
     else:
         return []
-    log_query = log_query.filter(IngestedLeadLog.received_at >= LeadSource.created_at)
     tenant_cutoff = lead_source_cutoff_for(tenant_id=user.tenant_id)
     if tenant_cutoff:
         log_query = log_query.filter(IngestedLeadLog.received_at >= tenant_cutoff)
@@ -1334,7 +1344,7 @@ def _build_source_report_rows(user, date_from='', date_to='', source_id=None):
                 'source_id': log_row.source_id,
                 'source_name': source_obj.name if source_obj else 'Unknown Source',
                 'source_added_at': _source_added_iso(source_obj),
-                'effective_date_from': effective_start.isoformat() if effective_start else None,
+                'effective_date_from': to_ist_str(effective_start) if effective_start else None,
                 'project_name': project_name,
                 'source_status': 'Active Source' if source_obj and source_obj.is_active else 'Archived Source',
                 'source_type': log_row.source_type,
@@ -1356,8 +1366,8 @@ def _build_source_report_rows(user, date_from='', date_to='', source_id=None):
             bucket['duplicates'] += 1
         elif status == 'error':
             bucket['errors'] += 1
-        if log_row.received_at and (not bucket['last_sync'] or log_row.received_at.isoformat() > bucket['last_sync']):
-            bucket['last_sync'] = log_row.received_at.isoformat()
+        if log_row.received_at and (not bucket['last_sync'] or to_ist_str(log_row.received_at) > bucket['last_sync']):
+            bucket['last_sync'] = to_ist_str(log_row.received_at)
 
     snapshot_query = (
         MetaCampaignSnapshot.query
@@ -1426,7 +1436,6 @@ def _build_attribution_report_rows(user, date_from='', date_to='', source_id=Non
         log_query = log_query.filter(IngestedLeadLog.source_id.in_(active_source_ids))
     else:
         return []
-    log_query = log_query.filter(IngestedLeadLog.received_at >= LeadSource.created_at)
     tenant_cutoff = lead_source_cutoff_for(tenant_id=user.tenant_id)
     if tenant_cutoff:
         log_query = log_query.filter(IngestedLeadLog.received_at >= tenant_cutoff)
@@ -1461,7 +1470,7 @@ def _build_attribution_report_rows(user, date_from='', date_to='', source_id=Non
             bucket = {
                 'source_id': log_row.source_id,
                 'source_added_at': _source_added_iso(source_obj),
-                'effective_date_from': effective_start.isoformat() if effective_start else None,
+                'effective_date_from': to_ist_str(effective_start) if effective_start else None,
                 'project_name': project_name,
                 'campaign_id': log_row.campaign_id,
                 'campaign_name': log_row.campaign_name,
@@ -1489,8 +1498,8 @@ def _build_attribution_report_rows(user, date_from='', date_to='', source_id=Non
 
         bucket['total'] += 1
         bucket['created'] += 1
-        if log_row.received_at and (not bucket['last_sync'] or log_row.received_at.isoformat() > bucket['last_sync']):
-            bucket['last_sync'] = log_row.received_at.isoformat()
+        if log_row.received_at and (not bucket['last_sync'] or to_ist_str(log_row.received_at) > bucket['last_sync']):
+            bucket['last_sync'] = to_ist_str(log_row.received_at)
 
     snapshot_query = (
         MetaCampaignSnapshot.query
@@ -1635,7 +1644,10 @@ def _sync_meta_report_snapshots(user, date_from='', date_to='', source_id=None):
             continue
 
         effective_start = _effective_source_start(src, date_from)
-        since = (effective_start.date() if effective_start else datetime.utcnow().date()).isoformat()
+        since = (
+            utc_naive_to_business_datetime(effective_start).date()
+            if effective_start else now_ist().date()
+        ).isoformat()
         until = _report_meta_until_date(date_to)
 
         token = _meta_token_for_source(src)
@@ -2134,16 +2146,14 @@ def _active_lms_lead_counts_by_source_id(tenant_id, source_ids, date_from='', da
             Lead.is_test == False,
         )
     )
-    if date_from:
-        try:
-            query = query.filter(Lead.created_at >= datetime.fromisoformat(date_from))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            query = query.filter(Lead.created_at < datetime.fromisoformat(date_to) + timedelta(days=1))
-        except ValueError:
-            pass
+    try:
+        start, end = business_date_range_utc_naive(date_from, date_to)
+    except ValueError:
+        start = end = None
+    if start:
+        query = query.filter(Lead.created_at >= start)
+    if end:
+        query = query.filter(Lead.created_at < end)
     rows = query.group_by(IngestedLeadLog.source_id).all()
     return {int(row.source_id): int(row.lead_count or 0) for row in rows}
 
@@ -2154,16 +2164,14 @@ def _active_lms_lead_counts_by_source_name(tenant_id, date_from='', date_to=''):
         Lead.is_active == True,
         Lead.is_test == False,
     )
-    if date_from:
-        try:
-            query = query.filter(Lead.created_at >= datetime.fromisoformat(date_from))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            query = query.filter(Lead.created_at < datetime.fromisoformat(date_to) + timedelta(days=1))
-        except ValueError:
-            pass
+    try:
+        start, end = business_date_range_utc_naive(date_from, date_to)
+    except ValueError:
+        start = end = None
+    if start:
+        query = query.filter(Lead.created_at >= start)
+    if end:
+        query = query.filter(Lead.created_at < end)
     rows = (
         query
         .with_entities(func.coalesce(Lead.source, 'Unknown').label('source_name'), func.count(Lead.id).label('lead_count'))
@@ -3113,7 +3121,6 @@ def _connected_source_logs_query(user, source_id=None):
         .filter(IngestedLeadLog.tenant_id == user.tenant_id)
         .filter(LeadSource.tenant_id == user.tenant_id)
         .filter(LeadSource.is_active == True)
-        .filter(IngestedLeadLog.received_at >= LeadSource.created_at)
     )
     tenant_cutoff = lead_source_cutoff_for(tenant_id=user.tenant_id)
     if tenant_cutoff:
@@ -3228,16 +3235,7 @@ def ingestion_logs():
     q = _connected_source_logs_query(user, source_id=source_id)
     q = q.filter(IngestedLeadLog.status.in_(['processed', 'duplicate', 'error']))
     q = _apply_log_search_filter(q, search_q)
-    if date_from:
-        try:
-            q = q.filter(IngestedLeadLog.received_at >= datetime.fromisoformat(date_from))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            q = q.filter(IngestedLeadLog.received_at < datetime.fromisoformat(date_to) + timedelta(days=1))
-        except ValueError:
-            pass
+    q = _apply_log_date_filters(q, IngestedLeadLog, date_from, date_to)
 
     q = _apply_test_data_filter(q, IngestedLeadLog)
 
@@ -3471,16 +3469,7 @@ def ingestion_logs_export_csv():
     q = _connected_source_logs_query(user, source_id=source_id)
     q = q.filter(IngestedLeadLog.status.in_(['processed', 'duplicate', 'error']))
     q = _apply_log_search_filter(q, search_q)
-    if date_from:
-        try:
-            q = q.filter(IngestedLeadLog.received_at >= datetime.fromisoformat(date_from))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            q = q.filter(IngestedLeadLog.received_at < datetime.fromisoformat(date_to) + timedelta(days=1))
-        except ValueError:
-            pass
+    q = _apply_log_date_filters(q, IngestedLeadLog, date_from, date_to)
 
     q = _apply_test_data_filter(q, IngestedLeadLog)
 
@@ -3514,8 +3503,8 @@ def ingestion_logs_export_csv():
             l.lead_id,
             l.dup_of_lead_id,
             l.error_message,
-            l.received_at.isoformat() if l.received_at else '',
-            l.processed_at.isoformat() if l.processed_at else '',
+            to_ist_str(l.received_at) if l.received_at else '',
+            to_ist_str(l.processed_at) if l.processed_at else '',
         ] for l in rows],
     )
 
@@ -4074,7 +4063,7 @@ def meta_snapshots_export_csv():
             'results', 'cost_per_result',
         ],
         [[
-            r.snapshot_at.isoformat() if r.snapshot_at else '',
+            to_ist_str(r.snapshot_at) if r.snapshot_at else '',
             r.source_id,
             r.campaign_id,
             r.campaign_name,
@@ -4744,16 +4733,7 @@ def ingestion_logs_export_xlsx():
     q = _connected_source_logs_query(user, source_id=source_id)
     q = q.filter(IngestedLeadLog.status.in_(['processed', 'duplicate', 'error']))
     q = _apply_log_search_filter(q, search_q)
-    if date_from:
-        try:
-            q = q.filter(IngestedLeadLog.received_at >= datetime.fromisoformat(date_from))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            q = q.filter(IngestedLeadLog.received_at < datetime.fromisoformat(date_to) + timedelta(days=1))
-        except ValueError:
-            pass
+    q = _apply_log_date_filters(q, IngestedLeadLog, date_from, date_to)
 
     q = _apply_test_data_filter(q, IngestedLeadLog)
 
@@ -4787,8 +4767,8 @@ def ingestion_logs_export_xlsx():
             l.lead_id,
             l.dup_of_lead_id,
             l.error_message,
-            l.received_at.isoformat() if l.received_at else '',
-            l.processed_at.isoformat() if l.processed_at else '',
+            to_ist_str(l.received_at) if l.received_at else '',
+            to_ist_str(l.processed_at) if l.processed_at else '',
         ] for l in rows],
     )
 
@@ -5161,7 +5141,7 @@ def _pull_recent_meta_source(user, source, data=None):
     ]
 
     if full_history and not date_from:
-        date_from = source.created_at.date().isoformat()
+        date_from = utc_naive_to_business_datetime(source.created_at).date().isoformat()
         per_form_limit = max(per_form_limit, 5000)
         page_size = max(page_size, 100)
         max_pages = max(max_pages, 500)
@@ -5170,12 +5150,12 @@ def _pull_recent_meta_source(user, source, data=None):
     parsed_to_exclusive_date = None
     if date_from:
         try:
-            parsed_from_date = datetime.fromisoformat(date_from).date()
+            parsed_from_date = parse_business_date(date_from)
         except ValueError:
             parsed_from_date = None
     if date_to:
         try:
-            parsed_to_exclusive_date = (datetime.fromisoformat(date_to) + timedelta(days=1)).date()
+            parsed_to_exclusive_date = parse_business_date(date_to) + timedelta(days=1)
         except ValueError:
             parsed_to_exclusive_date = None
 
@@ -5280,7 +5260,9 @@ def _pull_recent_meta_source(user, source, data=None):
                     created_date = None
                     if created_time:
                         try:
-                            created_date = datetime.fromisoformat(created_time.replace('Z', '+00:00')).date()
+                            created_date = utc_naive_to_business_datetime(
+                                datetime.fromisoformat(created_time.replace('Z', '+00:00'))
+                            ).date()
                         except ValueError:
                             created_date = None
 
@@ -5399,7 +5381,7 @@ def meta_pull_recent(source_id):
     ]
 
     if full_history and not date_from:
-        date_from = source.created_at.date().isoformat()
+        date_from = utc_naive_to_business_datetime(source.created_at).date().isoformat()
         per_form_limit = max(per_form_limit, 5000)
         page_size = max(page_size, 100)
         max_pages = max(max_pages, 500)
@@ -5408,12 +5390,12 @@ def meta_pull_recent(source_id):
     parsed_to_exclusive_date = None
     if date_from:
         try:
-            parsed_from_date = datetime.fromisoformat(date_from).date()
+            parsed_from_date = parse_business_date(date_from)
         except ValueError:
             parsed_from_date = None
     if date_to:
         try:
-            parsed_to_exclusive_date = (datetime.fromisoformat(date_to) + timedelta(days=1)).date()
+            parsed_to_exclusive_date = parse_business_date(date_to) + timedelta(days=1)
         except ValueError:
             parsed_to_exclusive_date = None
 
@@ -5497,7 +5479,9 @@ def meta_pull_recent(source_id):
                     created_date = None
                     if created_time:
                         try:
-                            created_date = datetime.fromisoformat(created_time.replace('Z', '+00:00')).date()
+                            created_date = utc_naive_to_business_datetime(
+                                datetime.fromisoformat(created_time.replace('Z', '+00:00'))
+                            ).date()
                         except ValueError:
                             created_date = None
 

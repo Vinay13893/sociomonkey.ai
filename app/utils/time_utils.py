@@ -47,3 +47,35 @@ def business_date_bounds_utc_naive(date_value=None):
         start_local.astimezone(timezone.utc).replace(tzinfo=None),
         end_local.astimezone(timezone.utc).replace(tzinfo=None),
     )
+
+
+def parse_business_date(value):
+    """Parse a YYYY-MM-DD business date without silently treating it as UTC."""
+    if value in (None, ''):
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(BUSINESS_TZ).date() if value.tzinfo else value.date()
+    if hasattr(value, 'year') and hasattr(value, 'month') and hasattr(value, 'day'):
+        return value
+    return datetime.strptime(str(value).strip(), '%Y-%m-%d').date()
+
+
+def business_date_range_utc_naive(date_from=None, date_to=None):
+    """Return UTC-naive [start, end) bounds for inclusive IST calendar dates."""
+    start = end = None
+    from_date = parse_business_date(date_from)
+    to_date = parse_business_date(date_to)
+    if from_date is not None:
+        start, _ = business_date_bounds_utc_naive(from_date)
+    if to_date is not None:
+        _, end = business_date_bounds_utc_naive(to_date)
+    return start, end
+
+
+def utc_naive_to_business_datetime(value):
+    """Convert a UTC-naive storage datetime to an aware Asia/Kolkata datetime."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(BUSINESS_TZ)

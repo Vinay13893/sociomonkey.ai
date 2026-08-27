@@ -8,6 +8,7 @@ IngestedLeadLog — raw-payload audit trail for every inbound event
 import secrets
 from datetime import datetime
 from .base import db
+from app.utils.time_utils import to_ist_str
 
 
 # ── Source type registry ───────────────────────────────────────────────────────
@@ -143,7 +144,7 @@ class LeadSource(db.Model):
             'permission_details':   self.permission_details or {},
             'available_forms':      self.available_forms or [],
             'available_campaigns':  self.available_campaigns or [],
-            'last_tested_at':       self.last_tested_at.isoformat() if self.last_tested_at else None,
+            'last_tested_at':       to_ist_str(self.last_tested_at) if self.last_tested_at else None,
             'last_test_result':     self.last_test_result,
             'last_test_message':    self.last_test_message,
             'field_mapping':        self.field_mapping or {},
@@ -157,12 +158,12 @@ class LeadSource(db.Model):
             'rr_user_pool':         self.rr_user_pool or [],
             'total_leads_ingested': self.total_leads_ingested,
             'total_errors':         self.total_errors,
-            'last_lead_at':         self.last_lead_at.isoformat() if self.last_lead_at else None,
+            'last_lead_at':         to_ist_str(self.last_lead_at) if self.last_lead_at else None,
             'connected_google_accounts': [
                 a.to_dict() for a in (self.connected_google_accounts or []) if a.is_active
             ],
-            'created_at':           self.created_at.isoformat(),
-            'updated_at':           self.updated_at.isoformat(),
+            'created_at':           to_ist_str(self.created_at),
+            'updated_at':           to_ist_str(self.updated_at),
         }
 
 
@@ -201,8 +202,8 @@ class ConnectedGoogleAdsAccount(db.Model):
             'resource_name': self.resource_name,
             'metadata': self.metadata_json or {},
             'is_active': self.is_active,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'created_at': to_ist_str(self.created_at) if self.created_at else None,
+            'updated_at': to_ist_str(self.updated_at) if self.updated_at else None,
         }
 
 
@@ -308,6 +309,6 @@ class IngestedLeadLog(db.Model):
             'error_message':    self.error_message,
             'attempt_count':    self.attempt_count,
             'dup_of_lead_id':   self.dup_of_lead_id,
-            'received_at':      self.received_at.isoformat(),
-            'processed_at':     self.processed_at.isoformat() if self.processed_at else None,
+            'received_at':      to_ist_str(self.received_at),
+            'processed_at':     to_ist_str(self.processed_at) if self.processed_at else None,
         }

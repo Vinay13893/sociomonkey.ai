@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 from io import BytesIO
-from datetime import datetime
 
 import pandas as pd
 import openpyxl
@@ -21,6 +20,7 @@ from app.models.project import Project
 from app.utils.activity import log_activity
 from app.utils.leads import VALID_STATUSES
 from app.utils.lead_attribution import latest_meta_attribution_for_leads
+from app.utils.time_utils import now_ist, utc_naive_to_business_datetime
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ class ExcelService:
         ws_summary.merge_cells('A1:D1')
 
         ws_summary['A3'] = 'Generated At'
-        ws_summary['B3'] = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+        ws_summary['B3'] = now_ist().strftime('%Y-%m-%d %H:%M IST')
         ws_summary['A4'] = 'Total Leads'
         ws_summary['B4'] = len(leads)
 
@@ -207,8 +207,8 @@ class ExcelService:
                 lead.project.name if lead.project else '',
                 lead.assigned_user.email if lead.assigned_user else '',
                 lead.assigned_user.name if lead.assigned_user else '',
-                lead.created_at.strftime('%Y-%m-%d %H:%M') if lead.created_at else '',
-                lead.updated_at.strftime('%Y-%m-%d %H:%M') if lead.updated_at else '',
+                utc_naive_to_business_datetime(lead.created_at).strftime('%Y-%m-%d %H:%M IST') if lead.created_at else '',
+                utc_naive_to_business_datetime(lead.updated_at).strftime('%Y-%m-%d %H:%M IST') if lead.updated_at else '',
             ]
             for col_idx, val in enumerate(row_values, start=1):
                 cell = ws.cell(row=row_idx, column=col_idx, value=val)
@@ -308,7 +308,7 @@ class ExcelService:
         ws_sum['A1'].font = TITLE_FONT
         ws_sum.merge_cells('A1:C1')
         ws_sum['A3'] = 'Generated'
-        ws_sum['B3'] = datetime.utcnow().strftime('%d %b %Y, %H:%M UTC')
+        ws_sum['B3'] = now_ist().strftime('%d %b %Y, %H:%M IST')
         ws_sum['A4'] = 'Total Rows Processed'
         ws_sum['B4'] = len(imported) + len(errors)
         ws_sum['A5'] = 'Successfully Imported'
@@ -493,7 +493,7 @@ class ExcelService:
         ws_sum['A1'].font = TITLE_FONT
         ws_sum.merge_cells('A1:C1')
         ws_sum['A3'] = 'Generated'
-        ws_sum['B3'] = datetime.utcnow().strftime('%d %b %Y, %H:%M UTC')
+        ws_sum['B3'] = now_ist().strftime('%d %b %Y, %H:%M IST')
         ws_sum['A4'] = 'Total Rows'
         ws_sum['B4'] = len(results)
         ws_sum['A5'] = 'Updated'

@@ -24,44 +24,50 @@ from app.services.analytics import (
 )
 from app.utils.leads import get_user_visible_leads, apply_test_lead_filter, apply_valid_lead_capture_scope
 from app.utils.correlation import request_correlation_id
-from app.utils.time_utils import IST
+from app.utils.time_utils import (
+    IST,
+    business_date_bounds_utc_naive,
+    business_date_range_utc_naive,
+    now_ist,
+    to_ist_str,
+    utc_naive_to_business_datetime,
+)
 
 reports_bp = Blueprint('reports', __name__, url_prefix='/api/reports')
 
 
 def _resolve_date_window(range_key: str, date_from: str, date_to: str):
     now = datetime.utcnow()
+    local_today = now_ist().date()
     key = (range_key or '').strip().lower()
 
     if date_from or date_to:
         try:
-            start = datetime.strptime(date_from, '%Y-%m-%d') if date_from else None
-            end = datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1) if date_to else None
-            return start, end
+            return business_date_range_utc_naive(date_from, date_to)
         except ValueError:
             return None, None
 
-    today_start = datetime(now.year, now.month, now.day)
+    today_start, today_end = business_date_bounds_utc_naive(local_today)
     if key == 'today':
-        return today_start, today_start + timedelta(days=1)
+        return today_start, today_end
     if key == 'yesterday':
-        start = today_start - timedelta(days=1)
+        start, _ = business_date_bounds_utc_naive(local_today - timedelta(days=1))
         return start, today_start
     if key == 'last_week':
-        this_week_start = today_start - timedelta(days=today_start.weekday())
-        start = this_week_start - timedelta(days=7)
+        this_week_date = local_today - timedelta(days=local_today.weekday())
+        this_week_start, _ = business_date_bounds_utc_naive(this_week_date)
+        start, _ = business_date_bounds_utc_naive(this_week_date - timedelta(days=7))
         return start, this_week_start
     if key == 'last_30_days':
         return now - timedelta(days=30), now + timedelta(seconds=1)
     if key == 'this_month':
-        start = datetime(now.year, now.month, 1)
+        start, _ = business_date_bounds_utc_naive(local_today.replace(day=1))
         return start, now + timedelta(seconds=1)
     if key == 'last_month':
-        this_month_start = datetime(now.year, now.month, 1)
-        prev_end = this_month_start
-        prev_start = datetime(prev_end.year if prev_end.month > 1 else prev_end.year - 1,
-                              prev_end.month - 1 if prev_end.month > 1 else 12,
-                              1)
+        this_month_date = local_today.replace(day=1)
+        prev_month_date = (this_month_date - timedelta(days=1)).replace(day=1)
+        prev_start, _ = business_date_bounds_utc_naive(prev_month_date)
+        prev_end, _ = business_date_bounds_utc_naive(this_month_date)
         return prev_start, prev_end
 
     return None, None
@@ -94,7 +100,7 @@ def _compact_activity_row(row):
         'resource_type': row.resource_type,
         'description': row.description,
         'ip_address': row.ip_address,
-        'created_at': row.created_at.isoformat() if row.created_at else None,
+        'created_at': to_ist_str(row.created_at) if row.created_at else None,
     }
 
 
@@ -130,16 +136,14 @@ def _apply_activity_filters(query, action=None, module=None, date_from=None, dat
         query = query.filter(ActivityLog.action == action)
     if module:
         query = query.filter(ActivityLog.module == module)
-    if date_from:
-        try:
-            query = query.filter(ActivityLog.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            query = query.filter(ActivityLog.created_at < datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1))
-        except ValueError:
-            pass
+    try:
+        start, end = business_date_range_utc_naive(date_from, date_to)
+    except ValueError:
+        start = end = None
+    if start:
+        query = query.filter(ActivityLog.created_at >= start)
+    if end:
+        query = query.filter(ActivityLog.created_at < end)
     return query
 
 
@@ -221,13 +225,15 @@ def _period_metrics(user, start_dt: datetime, end_dt: datetime):
 
 def _build_comparison_payload(user):
     now = datetime.utcnow()
-    this_week_start = datetime(now.year, now.month, now.day) - timedelta(days=datetime(now.year, now.month, now.day).weekday())
-    last_week_start = this_week_start - timedelta(days=7)
-    this_month_start = datetime(now.year, now.month, 1)
+    local_today = now_ist().date()
+    this_week_date = local_today - timedelta(days=local_today.weekday())
+    this_week_start, _ = business_date_bounds_utc_naive(this_week_date)
+    last_week_start, _ = business_date_bounds_utc_naive(this_week_date - timedelta(days=7))
+    this_month_date = local_today.replace(day=1)
+    last_month_date = (this_month_date - timedelta(days=1)).replace(day=1)
+    this_month_start, _ = business_date_bounds_utc_naive(this_month_date)
+    last_month_start, _ = business_date_bounds_utc_naive(last_month_date)
     last_month_end = this_month_start
-    last_month_start = datetime(last_month_end.year if last_month_end.month > 1 else last_month_end.year - 1,
-                                last_month_end.month - 1 if last_month_end.month > 1 else 12,
-                                1)
 
     week_current = _period_metrics(user, this_week_start, now + timedelta(seconds=1))
     week_last = _period_metrics(user, last_week_start, this_week_start)
@@ -263,17 +269,14 @@ def lead_report():
     date_from = request.args.get('date_from')
     date_to   = request.args.get('date_to')
     project_id = request.args.get('project_id', type=int)
-    if date_from:
-        try:
-            query = query.filter(Lead.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            dt_to = datetime.strptime(date_to, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-            query = query.filter(Lead.created_at <= dt_to)
-        except ValueError:
-            pass
+    try:
+        report_start, report_end = business_date_range_utc_naive(date_from, date_to)
+    except ValueError:
+        report_start = report_end = None
+    if report_start:
+        query = query.filter(Lead.created_at >= report_start)
+    if report_end:
+        query = query.filter(Lead.created_at < report_end)
 
     if project_id:
         query = query.filter(Lead.project_id == project_id)
@@ -326,7 +329,7 @@ def lead_report():
 
     terminal_statuses = ['booking_done', 'lost', 'junk', 'not_interested']
     stale_cutoff = datetime.utcnow() - timedelta(days=5)
-    today_start = datetime(datetime.utcnow().year, datetime.utcnow().month, datetime.utcnow().day)
+    today_start, _ = business_date_bounds_utc_naive(now_ist().date())
     # Allocation Pending = nobody at all owns this lead yet across any of
     # the co-ownership slots (assigned_to, sales_manager_id, plus the
     # pre-sales calling_manager_id/caller_id slots) - checking assigned_to
@@ -360,17 +363,15 @@ def lead_report():
     carry_forward = query.filter(Lead.created_at < today_start, Lead.status.notin_(terminal_statuses)).count()
 
     # Leads per day — use filtered leads if date filter applied, else last 30 days
-    trend_query = db.session.query(
-        func.date(report_sq.c.created_at),
-        func.count(report_sq.c.id),
-    )
+    trend_query = db.session.query(report_sq.c.created_at)
     if not (date_from or date_to):
         trend_query = trend_query.filter(report_sq.c.created_at >= datetime.utcnow() - timedelta(days=30))
-    by_date = {
-        str(day): int(count or 0)
-        for day, count in trend_query.group_by(func.date(report_sq.c.created_at)).all()
-        if day
-    }
+    by_date = {}
+    for (created_at,) in trend_query.all():
+        if not created_at:
+            continue
+        day = utc_naive_to_business_datetime(created_at).date().isoformat()
+        by_date[day] = by_date.get(day, 0) + 1
 
     return jsonify({
         'total_leads': total,
@@ -462,7 +463,7 @@ def team_report():
             'hot_leads': hot_leads,
             'warm_rate': warm_rate,
             'hot_rate': hot_rate,
-            'last_login': u.last_login.isoformat() if u.last_login else None,
+            'last_login': to_ist_str(u.last_login) if u.last_login else None,
         }
 
     if current_user.role == 'sales_manager':
@@ -548,15 +549,13 @@ def activity_report():
         .all()
     }
 
-    cutoff = datetime.utcnow() - timedelta(days=7)
-    by_date = {
-        str(day): int(count or 0)
-        for day, count in base.with_entities(func.date(ActivityLog.created_at), func.count(ActivityLog.id))
-        .filter(ActivityLog.created_at >= cutoff)
-        .group_by(func.date(ActivityLog.created_at))
-        .all()
-        if day
-    }
+    cutoff, _ = business_date_bounds_utc_naive(now_ist().date() - timedelta(days=6))
+    by_date = {}
+    for (created_at,) in base.with_entities(ActivityLog.created_at).filter(ActivityLog.created_at >= cutoff).all():
+        if not created_at:
+            continue
+        day = utc_naive_to_business_datetime(created_at).date().isoformat()
+        by_date[day] = by_date.get(day, 0) + 1
 
     return jsonify({
         'activity_by_user': user_activity,
@@ -604,16 +603,7 @@ def get_activity_logs():
         query = query.filter_by(action=action)
     if module:
         query = query.filter_by(module=module)
-    if date_from:
-        try:
-            query = query.filter(ActivityLog.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            query = query.filter(ActivityLog.created_at < datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1))
-        except ValueError:
-            pass
+    query = _apply_activity_filters(query, date_from=date_from, date_to=date_to)
 
     order_by = ActivityLog.created_at.asc() if sort == 'oldest' else ActivityLog.created_at.desc()
     total = query.count()
@@ -673,16 +663,7 @@ def download_activity_logs():
         query = query.filter_by(action=action)
     if module:
         query = query.filter_by(module=module)
-    if date_from:
-        try:
-            query = query.filter(ActivityLog.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            query = query.filter(ActivityLog.created_at < datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1))
-        except ValueError:
-            pass
+    query = _apply_activity_filters(query, date_from=date_from, date_to=date_to)
 
     logs = query.order_by(ActivityLog.created_at.desc()).all()
 
@@ -716,7 +697,7 @@ def download_activity_logs():
             log.resource_id or '',
             log.description or '',
             log.ip_address or '',
-            log.created_at.astimezone(IST).strftime('%d %b %Y %H:%M IST') if log.created_at else '',
+            utc_naive_to_business_datetime(log.created_at).strftime('%d %b %Y %H:%M IST') if log.created_at else '',
         ]
         for col, val in enumerate(values, 1):
             cell = ws.cell(row=row_idx, column=col, value=val)
@@ -839,7 +820,7 @@ def download_management_report():
     def _write_sheet_header(ws, title, headers):
         ws['A1'] = title
         ws['A1'].font = Font(bold=True, size=14, color='1E3A5F')
-        ws['A2'] = f'Generated: {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}'
+        ws['A2'] = f'Generated: {now_ist().strftime("%Y-%m-%d %H:%M IST")}'
         if date_from or date_to or range_key:
             ws['A3'] = f'Range: {range_key or "custom"} {date_from or ""} {date_to or ""}'.strip()
         head_row = 5

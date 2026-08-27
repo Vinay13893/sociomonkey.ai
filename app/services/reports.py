@@ -13,6 +13,7 @@ from openpyxl.utils import get_column_letter
 from app.models.activity import ActivityLog
 from app.models.lead import Lead
 from app.models.user import User
+from app.utils.time_utils import now_ist, utc_naive_to_business_datetime
 
 HEADER_FILL = PatternFill('solid', fgColor='1E3A5F')
 HEADER_FONT = Font(color='FFFFFF', bold=True, size=11)
@@ -60,7 +61,7 @@ class ReportService:
         ws_s['A1'].font = TITLE_FONT
         ws_s.merge_cells('A1:C1')
         ws_s['A3'] = 'Generated'
-        ws_s['B3'] = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+        ws_s['B3'] = now_ist().strftime('%Y-%m-%d %H:%M IST')
         ws_s['A4'] = 'Total Leads'
         ws_s['B4'] = len(leads)
 
@@ -104,7 +105,7 @@ class ReportService:
                 lead.budget_min, lead.budget_max,
                 lead.project.name if lead.project else '',
                 lead.assigned_user.name if lead.assigned_user else '',
-                lead.created_at.strftime('%Y-%m-%d') if lead.created_at else '',
+                utc_naive_to_business_datetime(lead.created_at).strftime('%Y-%m-%d %H:%M IST') if lead.created_at else '',
             ])
 
         ws.freeze_panes = 'A2'
@@ -130,7 +131,7 @@ class ReportService:
         ws['A1'] = 'Ganga Realty LMS – Team Performance Report'
         ws['A1'].font = TITLE_FONT
         ws.merge_cells('A1:G1')
-        ws['A2'] = f'Generated: {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}'
+        ws['A2'] = f'Generated: {now_ist().strftime("%Y-%m-%d %H:%M IST")}'
 
         cols = [
             'Name', 'Email', 'Role', 'Total Leads',
@@ -183,14 +184,14 @@ class ReportService:
         ws['A1'] = f'Ganga Realty LMS – Activity Log (Last {days} days)'
         ws['A1'].font = TITLE_FONT
         ws.merge_cells('A1:G1')
-        ws['A2'] = f'Generated: {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}'
+        ws['A2'] = f'Generated: {now_ist().strftime("%Y-%m-%d %H:%M IST")}'
 
         cols = ['Timestamp', 'User', 'Action', 'Module', 'Resource ID', 'Description', 'IP Address']
         _write_header_row(ws, cols, row=4)
 
         for ri, log in enumerate(logs, start=5):
             _write_data_row(ws, ri, [
-                log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '',
+                utc_naive_to_business_datetime(log.created_at).strftime('%Y-%m-%d %H:%M:%S IST') if log.created_at else '',
                 log.user.name if log.user else 'Unknown',
                 log.action,
                 log.module,

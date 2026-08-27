@@ -49,7 +49,9 @@ def test_activity_summary_uses_grouped_queries():
     assert "group_by(User.name)" in body
     assert "group_by(ActivityLog.action)" in body
     assert "group_by(ActivityLog.module)" in body
-    assert "group_by(func.date(ActivityLog.created_at))" in body
+    # Calendar-day grouping must happen after conversion to the LMS business
+    # timezone; grouping the UTC storage date shifts early-morning IST events.
+    assert "utc_naive_to_business_datetime(created_at).date()" in body
     assert "for log in ActivityLog.query.all()" not in body
 
 

@@ -13,6 +13,7 @@ from app.middleware import require_auth, require_role
 from app.services.excel import ExcelService
 from app.utils.leads import get_user_visible_leads, VALID_STATUSES, STATUS_ALIASES
 from app.utils.activity import log_activity
+from app.utils.time_utils import business_date_range_utc_naive
 
 uploads_bp = Blueprint('uploads', __name__, url_prefix='/api/leads')
 
@@ -186,16 +187,14 @@ def _process_export_job(job: ExportJob) -> dict:
         query = query.filter_by(status=status)
     if project_id:
         query = query.filter_by(project_id=int(project_id))
-    if date_from:
-        try:
-            query = query.filter(Lead.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            query = query.filter(Lead.created_at <= datetime.strptime(date_to, '%Y-%m-%d'))
-        except ValueError:
-            pass
+    try:
+        start, end = business_date_range_utc_naive(date_from, date_to)
+    except ValueError:
+        start = end = None
+    if start:
+        query = query.filter(Lead.created_at >= start)
+    if end:
+        query = query.filter(Lead.created_at < end)
 
     job.status = 'processing'
     job.started_at = job.started_at or datetime.utcnow()

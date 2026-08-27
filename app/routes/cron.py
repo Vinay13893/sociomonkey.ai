@@ -20,6 +20,7 @@ from types import SimpleNamespace
 
 from flask import Blueprint, jsonify, request, current_app, g
 from app.models.base import db
+from app.utils.time_utils import parse_business_date, utc_naive_to_business_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -132,12 +133,12 @@ def meta_backfill():
         parsed_forced_to_exclusive = None
         if forced_date_from:
             try:
-                parsed_forced_from = datetime.fromisoformat(forced_date_from).date()
+                parsed_forced_from = parse_business_date(forced_date_from)
             except ValueError:
                 parsed_forced_from = None
         if forced_date_to:
             try:
-                parsed_forced_to_exclusive = (datetime.fromisoformat(forced_date_to) + timedelta(days=1)).date()
+                parsed_forced_to_exclusive = parse_business_date(forced_date_to) + timedelta(days=1)
             except ValueError:
                 parsed_forced_to_exclusive = None
 
@@ -169,7 +170,7 @@ def meta_backfill():
             source_from_date = parsed_forced_from
             source_to_exclusive_date = parsed_forced_to_exclusive
             if full_history and not source_from_date and source.created_at:
-                source_from_date = source.created_at.date()
+                source_from_date = utc_naive_to_business_datetime(source.created_at).date()
 
             creds = source.credentials or {}
             page_token = (creds.get('page_access_token') or creds.get('access_token') or '').strip()
@@ -244,7 +245,9 @@ def meta_backfill():
                             created_date = None
                             if created_time:
                                 try:
-                                    created_date = datetime.fromisoformat(created_time.replace('Z', '+00:00')).date()
+                                    created_date = utc_naive_to_business_datetime(
+                                        datetime.fromisoformat(created_time.replace('Z', '+00:00'))
+                                    ).date()
                                 except ValueError:
                                     created_date = None
 
@@ -315,7 +318,6 @@ def meta_backfill():
             .join(LeadSource, IngestedLeadLog.source_id == LeadSource.id)
             .filter(LeadSource.source_type == 'meta')
             .filter(LeadSource.is_active == True)
-            .filter(IngestedLeadLog.received_at >= LeadSource.created_at)
             .filter(IngestedLeadLog.is_test == False)
             .filter(IngestedLeadLog.status.in_(['processed', 'duplicate', 'error']))
             .order_by(IngestedLeadLog.received_at.desc(), IngestedLeadLog.id.desc())
