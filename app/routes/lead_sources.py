@@ -6264,7 +6264,12 @@ def google_start_auth():
     _save_oauth_session(session_key, session_data, 'google')
 
     callback_url = os.environ.get('BACKEND_URL', 'https://smk-backend-api.vercel.app') + '/api/lead-sources/google/oauth/callback'
-    scopes = 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/adwords'
+    scopes = (
+        'https://www.googleapis.com/auth/userinfo.email '
+        'https://www.googleapis.com/auth/adwords '
+        'https://www.googleapis.com/auth/spreadsheets '
+        'https://www.googleapis.com/auth/drive.file'
+    )
     auth_url = (
         f'https://accounts.google.com/o/oauth2/v2/auth'
         f'?client_id={_parse.quote(client_id)}'

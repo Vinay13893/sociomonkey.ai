@@ -12,10 +12,11 @@ from .projects import projects_bp
 from .pipeline import pipeline_bp
 from .reports import reports_bp
 from .uploads import uploads_bp
+from .google_sheets import google_sheets_bp
 
 __all__ = [
     'auth_bp', 'leads_bp', 'team_bp', 'organisation_bp', 'configuration_bp', 'locations_bp',
     'visits_bp', 'gallery_operations_bp', 'channel_partners_bp',
     'action_items_bp', 'projects_bp',
-    'pipeline_bp', 'reports_bp', 'uploads_bp',
+    'pipeline_bp', 'reports_bp', 'uploads_bp', 'google_sheets_bp',
 ]

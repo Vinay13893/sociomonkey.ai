@@ -48,6 +48,7 @@ def latest_meta_attribution_for_leads(lead_ids):
         raw = log.raw_payload or {}
         mapped = log.mapped_fields or {}
         result[int(log.lead_id)] = {
+            'platform_lead_id': str(log.platform_lead_id or '').strip(),
             'page_id': str(log.page_id or '').strip(),
             'page_name': str(raw.get('page_name') or mapped.get('page_name') or _page_name_from_source(source, log.page_id) or '').strip(),
             'audience': str(log.ad_set_name or '').strip(),

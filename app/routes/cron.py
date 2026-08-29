@@ -553,6 +553,42 @@ def check_lead_source_health_route():
         return jsonify({'ok': False, 'error': str(exc)}), 500
 
 
+@cron_bp.route('/google-sheets-sync', methods=['GET', 'POST'])
+def google_sheets_sync_route():
+    """Nightly authoritative LMS-to-Sheets reconciliation for enabled tenants."""
+    if not _auth_cron():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    from app.models.ingestion import LeadSource
+    from app.services.google_sheets_sync import full_sync
+
+    sources = (
+        LeadSource.query.filter_by(source_type='google', is_active=True)
+        .order_by(LeadSource.tenant_id.asc(), LeadSource.id.desc()).all()
+    )
+    configured = {}
+    for source in sources:
+        config = dict((source.credentials or {}).get('sheets_sync') or {})
+        if config.get('enabled') and config.get('spreadsheet_id'):
+            configured.setdefault(int(source.tenant_id), source.id)
+
+    results, errors = [], []
+    for tenant_id in configured:
+        try:
+            results.append({'tenant_id': tenant_id, **full_sync(tenant_id)})
+        except Exception as exc:
+            logger.exception('[Cron] google-sheets-sync tenant=%s failed', tenant_id)
+            errors.append({'tenant_id': tenant_id, 'error': str(exc)[:300]})
+
+    return jsonify({
+        'ok': not errors,
+        'tenants_configured': len(configured),
+        'results': results,
+        'errors': errors,
+        'ts': datetime.utcnow().isoformat(),
+    }), 200 if not errors else 207
+
+
 @cron_bp.route('/repair-source-lead-visibility', methods=['POST'])
 def repair_source_lead_visibility():
     """Repair leads linked to valid post-cutoff lead-source logs."""

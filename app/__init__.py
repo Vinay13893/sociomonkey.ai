@@ -338,6 +338,7 @@ def create_app(config_name: str = None) -> Flask:
     from app.routes.pipeline import pipeline_bp
     from app.routes.reports import reports_bp
     from app.routes.uploads import uploads_bp
+    from app.routes.google_sheets import google_sheets_bp
     from app.routes.tenants import tenants_bp
     from app.routes.public import public_bp
     from app.routes.provisioning import provisioning_bp
@@ -361,6 +362,7 @@ def create_app(config_name: str = None) -> Flask:
     app.register_blueprint(pipeline_bp)
     app.register_blueprint(reports_bp)
     app.register_blueprint(uploads_bp)
+    app.register_blueprint(google_sheets_bp)
     app.register_blueprint(tenants_bp)
     app.register_blueprint(public_bp)
     app.register_blueprint(provisioning_bp)
@@ -369,6 +371,9 @@ def create_app(config_name: str = None) -> Flask:
     app.register_blueprint(whatsapp_bp)
     app.register_blueprint(ingestion_bp)
     app.register_blueprint(lead_sources_bp)
+
+    from app.services.google_sheets_events import register_google_sheets_events
+    register_google_sheets_events()
 
     @app.route('/api/health', methods=['GET'])
     def health_check():
