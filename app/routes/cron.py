@@ -560,6 +560,7 @@ def google_sheets_sync_route():
         return jsonify({'error': 'Unauthorized'}), 401
 
     from app.models.ingestion import LeadSource
+    from app.models.business_configuration import BusinessRuleConfiguration
     from app.services.google_sheets_sync import full_sync
 
     sources = (
@@ -567,6 +568,13 @@ def google_sheets_sync_route():
         .order_by(LeadSource.tenant_id.asc(), LeadSource.id.desc()).all()
     )
     configured = {}
+    script_rules = BusinessRuleConfiguration.query.filter_by(
+        rule_key='google_sheets_sync', is_active=True
+    ).all()
+    for rule in script_rules:
+        cfg = dict(rule.definition or {})
+        if cfg.get('enabled') and cfg.get('script_url'):
+            configured[int(rule.tenant_id)] = rule.id
     for source in sources:
         config = dict((source.credentials or {}).get('sheets_sync') or {})
         if config.get('enabled') and config.get('spreadsheet_id'):

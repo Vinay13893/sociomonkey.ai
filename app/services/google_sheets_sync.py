@@ -15,6 +15,7 @@ from sqlalchemy import func
 
 from app import db
 from app.models.ingestion import IngestedLeadLog, LeadSource
+from app.models.business_configuration import BusinessRuleConfiguration
 from app.models.lead import CallbackReminder, Lead, LeadNote
 from app.utils.lead_attribution import latest_meta_attribution_for_leads
 from app.utils.time_utils import now_ist, to_ist_str
@@ -34,6 +35,17 @@ class GoogleSheetsSyncError(RuntimeError):
     pass
 
 
+SHEETS_RULE_KEY = 'google_sheets_sync'
+
+
+def _apps_script_rule(tenant_id):
+    return (
+        BusinessRuleConfiguration.query
+        .filter_by(tenant_id=tenant_id, rule_key=SHEETS_RULE_KEY, is_active=True)
+        .order_by(BusinessRuleConfiguration.version.desc()).first()
+    )
+
+
 def _google_source(tenant_id):
     return (
         LeadSource.query
@@ -44,12 +56,33 @@ def _google_source(tenant_id):
 
 
 def get_sheet_config(tenant_id):
+    rule = _apps_script_rule(tenant_id)
+    if rule:
+        config = dict(rule.definition or {})
+        if config.get('script_url'):
+            config['mode'] = 'apps_script'
+            return None, {}, config
     source = _google_source(tenant_id)
     if not source:
         return None, {}, {}
     credentials = dict(source.credentials or {})
     config = dict(credentials.get('sheets_sync') or {})
     return source, credentials, config
+
+
+def save_apps_script_config(tenant_id, config, user_id=None):
+    current = _apps_script_rule(tenant_id)
+    version = int(current.version or 0) + 1 if current else 1
+    if current:
+        current.is_active = False
+    row = BusinessRuleConfiguration(
+        tenant_id=tenant_id, rule_key=SHEETS_RULE_KEY,
+        display_name='Google Sheets Apps Script sync', version=version,
+        definition=dict(config or {}), is_active=True, created_by=user_id,
+    )
+    db.session.add(row)
+    db.session.commit()
+    return row
 
 
 def save_sheet_config(source, credentials, config):
@@ -78,6 +111,20 @@ def _request_json(url, *, access_token=None, method='GET', payload=None, timeout
         raise GoogleSheetsSyncError(f'Google API {exc.code}: {detail[:500]}') from exc
     except Exception as exc:
         raise GoogleSheetsSyncError(str(exc)) from exc
+
+
+def _script_request(config, action, rows=None):
+    url = str(config.get('script_url') or '').strip()
+    secret = str(config.get('webhook_secret') or '').strip()
+    if not url or not secret:
+        raise GoogleSheetsSyncError('Apps Script URL and webhook secret are required')
+    result = _request_json(url, method='POST', payload={
+        'secret': secret, 'action': action, 'headers': SHEET_HEADERS,
+        'rows': rows or [], 'sheet_name': config.get('sheet_name') or 'Master Leads',
+    }, timeout=60)
+    if not result.get('ok'):
+        raise GoogleSheetsSyncError(str(result.get('error') or 'Apps Script sync failed'))
+    return result
 
 
 def _access_token(credentials):
@@ -186,6 +233,13 @@ def full_sync(tenant_id):
     source, credentials, config = get_sheet_config(tenant_id)
     spreadsheet_id = str(config.get('spreadsheet_id') or '').strip()
     sheet_name = str(config.get('sheet_name') or 'Master Leads').strip()
+    if config.get('mode') == 'apps_script':
+        if not config.get('enabled'):
+            raise GoogleSheetsSyncError('Google Sheet sync is not enabled')
+        leads = Lead.query.filter_by(tenant_id=tenant_id).order_by(Lead.id.asc()).all()
+        rows = build_lead_rows(leads)
+        _script_request(config, 'full_sync', rows)
+        return {'leads_synced': len(rows), 'sheet_name': config.get('sheet_name') or 'Master Leads', 'mode': 'apps_script'}
     if not source or not spreadsheet_id or not config.get('enabled'):
         raise GoogleSheetsSyncError('Google Sheet sync is not configured and enabled')
     token = _access_token(credentials)
@@ -217,6 +271,14 @@ def sync_leads(tenant_id, lead_ids):
     source, credentials, config = get_sheet_config(tenant_id)
     spreadsheet_id = str(config.get('spreadsheet_id') or '').strip()
     sheet_name = str(config.get('sheet_name') or 'Master Leads').strip()
+    if config.get('mode') == 'apps_script':
+        if not config.get('enabled'):
+            return {'skipped': True, 'reason': 'not_configured'}
+        ids = sorted({int(value) for value in lead_ids if value})
+        leads = Lead.query.filter(Lead.tenant_id == tenant_id, Lead.id.in_(ids)).all()
+        rows = build_lead_rows(leads)
+        _script_request(config, 'upsert', rows)
+        return {'synced': len(rows), 'mode': 'apps_script'}
     if not source or not spreadsheet_id or not config.get('enabled'):
         return {'skipped': True, 'reason': 'not_configured'}
     ids = sorted({int(value) for value in lead_ids if value})
@@ -262,6 +324,9 @@ def sync_leads(tenant_id, lead_ids):
 
 def test_connection(tenant_id):
     source, credentials, config = get_sheet_config(tenant_id)
+    if config.get('mode') == 'apps_script':
+        result = _script_request(config, 'ping')
+        return {'mode': 'apps_script', 'verified': True, 'message': result.get('message') or 'Connected'}
     if not source:
         raise GoogleSheetsSyncError('Connect a Google account in Lead Sources first')
     spreadsheet_id = str(config.get('spreadsheet_id') or '').strip()
