@@ -9,6 +9,10 @@
   },
   "crons": [
     {
+      "path": "/api/cron/meta-poll-5m",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/meta-report-sync",
       "schedule": "29 18 * * *"
     },
