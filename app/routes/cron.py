@@ -128,6 +128,7 @@ def meta_backfill():
         tenant_slug = str(_cron_arg('tenant_slug', '')).strip()
         source_id = request.args.get('source_id', type=int)
         source_name = str(_cron_arg('source_name', '')).strip()
+        requested_form_id = str(_cron_arg('form_id', '')).strip()
         forced_date_from = str(_cron_arg('date_from', '')).strip()
         forced_date_to = str(_cron_arg('date_to', '')).strip()
 
@@ -160,6 +161,8 @@ def meta_backfill():
             'tenant_slug': tenant_slug,
             'source_id': source_id,
             'source_name': source_name,
+            'form_id': requested_form_id,
+            'available_forms': [],
             'date_from': forced_date_from,
             'date_to': forced_date_to,
             'forms_scanned': 0,
@@ -223,6 +226,12 @@ def meta_backfill():
 
             seen_form = set()
             form_ids = [fid for fid in form_ids if not (fid in seen_form or seen_form.add(fid))]
+            summary['available_forms'].extend([
+                {'source_id': source.id, 'form_id': fid, 'form_name': form_names.get(fid, '')}
+                for fid in form_ids
+            ])
+            if requested_form_id:
+                form_ids = [fid for fid in form_ids if fid == requested_form_id]
 
             for fid in form_ids:
                 summary['forms_scanned'] += 1
