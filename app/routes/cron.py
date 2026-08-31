@@ -15,6 +15,8 @@ Endpoints:
        Lightweight health-check for cron monitoring.
 """
 import logging
+import hmac
+import os
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -25,6 +27,12 @@ from app.utils.time_utils import parse_business_date, utc_naive_to_business_date
 logger = logging.getLogger(__name__)
 
 cron_bp = Blueprint('cron', __name__, url_prefix='/api/cron')
+
+
+def _auth_internal_ops():
+    expected = str(os.environ.get('INTERNAL_OPS_TOKEN') or '')
+    provided = str(request.headers.get('X-Internal-Token') or '')
+    return bool(expected and provided) and hmac.compare_digest(expected, provided)
 
 
 def _cron_arg(name, default=''):
@@ -61,6 +69,57 @@ def _auth_cron():
 @cron_bp.route('/health', methods=['GET'])
 def health():
     return jsonify({'ok': True, 'ts': datetime.utcnow().isoformat()}), 200
+
+
+@cron_bp.route('/historical-sync/audit', methods=['GET'])
+def historical_sync_audit():
+    """Read-only tenant roster used to ground controlled historical imports."""
+    if not _auth_internal_ops():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    from app.models.channel_partner import ChannelPartner
+    from app.models.organisation import UserBusinessRole
+    from app.models.tenant import Tenant
+    from app.models.user import User
+
+    tenant_slug = str(request.args.get('tenant_slug') or '').strip()
+    tenant = Tenant.query.filter_by(slug=tenant_slug).first()
+    if not tenant:
+        return jsonify({'error': 'Tenant not found'}), 404
+
+    role_rows = UserBusinessRole.query.filter_by(
+        tenant_id=tenant.id, is_active=True
+    ).all()
+    role_keys = {}
+    for row in role_rows:
+        if row.business_role and row.business_role.is_active:
+            role_keys.setdefault(row.user_id, []).append(row.business_role.key)
+
+    users = User.query.filter_by(tenant_id=tenant.id).order_by(User.id.asc()).all()
+    partners = ChannelPartner.query.filter_by(
+        tenant_id=tenant.id
+    ).order_by(ChannelPartner.id.asc()).all()
+    return jsonify({
+        'ok': True,
+        'tenant': {'id': tenant.id, 'slug': tenant.slug},
+        'users': [{
+            'id': row.id,
+            'name': row.name,
+            'email': row.email,
+            'phone': row.phone,
+            'role': row.role,
+            'is_active': row.is_active,
+            'business_roles': sorted(set(role_keys.get(row.id, []))),
+        } for row in users],
+        'channel_partners': [{
+            'id': row.id,
+            'code': row.code,
+            'name': row.name,
+            'organisation_name': row.organisation_name,
+            'is_active': row.is_active,
+            'assignments': [assignment.to_dict() for assignment in row.assignments],
+        } for row in partners],
+    }), 200
 
 
 @cron_bp.route('/drain-notifications', methods=['GET', 'POST'])
