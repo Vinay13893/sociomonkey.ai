@@ -382,14 +382,17 @@ def historical_sync_leads():
     from uuid import uuid4
     from app.models.channel_partner import ChannelPartner
     from app.models.lead import Lead, LeadAssignmentHistory
+    from app.models.project import Project
     from app.models.tenant import Tenant
     from app.models.user import User
+    from app.utils.time_utils import parse_business_datetime_to_utc_naive
 
     data = request.get_json(silent=True) or {}
     tenant = Tenant.query.filter_by(slug=str(data.get('tenant_slug') or '')).first()
     rows = data.get('rows') or []
     rules = data.get('rules') or {}
     dry_run = bool(data.get('dry_run', False))
+    create_missing = bool(data.get('create_missing', False))
     if not tenant:
         return jsonify({'error': 'Tenant not found'}), 404
     if not isinstance(rows, list) or len(rows) > 300:
@@ -420,6 +423,8 @@ def historical_sync_leads():
         rule_map[str(team).strip()] = (manager, partner)
 
     leads = Lead.query.filter_by(tenant_id=tenant.id, is_active=True).all()
+    projects = Project.query.filter_by(tenant_id=tenant.id, is_active=True).all()
+    project_map = {_history_norm(project.name): project for project in projects}
     phone_map, email_map = {}, {}
     for lead in leads:
         phone = _history_phone(lead.phone)
@@ -434,6 +439,7 @@ def historical_sync_leads():
         'unchanged': 0, 'skipped_blank_team': 0, 'unmatched': [],
         'ambiguous': [], 'manager_assignments': {},
         'channel_partner_assignments': {}, 'dry_run': dry_run,
+        'created_missing': 0,
     }
     correlation = str(uuid4())
     seen_leads = set()
@@ -453,6 +459,37 @@ def historical_sync_leads():
         if not candidates and email:
             candidates = list(email_map.get(email, []))
         candidates = list({lead.id: lead for lead in candidates}.values())
+        if not candidates and create_missing:
+            name = str(raw.get('name') or '').strip()
+            if not name or not phone:
+                result['unmatched'].append({
+                    'row': index + 1, 'phone': phone, 'email': email,
+                    'reason': 'Missing lead requires a name and phone',
+                })
+                continue
+            project = project_map.get(_history_norm(raw.get('project')))
+            created_at = None
+            if raw.get('created_at'):
+                try:
+                    created_at = parse_business_datetime_to_utc_naive(raw.get('created_at'))
+                except (TypeError, ValueError):
+                    created_at = None
+            new_lead = Lead(
+                tenant_id=tenant.id, name=name, phone=phone,
+                email=email or None,
+                source=str(raw.get('source') or 'Historical Master Sheet').strip(),
+                project_id=project.id if project else None,
+                status='new', created_by=admin.id,
+                created_at=created_at or datetime.utcnow(), is_active=True,
+            )
+            db.session.add(new_lead)
+            db.session.flush()
+            leads.append(new_lead)
+            phone_map.setdefault(phone, []).append(new_lead)
+            if email:
+                email_map.setdefault(email, []).append(new_lead)
+            candidates = [new_lead]
+            result['created_missing'] += 1
         if not candidates:
             result['unmatched'].append({'row': index + 1, 'phone': phone, 'email': email})
             continue
