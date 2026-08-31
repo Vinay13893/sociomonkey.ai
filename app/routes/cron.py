@@ -16,7 +16,10 @@ Endpoints:
 """
 import logging
 import hmac
+import hashlib
 import os
+import re
+import secrets
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -120,6 +123,384 @@ def historical_sync_audit():
             'assignments': [assignment.to_dict() for assignment in row.assignments],
         } for row in partners],
     }), 200
+
+
+def _history_norm(value):
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+
+def _history_phone(value):
+    digits = re.sub(r'\D+', '', str(value or ''))
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _history_emails(value):
+    parts = re.split(r'[,;\s]+', str(value or '').strip())
+    return list(dict.fromkeys(
+        part.strip().lower() for part in parts if '@' in part
+    ))
+
+
+@cron_bp.route('/historical-sync/channel-partners', methods=['POST'])
+def historical_sync_channel_partners():
+    """Idempotently import the approved Sales Manager -> RM -> CP roster."""
+    if not _auth_internal_ops():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    from sqlalchemy import or_
+    from app.models.channel_partner import (
+        ChannelPartner, ChannelPartnerAssignment, ChannelPartnerContact,
+    )
+    from app.models.organisation import (
+        BusinessRole, ReportingRelationship, UserBusinessRole,
+    )
+    from app.models.tenant import Tenant
+    from app.models.user import User
+    from app.utils.jwt import hash_password
+
+    data = request.get_json(silent=True) or {}
+    tenant_slug = str(data.get('tenant_slug') or '').strip()
+    rows = data.get('rows') or []
+    dry_run = bool(data.get('dry_run', False))
+    tenant = Tenant.query.filter_by(slug=tenant_slug).first()
+    if not tenant:
+        return jsonify({'error': 'Tenant not found'}), 404
+    if not isinstance(rows, list) or len(rows) > 150:
+        return jsonify({'error': 'rows must be a list of at most 150 items'}), 400
+
+    admin = User.query.filter_by(
+        tenant_id=tenant.id, role='superadmin', is_active=True
+    ).order_by(User.id.asc()).first()
+    if not admin:
+        return jsonify({'error': 'Active tenant admin not found'}), 409
+
+    rm_role = BusinessRole.query.filter(
+        BusinessRole.key == 'RELATIONSHIP_MANAGER',
+        BusinessRole.is_active.is_(True),
+        or_(BusinessRole.tenant_id == tenant.id, BusinessRole.tenant_id.is_(None)),
+    ).order_by(BusinessRole.tenant_id.desc()).first()
+    if not rm_role:
+        return jsonify({'error': 'RELATIONSHIP_MANAGER business role not found'}), 409
+
+    users = User.query.filter_by(tenant_id=tenant.id).all()
+    by_email = {str(u.email or '').strip().lower(): u for u in users if u.email}
+    by_phone = {_history_phone(u.phone): u for u in users if _history_phone(u.phone)}
+    partners = ChannelPartner.query.filter_by(tenant_id=tenant.id).all()
+    partner_by_name = {}
+    for partner in partners:
+        partner_by_name[_history_norm(partner.name)] = partner
+        partner_by_name[_history_norm(partner.organisation_name)] = partner
+
+    summary = {
+        'rows_received': len(rows), 'partners_created': 0,
+        'partners_updated': 0, 'contacts_created': 0,
+        'relationship_managers_created': 0,
+        'relationship_managers_reused': 0,
+        'assignments_created': 0, 'assignments_archived': 0,
+        'errors': [], 'partners': [], 'dry_run': dry_run,
+    }
+
+    for index, raw in enumerate(rows):
+        try:
+            firm = str(raw.get('firm') or '').strip()
+            contact_name = str(raw.get('contact') or '').strip()
+            if not firm:
+                raise ValueError('Channel Partner firm name is required')
+            manager_id = int(raw.get('manager_user_id'))
+            manager = next((u for u in users if u.id == manager_id and u.is_active), None)
+            if not manager:
+                raise ValueError('Active Sales Manager was not found')
+
+            rm_name = str(raw.get('rm') or '').strip()
+            # Gmail is the roster's stable per-person identity. Company inboxes
+            # can be shared (for example, two RMs use channelssales17), so only
+            # fall back to the company address when no Gmail is supplied.
+            rm_emails = _history_emails(raw.get('rm_gmail'))
+            if not rm_emails:
+                rm_emails = _history_emails(raw.get('rm_company_email'))
+            rm_phone = _history_phone(raw.get('rm_mobile'))
+            rm_user = next((by_email[e] for e in rm_emails if e in by_email), None)
+            if not rm_user and rm_phone:
+                rm_user = by_phone.get(rm_phone)
+            if not rm_user:
+                primary_email = next(iter(rm_emails), '')
+                if not primary_email:
+                    raise ValueError(f'RM {rm_name or "(blank)"} has no usable email')
+                rm_user = User(
+                    name=rm_name,
+                    email=primary_email,
+                    phone=rm_phone or None,
+                    password_hash=hash_password(secrets.token_urlsafe(32)),
+                    role='team_member', tenant_id=tenant.id,
+                    manager_id=manager.id, assigned_manager_id=manager.id,
+                    is_active=True,
+                )
+                db.session.add(rm_user)
+                db.session.flush()
+                users.append(rm_user)
+                by_email[primary_email] = rm_user
+                if rm_phone:
+                    by_phone[rm_phone] = rm_user
+                summary['relationship_managers_created'] += 1
+            else:
+                summary['relationship_managers_reused'] += 1
+                if not rm_user.manager_id:
+                    rm_user.manager_id = manager.id
+                if not rm_user.assigned_manager_id:
+                    rm_user.assigned_manager_id = manager.id
+
+            user_role = UserBusinessRole.query.filter_by(
+                user_id=rm_user.id, business_role_id=rm_role.id,
+                organisation_unit_id=None,
+            ).first()
+            if not user_role:
+                db.session.add(UserBusinessRole(
+                    tenant_id=tenant.id, user_id=rm_user.id,
+                    business_role_id=rm_role.id, organisation_unit_id=None,
+                    is_primary=True, is_active=True, assigned_by=admin.id,
+                ))
+            elif not user_role.is_active:
+                user_role.is_active = True
+
+            reporting = ReportingRelationship.query.filter_by(
+                tenant_id=tenant.id, user_id=rm_user.id,
+                manager_id=manager.id, relationship_type='LINE_MANAGER',
+                organisation_unit_id=None,
+            ).first()
+            if not reporting:
+                db.session.add(ReportingRelationship(
+                    tenant_id=tenant.id, user_id=rm_user.id,
+                    manager_id=manager.id, relationship_type='LINE_MANAGER',
+                    organisation_unit_id=None, is_primary=True,
+                    is_active=True, created_by=admin.id,
+                ))
+            else:
+                reporting.is_active = True
+                reporting.is_primary = True
+
+            identity = _history_norm(firm)
+            partner = partner_by_name.get(identity)
+            created = partner is None
+            if created:
+                code = 'CP-' + hashlib.sha1(
+                    f'{tenant.id}:{identity}'.encode('utf-8')
+                ).hexdigest()[:10].upper()
+                partner = ChannelPartner(
+                    tenant_id=tenant.id, code=code,
+                    partner_type='ORGANISATION', name=firm,
+                    organisation_name=firm, country='India',
+                    tags=['Historical CP roster'],
+                    profile_metadata={'import_source': raw.get('source_sheet')},
+                    is_active=True, created_by=admin.id, updated_by=admin.id,
+                )
+                db.session.add(partner)
+                db.session.flush()
+                partner_by_name[identity] = partner
+                summary['partners_created'] += 1
+            else:
+                partner.is_active = True
+                partner.name = firm
+                partner.organisation_name = firm
+                partner.updated_by = admin.id
+                metadata = dict(partner.profile_metadata or {})
+                metadata['import_source'] = raw.get('source_sheet')
+                partner.profile_metadata = metadata
+                summary['partners_updated'] += 1
+
+            contact_emails = _history_emails(raw.get('email'))
+            contact_phones = [_history_phone(raw.get('mobile'))] if _history_phone(raw.get('mobile')) else []
+            contact = None
+            for row_contact in partner.contacts:
+                existing_emails = {str(v).lower() for v in (row_contact.email_addresses or [])}
+                existing_phones = {_history_phone(v) for v in (row_contact.mobile_numbers or [])}
+                if existing_emails.intersection(contact_emails) or existing_phones.intersection(contact_phones):
+                    contact = row_contact
+                    break
+            if not contact:
+                contact = ChannelPartnerContact(
+                    tenant_id=tenant.id, channel_partner_id=partner.id,
+                    name=contact_name or firm,
+                    mobile_numbers=contact_phones,
+                    email_addresses=contact_emails,
+                    is_primary=True, is_active=True,
+                    contact_metadata={'import_source': raw.get('source_sheet')},
+                    created_by=admin.id, updated_by=admin.id,
+                )
+                db.session.add(contact)
+                summary['contacts_created'] += 1
+            else:
+                contact.name = contact_name or contact.name
+                contact.mobile_numbers = contact_phones or contact.mobile_numbers
+                contact.email_addresses = contact_emails or contact.email_addresses
+                contact.is_primary = True
+                contact.is_active = True
+                contact.updated_by = admin.id
+
+            for assignment_type, target_user in (
+                ('SALES_MANAGER', manager),
+                ('RELATIONSHIP_MANAGER', rm_user),
+            ):
+                active_assignments = ChannelPartnerAssignment.query.filter_by(
+                    tenant_id=tenant.id, channel_partner_id=partner.id,
+                    assignment_type=assignment_type, is_active=True,
+                ).all()
+                correct = next((a for a in active_assignments if a.user_id == target_user.id), None)
+                for assignment in active_assignments:
+                    if assignment.user_id != target_user.id:
+                        assignment.is_active = False
+                        assignment.effective_to = datetime.utcnow()
+                        summary['assignments_archived'] += 1
+                if not correct:
+                    db.session.add(ChannelPartnerAssignment(
+                        tenant_id=tenant.id, channel_partner_id=partner.id,
+                        user_id=target_user.id, assignment_type=assignment_type,
+                        is_active=True, assigned_by=admin.id,
+                    ))
+                    summary['assignments_created'] += 1
+
+            summary['partners'].append({
+                'id': partner.id, 'name': partner.name,
+                'sales_manager': manager.name, 'relationship_manager': rm_user.name,
+            })
+        except Exception as exc:
+            summary['errors'].append({'row': index + 1, 'error': str(exc)})
+
+    if dry_run or summary['errors']:
+        db.session.rollback()
+    else:
+        db.session.commit()
+    summary['ok'] = not summary['errors']
+    return jsonify(summary), (200 if summary['ok'] else 409)
+
+
+@cron_bp.route('/historical-sync/leads', methods=['POST'])
+def historical_sync_leads():
+    """Apply approved historical team ownership to bounded lead batches."""
+    if not _auth_internal_ops():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    from uuid import uuid4
+    from app.models.channel_partner import ChannelPartner
+    from app.models.lead import Lead, LeadAssignmentHistory
+    from app.models.tenant import Tenant
+    from app.models.user import User
+
+    data = request.get_json(silent=True) or {}
+    tenant = Tenant.query.filter_by(slug=str(data.get('tenant_slug') or '')).first()
+    rows = data.get('rows') or []
+    rules = data.get('rules') or {}
+    dry_run = bool(data.get('dry_run', False))
+    if not tenant:
+        return jsonify({'error': 'Tenant not found'}), 404
+    if not isinstance(rows, list) or len(rows) > 300:
+        return jsonify({'error': 'rows must be a list of at most 300 items'}), 400
+
+    admin = User.query.filter_by(
+        tenant_id=tenant.id, role='superadmin', is_active=True
+    ).order_by(User.id.asc()).first()
+    if not admin:
+        return jsonify({'error': 'Active tenant admin not found'}), 409
+
+    rule_map = {}
+    for team, rule in rules.items():
+        manager = User.query.filter_by(
+            id=int(rule.get('manager_user_id')), tenant_id=tenant.id,
+            is_active=True,
+        ).first()
+        if not manager:
+            return jsonify({'error': f'Invalid manager for {team}'}), 409
+        partner = None
+        if rule.get('channel_partner_name'):
+            wanted = _history_norm(rule.get('channel_partner_name'))
+            partner = next((p for p in ChannelPartner.query.filter_by(
+                tenant_id=tenant.id, is_active=True
+            ).all() if _history_norm(p.name) == wanted or _history_norm(p.organisation_name) == wanted), None)
+            if not partner:
+                return jsonify({'error': f'Channel Partner not found for {team}'}), 409
+        rule_map[str(team).strip()] = (manager, partner)
+
+    leads = Lead.query.filter_by(tenant_id=tenant.id, is_active=True).all()
+    phone_map, email_map = {}, {}
+    for lead in leads:
+        phone = _history_phone(lead.phone)
+        email = str(lead.email or '').strip().lower()
+        if phone:
+            phone_map.setdefault(phone, []).append(lead)
+        if email:
+            email_map.setdefault(email, []).append(lead)
+
+    result = {
+        'rows_received': len(rows), 'matched': 0, 'changed': 0,
+        'unchanged': 0, 'skipped_blank_team': 0, 'unmatched': [],
+        'ambiguous': [], 'manager_assignments': {},
+        'channel_partner_assignments': {}, 'dry_run': dry_run,
+    }
+    correlation = str(uuid4())
+    seen_leads = set()
+    for index, raw in enumerate(rows):
+        team = str(raw.get('team') or '').strip()
+        if not team:
+            result['skipped_blank_team'] += 1
+            continue
+        if team not in rule_map:
+            result['unmatched'].append({'row': index + 1, 'reason': 'Unknown team', 'team': team})
+            continue
+        phone = _history_phone(raw.get('phone'))
+        email = str(raw.get('email') or '').strip().lower()
+        candidates = list(phone_map.get(phone, [])) if phone else []
+        if len(candidates) > 1 and email:
+            candidates = [lead for lead in candidates if str(lead.email or '').strip().lower() == email]
+        if not candidates and email:
+            candidates = list(email_map.get(email, []))
+        candidates = list({lead.id: lead for lead in candidates}.values())
+        if not candidates:
+            result['unmatched'].append({'row': index + 1, 'phone': phone, 'email': email})
+            continue
+        if len(candidates) != 1:
+            result['ambiguous'].append({'row': index + 1, 'phone': phone, 'lead_ids': [l.id for l in candidates]})
+            continue
+        lead = candidates[0]
+        if lead.id in seen_leads:
+            continue
+        seen_leads.add(lead.id)
+        manager, partner = rule_map[team]
+        result['matched'] += 1
+        changed = False
+        old_assigned = lead.assigned_to
+        if lead.sales_manager_id != manager.id:
+            lead.sales_manager_id = manager.id
+            changed = True
+        if lead.assigned_to != manager.id:
+            lead.assigned_to = manager.id
+            changed = True
+        if partner and lead.channel_partner_id != partner.id:
+            lead.channel_partner_id = partner.id
+            changed = True
+        if changed:
+            lead.assigned_by = admin.id
+            db.session.add(LeadAssignmentHistory(
+                tenant_id=tenant.id, lead_id=lead.id,
+                assigned_from=old_assigned, assigned_to=manager.id,
+                assigned_by=admin.id,
+                reason='Historical assignment reconciled from approved master sheet',
+                source='HISTORICAL_MASTER_SHEET', correlation_id=correlation,
+                is_manager_override=True, role_slot='sales_manager',
+            ))
+            result['changed'] += 1
+        else:
+            result['unchanged'] += 1
+        result['manager_assignments'][manager.name] = result['manager_assignments'].get(manager.name, 0) + 1
+        if partner:
+            result['channel_partner_assignments'][partner.name] = result['channel_partner_assignments'].get(partner.name, 0) + 1
+
+    if dry_run:
+        db.session.rollback()
+    else:
+        db.session.commit()
+    result['ok'] = not result['ambiguous']
+    result['unmatched_count'] = len(result['unmatched'])
+    result['ambiguous_count'] = len(result['ambiguous'])
+    return jsonify(result), 200
 
 
 @cron_bp.route('/drain-notifications', methods=['GET', 'POST'])
