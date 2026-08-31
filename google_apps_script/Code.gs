@@ -1,4 +1,5 @@
 const WEBHOOK_SECRET = 'REPLACE_WITH_A_LONG_RANDOM_SECRET';
+const SPREADSHEET_ID = '1gAqi7WW70nhqdshqWgUOa1bx0phMI8Mng5XK9VJr_4o';
 
 function doGet() {
   return json_({ok: true, service: 'Ganga Realty LMS Sheet Sync'});
@@ -39,7 +40,7 @@ function doPost(e) {
 }
 
 function getSheet_(name) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   return ss.getSheetByName(name) || ss.insertSheet(name);
 }
 

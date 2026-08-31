@@ -103,3 +103,34 @@ def internal_sync_leads():
         return jsonify({'ok': True, **sync_leads(data.get('tenant_id'), data.get('lead_ids') or [])})
     except GoogleSheetsSyncError as exc:
         return jsonify({'error': str(exc)}), 400
+
+
+@google_sheets_bp.post('/internal/configure-apps-script')
+def internal_configure_apps_script():
+    """Protected production bootstrap for an Apps Script sheet mirror."""
+    expected = str(os.environ.get('INTERNAL_OPS_TOKEN') or '').strip()
+    provided = str(request.headers.get('X-Internal-Ops-Token') or '').strip()
+    if not expected or provided != expected:
+        return jsonify({'error': 'Unauthorized'}), 401
+    data = request.get_json() or {}
+    tenant_id = int(data.get('tenant_id') or 0)
+    if tenant_id <= 0 and data.get('tenant_slug'):
+        from app.models.tenant import Tenant
+        tenant = Tenant.query.filter_by(slug=str(data.get('tenant_slug')).strip()).first()
+        tenant_id = int(tenant.id) if tenant else 0
+    script_url = str(data.get('script_url') or '').strip()
+    webhook_secret = str(data.get('webhook_secret') or '').strip()
+    if tenant_id <= 0 or not script_url.startswith('https://script.google.com/macros/s/') or not webhook_secret:
+        return jsonify({'error': 'tenant_id, Apps Script URL and webhook secret are required'}), 400
+    save_apps_script_config(tenant_id, {
+        'mode': 'apps_script', 'script_url': script_url,
+        'webhook_secret': webhook_secret,
+        'sheet_name': str(data.get('sheet_name') or 'Master Leads').strip(),
+        'enabled': True,
+    })
+    try:
+        verified = test_connection(tenant_id)
+        synced = full_sync(tenant_id) if data.get('full_sync', True) else None
+        return jsonify({'ok': True, 'verified': verified, 'sync': synced})
+    except GoogleSheetsSyncError as exc:
+        return jsonify({'error': str(exc)}), 400
