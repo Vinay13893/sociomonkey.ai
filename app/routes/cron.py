@@ -126,6 +126,8 @@ def meta_backfill():
         full_history = str(_cron_arg('full_history', '1')).strip().lower() in ('1', 'true', 'yes', 'on')
         skip_audit = str(_cron_arg('skip_audit', '')).strip().lower() in ('1', 'true', 'yes', 'on')
         tenant_slug = str(_cron_arg('tenant_slug', '')).strip()
+        source_id = request.args.get('source_id', type=int)
+        source_name = str(_cron_arg('source_name', '')).strip()
         forced_date_from = str(_cron_arg('date_from', '')).strip()
         forced_date_to = str(_cron_arg('date_to', '')).strip()
 
@@ -146,12 +148,18 @@ def meta_backfill():
         if tenant_slug:
             from app.models.tenant import Tenant
             sources_query = sources_query.join(Tenant, LeadSource.tenant_id == Tenant.id).filter(Tenant.slug == tenant_slug)
+        if source_id:
+            sources_query = sources_query.filter(LeadSource.id == source_id)
+        if source_name:
+            sources_query = sources_query.filter(LeadSource.name == source_name)
         sources = sources_query.order_by(LeadSource.id.asc()).all()
         summary = {
             'sources': len(sources),
             'full_history': full_history,
             'skip_audit': skip_audit,
             'tenant_slug': tenant_slug,
+            'source_id': source_id,
+            'source_name': source_name,
             'date_from': forced_date_from,
             'date_to': forced_date_to,
             'forms_scanned': 0,
