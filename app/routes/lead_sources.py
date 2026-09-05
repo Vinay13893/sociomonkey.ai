@@ -5292,6 +5292,33 @@ def _pull_recent_meta_source(user, source, data=None):
         form_result = {'form_id': fid, 'entries': len(entries), 'results': []}
         summary['entries_seen'] += len(entries)
 
+        # Recovery runs can contain thousands of leads that are already in the
+        # audit table. Resolve those IDs in one query before entering the
+        # ingestion pipeline. Besides avoiding an N+1 query, this prevents a
+        # full reconciliation from timing out while reprocessing known leads.
+        entry_platform_ids = {
+            str((raw or {}).get('id') or (raw or {}).get('leadgen_id') or '').strip()
+            for raw in entries
+        }
+        entry_platform_ids.discard('')
+        known_platform_ids = set()
+        if entry_platform_ids:
+            known_platform_ids = {
+                str(platform_id)
+                for (platform_id,) in (
+                    IngestedLeadLog.query
+                    .with_entities(IngestedLeadLog.platform_lead_id)
+                    .filter(
+                        IngestedLeadLog.tenant_id == source.tenant_id,
+                        IngestedLeadLog.source_type == 'meta',
+                        IngestedLeadLog.platform_lead_id.in_(entry_platform_ids),
+                        IngestedLeadLog.status != 'error',
+                    )
+                    .all()
+                )
+                if platform_id
+            }
+
         for raw in entries:
             platform_lead_id = ''
             try:
@@ -5304,6 +5331,17 @@ def _pull_recent_meta_source(user, source, data=None):
                     entry['page_id'] = page_id
                 if not entry.get('form_name'):
                     entry['form_name'] = form_names.get(str(entry.get('form_id') or fid), '')
+
+                platform_lead_id = str(entry.get('leadgen_id') or entry.get('id') or '').strip()
+                if platform_lead_id in known_platform_ids:
+                    summary['duplicate'] += 1
+                    form_result['results'].append({
+                        'platform_lead_id': platform_lead_id,
+                        'status': 'duplicate',
+                        'lead_id': None,
+                        'message': 'Meta lead already ingested',
+                    })
+                    continue
 
                 target_source = _resolve_meta_target_source(source, str(entry.get('page_id') or page_id), str(entry.get('form_id') or fid))
                 normalised = _normalise_meta(entry)

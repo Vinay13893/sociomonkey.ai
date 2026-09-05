@@ -763,8 +763,38 @@ def meta_backfill():
                         after = cursors.get('after')
                         if not after:
                             break
-                except Exception:
+                except Exception as exc:
+                    summary['error'] += 1
+                    logger.warning(
+                        '[Cron] meta-backfill form fetch failed source_id=%s form_id=%s: %s',
+                        source.id,
+                        fid,
+                        exc,
+                    )
                     continue
+
+                entry_platform_ids = {
+                    str((row or {}).get('id') or (row or {}).get('leadgen_id') or '').strip()
+                    for row in entries
+                }
+                entry_platform_ids.discard('')
+                known_platform_ids = set()
+                if entry_platform_ids:
+                    known_platform_ids = {
+                        str(platform_id)
+                        for (platform_id,) in (
+                            IngestedLeadLog.query
+                            .with_entities(IngestedLeadLog.platform_lead_id)
+                            .filter(
+                                IngestedLeadLog.tenant_id == source.tenant_id,
+                                IngestedLeadLog.source_type == 'meta',
+                                IngestedLeadLog.platform_lead_id.in_(entry_platform_ids),
+                                IngestedLeadLog.status != 'error',
+                            )
+                            .all()
+                        )
+                        if platform_id
+                    }
 
                 for raw in entries:
                     summary['entries_seen'] += 1
@@ -773,12 +803,8 @@ def meta_backfill():
                     if not platform_lead_id:
                         continue
 
-                    existing = IngestedLeadLog.query.filter_by(
-                        tenant_id=source.tenant_id,
-                        source_type='meta',
-                        platform_lead_id=platform_lead_id,
-                    ).first()
-                    if existing and existing.status != 'error':
+                    if platform_lead_id in known_platform_ids:
+                        summary['duplicate'] += 1
                         continue
 
                     entry['leadgen_id'] = platform_lead_id
@@ -940,9 +966,9 @@ def meta_poll_5m():
     # Reuse meta_backfill with light defaults unless the scheduler overrides.
     g.meta_backfill_defaults = {
         'full_history': '0',
-        'per_form_limit': '25',
-        'page_size': '25',
-        'max_pages': '1',
+        'per_form_limit': '200',
+        'page_size': '100',
+        'max_pages': '2',
         'skip_audit': '1',
     }
     return meta_backfill()
