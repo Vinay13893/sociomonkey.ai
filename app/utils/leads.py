@@ -4,38 +4,65 @@ from app.models.lead import Lead
 from app import db
 from flask import request as flask_request
 
-VALID_STATUSES = [
-    'new', 'no_answer', 'follow_up', 'callback_scheduled',
-    'interested',
-    'site_visit_planned', 'site_visit_done',
-    'negotiation', 'booking_done',
-    'not_interested', 'lost', 'junk',
-]
+SHEET_STAGE_TO_STATUS = {
+    'Interested': 'interested',
+    'Not Interested': 'not_interested',
+    'Callback': 'callback_scheduled',
+    'No Answer': 'no_answer',
+    'Busy': 'busy',
+    'Switched Off': 'switched_off',
+    'Invalid Number': 'invalid_number',
+    'New': 'new',
+    'Junk': 'junk',
+    'Site Visit Planned': 'site_visit_planned',
+    'Site Visit Done': 'site_visit_done',
+    'Negotiation': 'negotiation',
+    'Booking Done': 'booking_done',
+    'Lost': 'lost',
+    'Broker': 'broker',
+    'Low Budget': 'low_budget',
+    'Follow Up': 'follow_up',
+}
+
+# The Sheets Stage contract is authoritative. Keep the existing machine keys
+# stable so saved reports, URLs and historical activity remain compatible.
+VALID_STATUSES = list(SHEET_STAGE_TO_STATUS.values())
 
 # Backward-compat aliases: old DB values that may still exist before migration
 STATUS_ALIASES = {
     'attempted': 'no_answer',
     'connected': 'follow_up',
+    'callback': 'callback_scheduled',
+    'callback scheduled': 'callback_scheduled',
+    'wrong number': 'invalid_number',
+    'wrong_number': 'invalid_number',
 }
 
 # Human-readable labels
-STATUS_LABELS = {
-    'new':                 'New',
-    'no_answer':           'No Answer',
-    'follow_up':           'Follow Up',
-    'callback_scheduled':  'Callback Scheduled',
-    'interested':          'Interested',
-    'site_visit_planned':  'Site Visit Planned',
-    'site_visit_done':     'Site Visit Done',
-    'negotiation':         'Negotiation',
-    'booking_done':        'Booking Done',
-    'not_interested':      'Not Interested',
-    'lost':                'Lost',
-    'junk':                'Junk',
+STATUS_LABELS = {status: stage for stage, status in SHEET_STAGE_TO_STATUS.items()}
+STATUS_LABELS.update({
     # legacy aliases (backward compat for old exports / activity logs)
     'attempted':           'No Answer (legacy)',
     'connected':           'Follow Up (legacy)',
-}
+})
+
+
+def normalize_lead_status(value):
+    """Translate a Sheets Stage label or LMS machine key to a canonical key."""
+    raw = str(value or '').strip()
+    if not raw:
+        return None
+    if raw in SHEET_STAGE_TO_STATUS:
+        return SHEET_STAGE_TO_STATUS[raw]
+
+    lowered = ' '.join(raw.replace('-', ' ').replace('_', ' ').split()).lower()
+    if lowered in STATUS_ALIASES:
+        return STATUS_ALIASES[lowered]
+
+    normalized = lowered.replace(' ', '_')
+    if normalized in STATUS_ALIASES:
+        normalized = STATUS_ALIASES[normalized]
+    return normalized if normalized in VALID_STATUSES else None
 
 def should_include_test_leads():
     try:

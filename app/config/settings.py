@@ -40,6 +40,14 @@ class BaseConfig:
     # Cron secret — set CRON_SECRET env var on Vercel, add same value to cron job auth.
     CRON_SECRET = os.getenv('CRON_SECRET', '')
 
+    # Optional dedicated credential for the Google Sheets -> LMS feedback
+    # bridge. Existing Apps Script installations can continue to use the
+    # tenant's configured sheet webhook secret when this is unset.
+    LMS_FEEDBACK_SECRET = os.getenv('LMS_FEEDBACK_SECRET', '')
+    LMS_FEEDBACK_TENANT_SLUG = os.getenv(
+        'LMS_FEEDBACK_TENANT_SLUG', 'ganga'
+    ).strip().lower()
+
     # Meta application secret used to verify X-Hub-Signature-256.
     META_APP_SECRET = os.getenv('META_APP_SECRET', '')
 

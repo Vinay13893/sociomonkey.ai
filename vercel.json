@@ -21,6 +21,18 @@
       "schedule": "0 5 * * *"
     },
     {
+      "path": "/api/cron/google-sheets-sync?reason=pre-allocation-0845",
+      "schedule": "15 3 * * *"
+    },
+    {
+      "path": "/api/cron/google-sheets-sync?reason=pre-allocation-0855",
+      "schedule": "25 3 * * *"
+    },
+    {
+      "path": "/api/cron/google-sheets-sync?reason=recovery-0905",
+      "schedule": "35 3 * * *"
+    },
+    {
       "path": "/api/cron/google-sheets-sync",
       "schedule": "15 19 * * *"
     }
