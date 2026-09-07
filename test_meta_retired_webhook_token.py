@@ -114,3 +114,40 @@ def test_signed_retired_token_with_unknown_source_identity_is_rejected():
 
     assert response.status_code == 404
     assert response.get_json()['error'] == 'Unknown source'
+
+
+def test_meta_enrichment_falls_back_to_bounded_form_feed():
+    from app.routes.ingestion import _meta_enrich_leadgen_entry
+
+    source = SimpleNamespace(
+        credentials={'page_access_token': 'page-token'},
+        available_forms=[{'id': 'FORM-1', 'name': 'Test form'}],
+        connected_account='Test page',
+    )
+    detail = {
+        'id': 'LEAD-1',
+        'form_id': 'FORM-1',
+        'page_id': 'PAGE-1',
+        'field_data': [
+            {'name': 'full_name', 'values': ['Realtime Lead']},
+            {'name': 'phone_number', 'values': ['919999999999']},
+        ],
+    }
+
+    def fake_graph(url):
+        if '/LEAD-1?' in url:
+            raise RuntimeError('direct lookup rejected')
+        assert '/FORM-1/leads?' in url
+        assert 'limit=25' in url
+        return {'data': [detail]}
+
+    with patch('app.routes.ingestion._meta_graph_get_json', side_effect=fake_graph):
+        enriched = _meta_enrich_leadgen_entry({
+            'leadgen_id': 'LEAD-1',
+            'form_id': 'FORM-1',
+            'page_id': 'PAGE-1',
+        }, source)
+
+    assert enriched['platform_lead_id'] == 'LEAD-1'
+    assert enriched['form_name'] == 'Test form'
+    assert enriched['field_data'] == detail['field_data']

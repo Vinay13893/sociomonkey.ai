@@ -396,11 +396,15 @@ def _meta_enrich_leadgen_entry(lead_entry: dict, source: LeadSource) -> dict:
 
     try:
         lead_data = {}
+        lead_fields = (
+            'id,created_time,field_data,form_id,campaign_id,campaign_name,'
+            'ad_id,ad_name,adset_id,adset_name,page_id'
+        )
         if leadgen_id:
             for tk in tokens:
                 lead_url = (
                     f'https://graph.facebook.com/v25.0/{urllib_parse.quote(leadgen_id)}'
-                    f'?fields=id,created_time,field_data,form_id,campaign_id,campaign_name,ad_id,ad_name,adset_id,adset_name,page_id'
+                    f'?fields={urllib_parse.quote(lead_fields)}'
                     f'&access_token={urllib_parse.quote(tk)}'
                 )
                 try:
@@ -414,6 +418,40 @@ def _meta_enrich_leadgen_entry(lead_entry: dict, source: LeadSource) -> dict:
                     lead_data = {}
                     continue
                 if lead_data:
+                    break
+
+        # Some Meta tokens can list a form's leads but reject the direct
+        # /<leadgen_id> lookup. Use the same bounded form edge as the healthy
+        # five-minute poller so realtime delivery does not wait for that poll.
+        fallback_form_id = str(lead_entry.get('form_id') or '').strip()
+        if not lead_data and leadgen_id and fallback_form_id:
+            for tk in tokens:
+                form_url = (
+                    f'https://graph.facebook.com/v25.0/{urllib_parse.quote(fallback_form_id)}/leads'
+                    f'?fields={urllib_parse.quote(lead_fields)}'
+                    f'&limit=25'
+                    f'&access_token={urllib_parse.quote(tk)}'
+                )
+                try:
+                    form_payload = _meta_graph_get_json(form_url)
+                except Exception as exc:
+                    logger.warning(
+                        'meta_webhook: form lead fallback HTTP error for form_id=%s: %s',
+                        fallback_form_id,
+                        exc,
+                    )
+                    continue
+                if isinstance(form_payload, dict) and form_payload.get('error'):
+                    continue
+                lead_data = next((
+                    row for row in (form_payload or {}).get('data', []) or []
+                    if str((row or {}).get('id') or '') == leadgen_id
+                ), {})
+                if lead_data:
+                    logger.info(
+                        'meta_webhook: recovered lead detail from form edge form_id=%s',
+                        fallback_form_id,
+                    )
                     break
 
         form_id = str((lead_data or {}).get('form_id') or lead_entry.get('form_id') or '')
