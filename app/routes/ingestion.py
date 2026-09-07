@@ -120,6 +120,47 @@ def _resolve_meta_target_source(seed_source: LeadSource, page_id: str, form_id: 
     return active_sources[0]
 
 
+def _resolve_meta_source_from_payload(payload: dict) -> LeadSource | None:
+    """Resolve an active source when Meta still calls a retired token URL.
+
+    The payload is used only to select candidate credentials. The request must
+    still pass the normal Meta HMAC verification before any event is captured.
+    """
+    identities = []
+    for entry in (payload or {}).get('entry', []) or []:
+        entry_page_id = str((entry or {}).get('id') or '')
+        for change in (entry or {}).get('changes', []) or []:
+            if (change or {}).get('field') != 'leadgen':
+                continue
+            value = (change or {}).get('value') or {}
+            identities.append((
+                str(value.get('page_id') or entry_page_id or ''),
+                str(value.get('form_id') or ''),
+            ))
+    if not identities:
+        return None
+
+    sources = LeadSource.query.filter_by(
+        source_type='meta', is_active=True,
+    ).order_by(LeadSource.updated_at.desc(), LeadSource.id.desc()).all()
+    for page_id, form_id in identities:
+        page_matches = [
+            source for source in sources
+            if page_id and str((source.credentials or {}).get('page_id') or '') == page_id
+        ]
+        if page_matches:
+            if form_id:
+                for source in page_matches:
+                    if _meta_source_has_form(source, form_id):
+                        return source
+            return page_matches[0]
+        if form_id:
+            for source in sources:
+                if _meta_source_has_form(source, form_id):
+                    return source
+    return None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # META (Facebook / Instagram) NORMALIZER
 # ══════════════════════════════════════════════════════════════════════════════
@@ -595,15 +636,27 @@ def meta_webhook(token):
     if request.method == 'GET':
         return meta_verify(token)
 
+    raw_body = request.get_data()
+    sig = request.headers.get('X-Hub-Signature-256', '')
+    payload = request.get_json(force=True, silent=True) or {}
+
     source = LeadSource.query.filter_by(
         source_type='meta',
         webhook_token=token,
     ).first()
     if not source:
-        return jsonify({'error': 'Unknown source'}), 404
-
-    raw_body = request.get_data()
-    sig = request.headers.get('X-Hub-Signature-256', '')
+        # Meta keeps one callback URL at app level and may continue calling an
+        # older token after a source reconnect. Recover only signed requests
+        # whose page/form identifies a currently active source.
+        if not sig:
+            return jsonify({'error': 'Unknown source'}), 404
+        source = _resolve_meta_source_from_payload(payload)
+        if not source:
+            return jsonify({'error': 'Unknown source'}), 404
+        logger.info(
+            'meta_webhook: recovered retired token using active source=%s',
+            source.id,
+        )
 
     # Build candidate secrets across current + active tenant sources so old token
     # callbacks continue to validate after reconnects/app rotations.
@@ -655,7 +708,6 @@ def meta_webhook(token):
             )
             return jsonify({'error': 'Invalid signature'}), 403
 
-    payload = request.get_json(force=True, silent=True) or {}
     results = []
 
     for entry in payload.get('entry', []):
